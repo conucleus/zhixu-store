@@ -1,0 +1,14 @@
+{
+  "name": "zhixu-store",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev": "pnpm --filter @uvp-eth/zhixu-store-web dev",
+    "check": "pnpm --filter @uvp-eth/zhixu-store-web run typecheck",
+    "typecheck": "pnpm --filter @uvp-eth/zhixu-store-web run typecheck",
+    "test": "pnpm --filter @uvp-eth/zhixu-store-web run test:e2e",
+    "build": "pnpm --filter @uvp-eth/zhixu-store-web run build"
+  }
+}
