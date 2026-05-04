@@ -3,6 +3,8 @@ export interface WalletAccount {
   readonly source: "browser" | "mock";
 }
 
+export type WalletTarget = "evm" | "solana";
+
 export class WalletNotConnectedError extends Error {
   constructor() {
     super("wallet_not_connected");
@@ -15,6 +17,23 @@ export class WalletRejectedError extends Error {
     super("wallet_rejected");
     this.name = "WalletRejectedError";
   }
+}
+
+export class UnsupportedWalletTargetError extends Error {
+  constructor(readonly target: WalletTarget) {
+    super(`${target} wallet connector is reserved but not implemented`);
+    this.name = "UnsupportedWalletTargetError";
+  }
+}
+
+export interface WalletConnector {
+  readonly target: WalletTarget;
+  requestAccount(allowMock: boolean): Promise<WalletAccount>;
+  signTypedData(
+    account: WalletAccount,
+    typedData: unknown,
+    options: { readonly allowMock: boolean; readonly reject?: boolean }
+  ): Promise<string>;
 }
 
 interface BrowserEthereum {
@@ -86,6 +105,21 @@ export async function signTypedData(
       throw new WalletRejectedError();
     }
     throw error;
+  }
+}
+
+export const evmWalletConnector: WalletConnector = {
+  target: "evm",
+  requestAccount: requestWalletAccount,
+  signTypedData
+};
+
+export function getWalletConnector(target: WalletTarget = "evm"): WalletConnector {
+  switch (target) {
+    case "evm":
+      return evmWalletConnector;
+    case "solana":
+      throw new UnsupportedWalletTargetError("solana");
   }
 }
 
