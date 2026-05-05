@@ -1111,6 +1111,18 @@ body {
   color: #1f2937;
 }
 
+.secondary-button.compact {
+  align-self: flex-start;
+  min-height: 36px;
+  padding: 0 12px;
+}
+
+.primary-button:disabled,
+.secondary-button:disabled {
+  opacity: 0.62;
+  cursor: not-allowed;
+}
+
 .outline-button {
   border-color: #059669;
   background: #ffffff;
@@ -2716,6 +2728,9 @@ body {
 }
 
 .store-supplier-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   min-height: 150px;
   padding: 18px;
   border: 1px solid #e2e8f0;
@@ -2731,6 +2746,87 @@ body {
   width: 24px;
   height: 24px;
   color: #047857;
+}
+
+.store-supplier-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.store-supplier-meta-row span {
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 1px solid #dbe3ea;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.store-supplier-edit-panel {
+  display: grid;
+  gap: 14px;
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.store-checkbox-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.store-checkbox-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.store-checkbox-chip.checked {
+  border-color: #047857;
+  background: #ecfdf5;
+  color: #065f46;
+}
+
+.store-checkbox-chip input {
+  width: 14px;
+  height: 14px;
+  accent-color: #047857;
+}
+
+.store-supplier-edit-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.store-supplier-edit-form .field > textarea {
+  min-height: 96px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #dbe3ea;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #111827;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  line-height: 1.45;
+}
+
+.store-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .store-runtime-grid {
@@ -2854,6 +2950,10 @@ body {
   gap: 10px;
   align-items: start;
   margin-top: 12px;
+}
+
+.store-tag-row.compact {
+  margin-top: 0;
 }
 
 .store-tag-row > span {

@@ -30,7 +30,7 @@ import {
   UserCheck,
   WalletCards
 } from "lucide-react";
-import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
+import { useMemo, useState, type ChangeEvent, type ReactNode } from "react";
 import type {
   ChainProofRowDTO,
   DockableModuleStatus,
@@ -48,156 +48,30 @@ import type {
 } from "@uvp-eth/product-dto";
 import {
   createProductApiClient,
-  shortHash,
-  WorkbenchLoadError,
   type DraftParticipantDTO,
   type EvidenceObjectDTO,
   type EvidenceProofDTO,
-  type PreparedSubmitDTO,
   type ProductApiSource,
   type ProductInviteDTO,
   type ProductOrderDraftDTO,
-  type ProductSubmissionDTO,
-  type ProductWorkbenchData,
-  type WorkbenchEndpointDiagnostic
+  type ProductWorkbenchData
 } from "./product/api";
+import { useOrderDraftFlow } from "./product/hooks/useOrderDraftFlow";
+import { useOrderRegistrationFlow } from "./product/hooks/useOrderRegistrationFlow";
+import { useProductWorkbenchData } from "./product/hooks/useProductWorkbenchData";
 import {
-  requestWalletAccount,
-  signTypedData,
-  WalletNotConnectedError,
-  WalletRejectedError
-} from "./product/wallet";
-
-type ProductView =
-  | "app"
-  | "home"
-  | "zhixu"
-  | "create"
-  | "participants"
-  | "order"
-  | "task"
-  | "submit"
-  | "dispute";
-
-type LoadState =
-  | { readonly status: "loading" }
-  | { readonly status: "ready"; readonly data: ProductWorkbenchData }
-  | { readonly status: "empty"; readonly data: ProductWorkbenchData }
-  | { readonly status: "error"; readonly message: string; readonly source?: ProductApiSource }
-  | { readonly status: "diagnostic"; readonly diagnostics: readonly WorkbenchEndpointDiagnostic[]; readonly source: ProductApiSource };
-
-type AsyncPhase = "idle" | "pending" | "success" | "error";
-
-interface ActionState {
-  readonly phase: AsyncPhase;
-  readonly message?: string;
-  readonly source?: ProductApiSource;
-}
-
-type SubmitMachineStatus =
-  | "idle"
-  | "preparing"
-  | "wallet_not_connected"
-  | "wallet_rejected"
-  | "signature_pending"
-  | "tx_pending"
-  | "confirmed"
-  | "failed";
-
-interface SubmitMachineState {
-  readonly status: SubmitMachineStatus;
-  readonly message: string;
-  readonly prepared?: PreparedSubmitDTO;
-  readonly submission?: ProductSubmissionDTO;
-  readonly source?: ProductApiSource;
-}
-
-interface ProductWorkbenchE2EState {
-  readonly mode: string;
-  readonly view: ProductView;
-  readonly loadStatus: LoadState["status"];
-  readonly sourceKind: ProductApiSource["kind"] | null;
-  readonly apiBaseUrl: string | null;
-  readonly syncState: ProductWorkbenchData["syncState"] | null;
-  readonly zhixuId: string | null;
-  readonly draftId: string | null;
-  readonly orderId: string | null;
-  readonly taskId: string | null;
-  readonly evidenceId: string | null;
-  readonly submissionId: string | null;
-  readonly triggerTxHash: string | null;
-  readonly signalTxHash: string | null;
-}
-
-interface ProductWorkbenchE2EAcceptResult {
-  readonly acceptedCount: number;
-  readonly missingRequired: number;
-  readonly draftId?: string;
-  readonly draftStatus?: string;
-}
-
-interface ProductWorkbenchE2EBridge {
-  readonly state: ProductWorkbenchE2EState;
-  acceptRequiredParticipants(walletAddresses: string | readonly string[]): Promise<ProductWorkbenchE2EAcceptResult>;
-}
-
-declare global {
-  interface Window {
-    __uvpProductWorkbenchE2E?: ProductWorkbenchE2EBridge;
-  }
-}
-
-const idleAction: ActionState = { phase: "idle" };
+  useProductWorkbenchE2EBridge,
+  type ProductWorkbenchE2EState
+} from "./product/hooks/useProductWorkbenchE2EBridge";
+import { useTaskSubmissionFlow } from "./product/hooks/useTaskSubmissionFlow";
+import { idleAction, type ActionState, type ProductView, type SubmitMachineState, type SubmitMachineStatus } from "./product/hooks/workbenchTypes";
+import { shortHash } from "./shared/frontend";
 
 export function ProductWorkbenchApp() {
   const api = useMemo(() => createProductApiClient(), []);
-  const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
+  const { loadState, reload: reloadWorkbench } = useProductWorkbenchData(api);
   const [view, setView] = useState<ProductView>("app");
   const [proofOpen, setProofOpen] = useState(false);
-  const [draft, setDraft] = useState<ProductOrderDraftDTO | undefined>();
-  const [draftParticipants, setDraftParticipants] = useState<readonly DraftParticipantDTO[]>([]);
-  const [draftAction, setDraftAction] = useState<ActionState>(idleAction);
-  const [saveDraftAction, setSaveDraftAction] = useState<ActionState>(idleAction);
-  const [registerDraftAction, setRegisterDraftAction] = useState<ActionState>(idleAction);
-  const [inviteActions, setInviteActions] = useState<Record<string, ActionState & { readonly invite?: ProductInviteDTO }>>({});
-  const [evidence, setEvidence] = useState<EvidenceObjectDTO | undefined>();
-  const [evidenceProof, setEvidenceProof] = useState<EvidenceProofDTO | undefined>();
-  const [evidenceAction, setEvidenceAction] = useState<ActionState>(idleAction);
-  const [submitMachine, setSubmitMachine] = useState<SubmitMachineState>({
-    status: "idle",
-    message: "等待上传凭证并确认提交"
-  });
-  const [disputeAction, setDisputeAction] = useState<ActionState>(idleAction);
-
-  useEffect(() => {
-    let cancelled = false;
-    void api.loadWorkbenchData().then((loaded) => {
-      if (!cancelled) {
-        setLoadState({
-          status: loaded.zhixus.length === 0 ? "empty" : "ready",
-          data: loaded
-        });
-      }
-    }).catch((error) => {
-      if (!cancelled) {
-        if (error instanceof WorkbenchLoadError) {
-          setLoadState({
-            status: "diagnostic",
-            diagnostics: error.diagnostics,
-            source: error.source
-          });
-        } else {
-          setLoadState({
-            status: "error",
-            message: error instanceof Error ? error.message : "工作台加载失败"
-          });
-        }
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [api]);
 
   const activeNav = useMemo(() => {
     if (view === "app") {
@@ -217,319 +91,44 @@ export function ProductWorkbenchApp() {
   const selectedOrder = data?.order;
   const activeTask = data?.activeTask;
   const allowMockWallet = data?.source.kind === "mock";
-
-  async function ensureDraft(): Promise<ProductOrderDraftDTO | undefined> {
-    if (draft) {
-      return draft;
+  const draftFlow = useOrderDraftFlow({ api, selectedZhixu });
+  const {
+    draft,
+    draftParticipants,
+    draftAction,
+    saveDraftAction,
+    inviteActions,
+    ensureDraft,
+    handleCreateDraft,
+    handleSaveDraft,
+    handleSendInvite
+  } = draftFlow;
+  const { registerDraftAction, handleRegisterDraft } = useOrderRegistrationFlow({
+    api,
+    allowMockWallet,
+    ensureDraft,
+    onRegistered: (nextDraft) => {
+      draftFlow.setDraft(nextDraft);
+      window.setTimeout(() => setView("order"), 500);
     }
-    if (!selectedZhixu) {
-      setDraftAction({ phase: "error", message: "暂无可创建订单的秩序" });
-      return undefined;
-    }
-    return await handleCreateDraft();
-  }
-
-  async function handleCreateDraft(): Promise<ProductOrderDraftDTO | undefined> {
-    if (!selectedZhixu) {
-      setDraftAction({ phase: "error", message: "暂无可创建订单的秩序" });
-      return undefined;
-    }
-    if (selectedZhixu.reviewStatus !== "approved") {
-      setDraftAction({ phase: "error", message: "该秩序当前不可创建新订单" });
-      return undefined;
-    }
-    setDraftAction({ phase: "pending", message: "正在创建订单草稿" });
-    try {
-      const result = await api.createOrderDraft({
-        zhixuId: selectedZhixu.zhixuId,
-        title: "A 公司采购 10 台车辆",
-        businessType: "车辆",
-        totalAmount: "10000",
-        currency: "USDC"
-      });
-      setDraft(result.data);
-      setDraftAction({ phase: "success", message: "订单草稿已创建", source: result.source });
-      const participantsResult = await api.listParticipants(result.data.draftId);
-      setDraftParticipants(participantsResult.data);
-      return result.data;
-    } catch (error) {
-      setDraftAction({ phase: "error", message: readableError(error, "订单草稿创建失败") });
-      return undefined;
-    }
-  }
-
-  async function handleSaveDraft(): Promise<void> {
-    const currentDraft = await ensureDraft();
-    if (!currentDraft) {
-      return;
-    }
-    setSaveDraftAction({ phase: "pending", message: "正在保存草稿" });
-    try {
-      const result = await api.updateOrderDraft(currentDraft.draftId, {
-        title: currentDraft.title,
-        goods: ["Toyota Land Cruiser 300 VX-R"],
-        exportRegion: "日本",
-        destinationRegion: "阿联酋",
-        expectedCompletionDate: "2026-07-31",
-        notes: "请按合同约定的分阶段交付计划执行。"
-      });
-      setDraft(result.data);
-      setSaveDraftAction({ phase: "success", message: "草稿已保存", source: result.source });
-    } catch (error) {
-      setSaveDraftAction({ phase: "error", message: readableError(error, "草稿保存失败") });
-    }
-  }
+  });
+  const {
+    evidence,
+    evidenceProof,
+    evidenceAction,
+    submitMachine,
+    disputeAction,
+    handleUploadEvidence,
+    handleUploadDemoEvidence,
+    handleConfirmSubmit,
+    handleDisputeSave
+  } = useTaskSubmissionFlow({ api, activeTask, allowMockWallet });
 
   async function handleNextParticipants(): Promise<void> {
     const currentDraft = await ensureDraft();
     if (currentDraft) {
       setView("participants");
     }
-  }
-
-  async function handleSendInvite(participant: DraftParticipantDTO): Promise<void> {
-    const currentDraft = await ensureDraft();
-    if (!currentDraft) {
-      return;
-    }
-    setInviteActions((current) => ({
-      ...current,
-      [participant.participantId]: { phase: "pending", message: "正在发送邀请" }
-    }));
-    try {
-      const result = await api.createInvite(currentDraft.draftId, {
-        participantId: participant.participantId,
-        roleSlotId: participant.roleSlotId,
-        roleLabel: participant.roleLabel,
-        contact: participant.contact || `${participant.roleSlotId}@example.com`,
-        displayName: participant.displayName || participant.roleLabel,
-        required: participant.required
-      });
-      const participantsResult = await api.listParticipants(currentDraft.draftId);
-      setDraftParticipants(participantsResult.data);
-      setInviteActions((current) => ({
-        ...current,
-        [participant.participantId]: {
-          phase: "success",
-          message: "邀请已生成，可复制链接发送给对方",
-          source: result.source,
-          invite: result.data
-        }
-      }));
-    } catch (error) {
-      setInviteActions((current) => ({
-        ...current,
-        [participant.participantId]: { phase: "error", message: readableError(error, "邀请发送失败") }
-      }));
-    }
-  }
-
-  async function handleRegisterDraft(): Promise<void> {
-    const currentDraft = await ensureDraft();
-    if (!currentDraft) {
-      return;
-    }
-    try {
-      setRegisterDraftAction({ phase: "pending", message: "正在准备订单启动签名" });
-      const account = await requestWalletAccount(allowMockWallet);
-      const prepared = await api.prepareOrderTrigger(currentDraft.draftId, { walletAddress: account.address });
-      setRegisterDraftAction({ phase: "pending", message: "等待钱包授权", source: prepared.source });
-      const signature = await signTypedData(account, prepared.data.typedData, { allowMock: allowMockWallet });
-      const result = await api.triggerOrder(currentDraft.draftId, {
-        prepareId: prepared.data.prepareId,
-        signature,
-        walletAddress: account.address
-      });
-      setDraft(result.data);
-      setRegisterDraftAction({ phase: "success", message: "订单已启动，正在等待订单页同步", source: result.source });
-      window.setTimeout(() => setView("order"), 500);
-    } catch (error) {
-      if (error instanceof WalletNotConnectedError) {
-        setRegisterDraftAction({ phase: "error", message: "请连接浏览器钱包后再启动订单" });
-        return;
-      }
-      if (error instanceof WalletRejectedError) {
-        setRegisterDraftAction({ phase: "error", message: "你取消了签名，可以重新启动" });
-        return;
-      }
-      setRegisterDraftAction({ phase: "error", message: readableError(error, "订单启动失败") });
-    }
-  }
-
-  async function handleUploadEvidence(file: File): Promise<void> {
-    if (!activeTask) {
-      setEvidenceAction({ phase: "error", message: "暂无可处理的待办" });
-      return;
-    }
-    setEvidenceAction({ phase: "pending", message: "正在上传凭证并生成指纹" });
-    try {
-      const result = await api.uploadEvidence({
-        file,
-        orderId: activeTask.orderId,
-        taskId: activeTask.taskId,
-        stageIdentifier: activeTask.stageId,
-        documentType: "customs_declaration",
-        metadata: {
-          businessLabel: "报关单",
-          documentType: "customs_declaration",
-          fields: {
-            stage: activeTask.stageName
-          }
-        }
-      });
-      setEvidence(result.data);
-      const proofResult = await api.getEvidenceProof(result.data.evidenceId);
-      setEvidenceProof(proofResult.data);
-      setEvidenceAction({ phase: "success", message: "凭证已上传，指纹已生成", source: result.source });
-    } catch (error) {
-      setEvidenceAction({ phase: "error", message: readableError(error, "凭证上传失败") });
-    }
-  }
-
-  async function handleUploadDemoEvidence(): Promise<void> {
-    await handleUploadEvidence(new File(["customs declaration demo"], "出口报关单_20260430.pdf", { type: "application/pdf" }));
-  }
-
-  async function handleConfirmSubmit(options: { readonly rejectWallet?: boolean } = {}): Promise<void> {
-    if (!activeTask) {
-      setSubmitMachine({ status: "failed", message: "暂无可提交的待办" });
-      return;
-    }
-    if (!evidence) {
-      setSubmitMachine({ status: "failed", message: "请先上传凭证并生成指纹" });
-      return;
-    }
-    try {
-      setSubmitMachine({ status: "preparing", message: "正在准备签名前摘要" });
-      const account = await requestWalletAccount(allowMockWallet);
-      const preparedResult = await api.prepareTaskSubmit(activeTask.taskId, {
-        evidenceIds: [evidence.evidenceId],
-        walletAddress: account.address,
-        intent: "confirm_stage"
-      });
-      setSubmitMachine({
-        status: "signature_pending",
-        message: "等待钱包授权",
-        prepared: preparedResult.data,
-        source: preparedResult.source
-      });
-      const signature = await signTypedData(account, preparedResult.data.typedData, {
-        allowMock: allowMockWallet,
-        reject: options.rejectWallet
-      });
-      const submissionResult = await api.submitTask(activeTask.taskId, {
-        prepareId: preparedResult.data.prepareId,
-        signature,
-        walletAddress: account.address
-      });
-      setSubmitMachine({
-        status: "tx_pending",
-        message: "提交处理中，等待确认",
-        prepared: preparedResult.data,
-        submission: submissionResult.data,
-        source: submissionResult.source
-      });
-      await pollSubmission(submissionResult.data.submissionId, preparedResult.data, submissionResult.source);
-    } catch (error) {
-      if (error instanceof WalletNotConnectedError) {
-        setSubmitMachine({ status: "wallet_not_connected", message: "请连接浏览器钱包后再确认提交" });
-        return;
-      }
-      if (error instanceof WalletRejectedError) {
-        setSubmitMachine({ status: "wallet_rejected", message: "你取消了签名，可以重新提交" });
-        return;
-      }
-      setSubmitMachine({ status: "failed", message: readableError(error, "确认提交失败") });
-    }
-  }
-
-  async function pollSubmission(submissionId: string, prepared: PreparedSubmitDTO, source: ProductApiSource): Promise<void> {
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-      await delay(1100);
-      const result = await api.getSubmission(submissionId);
-      if (result.data.status === "confirmed") {
-        setSubmitMachine({
-          status: "confirmed",
-          message: "提交已确认，订单页稍后会同步最新状态",
-          prepared,
-          submission: result.data,
-          source: result.source
-        });
-        return;
-      }
-      if (result.data.status === "failed") {
-        setSubmitMachine({
-          status: "failed",
-          message: result.data.errorCode ?? "提交失败，可重试",
-          prepared,
-          submission: result.data,
-          source: result.source
-        });
-        return;
-      }
-      setSubmitMachine({
-        status: "tx_pending",
-        message: "提交处理中，等待确认",
-        prepared,
-        submission: result.data,
-        source
-      });
-    }
-  }
-
-  async function handleDisputeSave(): Promise<void> {
-    setDisputeAction({ phase: "pending", message: "正在保存争议材料" });
-    await delay(600);
-    setDisputeAction({ phase: "success", message: "争议材料已保存，平台将继续处理" });
-  }
-
-  async function handleE2EAcceptRequiredParticipants(walletAddresses: string | readonly string[]): Promise<ProductWorkbenchE2EAcceptResult> {
-    const currentDraft = await ensureDraft();
-    if (!currentDraft) {
-      return { acceptedCount: 0, missingRequired: 0 };
-    }
-
-    const wallets = Array.isArray(walletAddresses) ? walletAddresses : [walletAddresses];
-    if (wallets.length === 0) {
-      throw new Error("product_workbench_e2e_wallets_required");
-    }
-
-    const participantsResult = await api.listParticipants(currentDraft.draftId);
-    let acceptedCount = 0;
-    for (const participant of participantsResult.data) {
-      if (!participant.required || participant.status === "accepted") {
-        continue;
-      }
-      const contact = participant.contact || `${participant.roleSlotId}@example.com`;
-      const inviteResult = await api.createInvite(currentDraft.draftId, {
-        participantId: participant.participantId,
-        roleSlotId: participant.roleSlotId,
-        roleLabel: participant.roleLabel,
-        contact,
-        displayName: participant.displayName || participant.roleLabel,
-        required: participant.required
-      });
-      await api.acceptInvite(inviteResult.data.inviteId, {
-        displayName: participant.displayName || participant.roleLabel,
-        walletAddress: wallets[acceptedCount % wallets.length],
-        contact
-      });
-      acceptedCount += 1;
-    }
-
-    const refreshedParticipants = await api.listParticipants(currentDraft.draftId);
-    setDraftParticipants(refreshedParticipants.data);
-    const refreshedDraft = await api.getOrderDraft(currentDraft.draftId);
-    setDraft(refreshedDraft.data);
-    const missingRequired = refreshedParticipants.data.filter((participant) =>
-      participant.required && participant.status !== "accepted"
-    ).length;
-    return {
-      acceptedCount,
-      missingRequired,
-      draftId: refreshedDraft.data.draftId,
-      draftStatus: refreshedDraft.data.status
-    };
   }
 
   const e2eState: ProductWorkbenchE2EState = {
@@ -549,17 +148,9 @@ export function ProductWorkbenchApp() {
     signalTxHash: submitMachine.submission?.txHash ?? evidence?.boundSignalTxHash ?? null
   };
 
-  useEffect(() => {
-    if (!isProductE2EEnabled()) {
-      return;
-    }
-    window.__uvpProductWorkbenchE2E = {
-      state: e2eState,
-      acceptRequiredParticipants: handleE2EAcceptRequiredParticipants
-    };
-    return () => {
-      delete window.__uvpProductWorkbenchE2E;
-    };
+  useProductWorkbenchE2EBridge({
+    state: e2eState,
+    acceptRequiredParticipants: draftFlow.acceptRequiredParticipants
   });
 
   if (loadState.status === "loading") {
@@ -647,26 +238,7 @@ export function ProductWorkbenchApp() {
                 className="primary-button"
                 data-testid="workbench-diagnostic-retry-button"
                 onClick={() => {
-                  setLoadState({ status: "loading" });
-                  void api.loadWorkbenchData().then((loaded) => {
-                    setLoadState({
-                      status: loaded.zhixus.length === 0 ? "empty" : "ready",
-                      data: loaded
-                    });
-                  }).catch((retryError) => {
-                    if (retryError instanceof WorkbenchLoadError) {
-                      setLoadState({
-                        status: "diagnostic",
-                        diagnostics: retryError.diagnostics,
-                        source: retryError.source
-                      });
-                    } else {
-                      setLoadState({
-                        status: "error",
-                        message: retryError instanceof Error ? retryError.message : "工作台加载失败"
-                      });
-                    }
-                  });
+                  void reloadWorkbench();
                 }}
               >
                 <RefreshCw /> 重新加载
@@ -1582,10 +1154,6 @@ function RuntimeBanner({ source, syncing }: { source: ProductApiSource; syncing:
   );
 }
 
-function isProductE2EEnabled(): boolean {
-  return import.meta.env.VITE_UVP_PRODUCT_E2E === "1";
-}
-
 function apiBaseUrlFromSource(source: ProductApiSource | undefined): string | null {
   if (!source) {
     return null;
@@ -1992,26 +1560,6 @@ function CheckStatement({ title, desc }: { title: string; desc: string }) {
 
 function FactRow({ icon, label, value, danger }: { icon: ReactNode; label: string; value: string; danger?: boolean }) {
   return <div className={`fact-row ${danger ? "danger" : ""}`}>{icon}<span>{label}</span><strong>{value}</strong></div>;
-}
-
-function readableError(error: unknown, fallback: string): string {
-  if (!(error instanceof Error)) {
-    return fallback;
-  }
-  if (error.message.includes("required_participants_missing")) {
-    return "关键参与方尚未全部接受邀请";
-  }
-  if (error.message.includes("evidence_required")) {
-    return "请先上传凭证";
-  }
-  if (error.message.includes("403")) {
-    return "当前账号没有权限执行该操作";
-  }
-  return error.message && error.message !== "Failed to fetch" ? error.message : fallback;
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function formatBytes(value: number): string {

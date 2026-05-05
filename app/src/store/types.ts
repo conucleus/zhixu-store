@@ -1,10 +1,12 @@
 import type {
   ChainAttestationStatus,
+  ChainProofRowDTO,
   StoreConsoleSummaryDTO,
   StoreProductSchemaDTO,
   StoreProductSchemaValidationDTO,
   StoreSearchResponseDTO,
   StoreSearchType,
+  StoreSupplierReviewStatus,
   StoreZhixuConsoleDTO,
   StoreZhixuLifecycleStatus
 } from "@uvp-eth/product-dto";
@@ -188,11 +190,37 @@ export interface StoreSearchInput {
 
 export interface StoreSupplierDTO {
   readonly supplierId: string;
+  readonly supplierSubjectId: string;
   readonly displayName: string;
   readonly wallet?: string;
-  readonly status: ChainAttestationStatus;
-  readonly capabilityLabel: string;
-  readonly updatedAt?: string;
+  readonly notificationProfile?: unknown;
+  readonly notificationProfileHash?: string;
+  readonly notificationUpdatedAt?: string;
+  readonly trustStatus: ChainAttestationStatus;
+  readonly trustLabel: string;
+  readonly capabilityTags: readonly string[];
+  readonly supportedRoleSlotIds: readonly string[];
+  readonly supportedStageIds: readonly string[];
+  readonly registryAddresses: readonly string[];
+  readonly recentOrderCount: number;
+  readonly openTaskCount: number;
+  readonly reviewStatus: StoreSupplierReviewStatus;
+  readonly metadataURI?: string;
+  readonly proofRows: readonly ChainProofRowDTO[];
+  readonly nextAction: string;
+  readonly updatedAt: string;
+}
+
+export interface StoreSupplierCapabilityUpdateInput {
+  readonly capabilityTags: readonly string[];
+  readonly supportedRoleSlotIds: readonly string[];
+  readonly supportedStageIds: readonly string[];
+  readonly reviewStatus: StoreSupplierReviewStatus;
+}
+
+export interface StoreSupplierMutationResultDTO {
+  readonly supplier: StoreSupplierDTO;
+  readonly governance?: unknown;
 }
 
 export interface StoreRuntimeSummaryDTO {

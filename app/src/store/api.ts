@@ -27,7 +27,9 @@ import type {
   StoreRuntimeSummaryDTO,
   StoreSearchInput,
   StoreSessionDTO,
+  StoreSupplierCapabilityUpdateInput,
   StoreSupplierDTO,
+  StoreSupplierMutationResultDTO,
   StoreRole,
   StoreZhixuDraftAttestationInput,
   StoreZhixuDraftAttestationResultDTO,
@@ -35,6 +37,15 @@ import type {
   StoreZhixuDraftReviewResultDTO,
   StoreZhixuSearchResultDTO
 } from "./types";
+import {
+  isRecord,
+  normalizeBaseUrl,
+  normalizeRuntimeEnv,
+  readLocalStorage,
+  readQueryValue,
+  shortValue,
+  stringValue
+} from "../shared/frontend";
 
 export interface StoreApiClient {
   readonly baseUrl?: string;
@@ -60,6 +71,10 @@ export interface StoreApiClient {
     input: StoreZhixuDraftAttestationInput
   ): Promise<StoreApiResult<StoreZhixuDraftAttestationResultDTO>>;
   listSuppliers(): Promise<StoreApiResult<readonly StoreSupplierDTO[]>>;
+  updateSupplierCapabilities(
+    supplierId: string,
+    input: StoreSupplierCapabilityUpdateInput
+  ): Promise<StoreApiResult<StoreSupplierMutationResultDTO>>;
   getRuntimeSummary(): Promise<StoreApiResult<StoreRuntimeSummaryDTO>>;
   createDockingSession(input: StoreDockingSessionCreateDTO): Promise<StoreApiResult<StoreDockingSessionDTO>>;
   getDockingSession(sessionId: string): Promise<StoreApiResult<StoreDockingSessionDTO>>;
@@ -298,6 +313,25 @@ class BrowserStoreApiClient implements StoreApiClient {
     );
   }
 
+  async updateSupplierCapabilities(
+    supplierId: string,
+    input: StoreSupplierCapabilityUpdateInput
+  ): Promise<StoreApiResult<StoreSupplierMutationResultDTO>> {
+    const pathname = `/store/suppliers/${encodeURIComponent(supplierId)}/review`;
+    this.requireCapability(pathname, "store.supplier.tags.update");
+    this.requireCapability(pathname, "store.supplier.review");
+    return await this.realWrite<unknown>("POST", pathname, {
+      ...input,
+      publicSummary: "Store operator updated non-authoritative supplier capability metadata.",
+      confirmation: {
+        supplierId
+      }
+    }).then((result) => ({
+      data: supplierMutationResultFromResponse(pathname, result.data),
+      source: result.source
+    }));
+  }
+
   async getRuntimeSummary(): Promise<StoreApiResult<StoreRuntimeSummaryDTO>> {
     const pathname = "/store/runtime/summary";
     return await this.withReadFallback(
@@ -420,6 +454,12 @@ class BrowserStoreApiClient implements StoreApiClient {
   private requireAdminAccess(pathname: string): void {
     if (!this.access.canAdmin) {
       throw new StoreApiError(pathname, 403, "forbidden", { code: "forbidden" });
+    }
+  }
+
+  private requireCapability(pathname: string, capability: StoreCapability): void {
+    if (!this.access.capabilities.includes(capability)) {
+      throw new StoreApiError(pathname, 403, "forbidden", { code: "forbidden", details: { requiredCapability: capability } });
     }
   }
 }
@@ -578,9 +618,24 @@ function mockSuppliers(): readonly StoreSupplierDTO[] {
   return [
     {
       supplierId: "demo-customs-broker",
+      supplierSubjectId: "0x0000000000000000000000000000000000000000000000000000000000003001",
       displayName: "演示报关执行方",
-      status: "attested",
-      capabilityLabel: "报关、出口单证、阶段确认"
+      wallet: "0x4444444444444444444444444444444444444444",
+      trustStatus: "attested",
+      trustLabel: "已链上背书",
+      capabilityTags: ["customs", "document-verification"],
+      supportedRoleSlotIds: ["customs-broker"],
+      supportedStageIds: ["export.customs"],
+      registryAddresses: ["0x2222222222222222222222222222222222222222"],
+      recentOrderCount: 1,
+      openTaskCount: 1,
+      reviewStatus: "approved_for_broadcast",
+      proofRows: [
+        { label: "链上事件", value: "SupplierAttested" },
+        { label: "Supplier Subject", value: "0x0000000000000000000000000000000000000000000000000000000000003001" }
+      ],
+      nextAction: "可进入候选匹配；新订单仍需显式参与授权",
+      updatedAt: "demo"
     }
   ];
 }
@@ -588,22 +643,77 @@ function mockSuppliers(): readonly StoreSupplierDTO[] {
 function storeSupplierFromTrustProjection(value: unknown): StoreSupplierDTO {
   const record = isRecord(value) ? value : {};
   const supplierId = stringValue(record.supplierId) ?? stringValue(record.supplierSubjectId) ?? stringValue(record.subjectId) ?? "unknown-supplier";
+  const supplierSubjectId = stringValue(record.supplierSubjectId) ?? stringValue(record.subjectId) ?? supplierId;
   const wallet = stringValue(record.wallet);
   const trustStatus = stringValue(record.trustStatus);
   const revoked = Boolean(record.revoked) || trustStatus === "revoked";
   const capabilityTags = Array.isArray(record.capabilityTags)
     ? record.capabilityTags.filter((item): item is string => typeof item === "string")
     : [];
+  const supportedRoleSlotIds = arrayOfStrings(record.supportedRoleSlotIds);
+  const supportedStageIds = arrayOfStrings(record.supportedStageIds);
+  const registryAddresses = arrayOfStrings(record.registryAddresses);
+  const reviewStatus = supplierReviewStatusValue(stringValue(record.reviewStatus));
   return {
     supplierId,
+    supplierSubjectId,
     displayName: stringValue(record.displayName) ?? stringValue(record.trustLabel) ?? shortValue(supplierId),
     ...(wallet ? { wallet } : {}),
-    status: revoked ? "revoked" : "attested",
-    capabilityLabel: capabilityTags.length > 0
-      ? capabilityTags.join("、")
-      : stringValue(record.metadataURI) ?? stringValue(record.capabilityHash) ?? "链上供应商背书",
-    ...(stringValue(record.updatedAt) ? { updatedAt: stringValue(record.updatedAt) } : {})
+    ...(record.notificationProfile !== undefined ? { notificationProfile: record.notificationProfile } : {}),
+    ...(stringValue(record.notificationProfileHash) ? { notificationProfileHash: stringValue(record.notificationProfileHash) } : {}),
+    ...(stringValue(record.notificationUpdatedAt) ? { notificationUpdatedAt: stringValue(record.notificationUpdatedAt) } : {}),
+    trustStatus: revoked ? "revoked" : trustStatus === "not_found" ? "not_found" : "attested",
+    trustLabel: stringValue(record.trustLabel) ?? (revoked ? "链上背书已撤销" : trustStatus === "not_found" ? "未发现链上背书" : "已链上背书"),
+    capabilityTags,
+    supportedRoleSlotIds,
+    supportedStageIds,
+    registryAddresses,
+    recentOrderCount: numberValue(record.recentOrderCount) ?? 0,
+    openTaskCount: numberValue(record.openTaskCount) ?? 0,
+    reviewStatus,
+    ...(stringValue(record.metadataURI) ? { metadataURI: stringValue(record.metadataURI) } : {}),
+    proofRows: proofRowsFromResponse(record.proofRows),
+    nextAction: stringValue(record.nextAction) ?? "Store metadata 仅用于候选筛选；链上 trust 以 Trust Registry 投影为准。",
+    updatedAt: stringValue(record.updatedAt) ?? ""
   };
+}
+
+function supplierMutationResultFromResponse(pathname: string, response: unknown): StoreSupplierMutationResultDTO {
+  const record = isRecord(response) ? response : {};
+  if (!isRecord(record.supplier)) {
+    throw new StoreApiError(pathname, 0, "store_supplier_response_invalid");
+  }
+  return {
+    supplier: storeSupplierFromTrustProjection(record.supplier),
+    ...(record.governance !== undefined ? { governance: record.governance } : {})
+  };
+}
+
+function proofRowsFromResponse(value: unknown): StoreSupplierDTO["proofRows"] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((item) => {
+    if (!isRecord(item)) {
+      return [];
+    }
+    const label = stringValue(item.label);
+    const proofValue = stringValue(item.value);
+    return label && proofValue ? [{ label, value: proofValue }] : [];
+  });
+}
+
+function supplierReviewStatusValue(value: string | undefined): StoreSupplierDTO["reviewStatus"] {
+  switch (value) {
+    case "draft":
+    case "submitted":
+    case "approved_for_broadcast":
+    case "rejected":
+    case "revoked":
+      return value;
+    default:
+      return "draft";
+  }
 }
 
 function accessHeaders(level: StoreAccessLevel, userId: string | undefined): Readonly<Record<string, string>> {
@@ -813,11 +923,6 @@ function isProductionLikeFrontendRuntime(): boolean {
   return import.meta.env.PROD === true && import.meta.env.VITE_UVP_PRODUCT_E2E !== "1";
 }
 
-function normalizeRuntimeEnv(value: string | undefined): string | undefined {
-  const normalized = value?.trim().toLowerCase();
-  return normalized ? normalized : undefined;
-}
-
 function resolveStoreApiBaseUrl(): string | undefined {
   const configured = import.meta.env.VITE_UVP_CHAIN_SERVICES_URL ?? import.meta.env.VITE_PRODUCT_API_BASE_URL;
   if (configured) {
@@ -829,43 +934,6 @@ function resolveStoreApiBaseUrl(): string | undefined {
   return readQueryValue("storeApiBase") ?? readLocalStorage("uvp.store.apiBaseUrl");
 }
 
-function normalizeBaseUrl(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed.replace(/\/+$/, "") : undefined;
-}
-
-function readQueryValue(name: string): string | undefined {
-  if (typeof window === "undefined") {
-    return undefined;
-  }
-  const value = new URLSearchParams(window.location.search).get(name)?.trim();
-  return value ? value : undefined;
-}
-
-function readLocalStorage(key: string): string | undefined {
-  if (typeof window === "undefined") {
-    return undefined;
-  }
-  try {
-    const value = window.localStorage.getItem(key)?.trim();
-    return value ? value : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function shortValue(value: string): string {
-  return value.length <= 18 ? value : `${value.slice(0, 8)}...${value.slice(-6)}`;
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
 function numberValue(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }

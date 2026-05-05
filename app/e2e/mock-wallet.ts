@@ -2,6 +2,7 @@ import { expect, test as base, type Page, type TestInfo } from "@playwright/test
 import { mkdir, writeFile } from "node:fs/promises";
 import { recoverTypedDataAddress, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { isRecord } from "../src/shared/frontend";
 
 export const mockWalletPrivateKey =
   "0x59c6995e998f97a5a0044966f094538864e17c8b7e37a2c115d7e4cc795fb0c1" satisfies Hex;
@@ -331,10 +332,6 @@ function normalizeTypedData(typedData: unknown) {
     throw new Error("typed_data_invalid");
   }
   return typedData as Parameters<typeof mockWalletAccount.signTypedData>[0];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }
 
 export async function writeRunScreenshot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
