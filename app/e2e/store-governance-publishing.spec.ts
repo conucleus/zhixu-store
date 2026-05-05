@@ -2,7 +2,6 @@ import type { Page, Request, Route } from "@playwright/test";
 import { expect, test } from "./mock-wallet";
 
 const apiBase = "/__store-governance-api";
-const officialDomainId = "0xb159ab86ae8968e6d24a1df250864e72dd740c618b079b954e8af7631cee4623";
 const planId = "0x1111111111111111111111111111111111111111111111111111111111111111";
 const planHash = "0x2222222222222222222222222222222222222222222222222222222222222222";
 const artifactHash = "0x3333333333333333333333333333333333333333333333333333333333333333";
@@ -178,7 +177,7 @@ test.describe("Store Governance Publishing Closure", () => {
 
 async function completeStoreReview(page: Page): Promise<void> {
   await expect(page.getByTestId("store-search-page")).toBeVisible();
-  await page.getByPlaceholder("粘贴 Zhixu YAML 或 HookPlan manifest JSON").fill("name: governance-publishing-demo\n");
+  await page.getByPlaceholder("粘贴 Zhixu YAML 或 on-chain HookPlan manifest JSON").fill("name: governance-publishing-demo\n");
   await page.getByTestId("store-import-draft-button").click();
   await expect(page.getByTestId("store-import-action-notice")).toHaveAttribute("data-phase", "success");
 
@@ -310,18 +309,14 @@ async function installStoreGovernanceApiMock(
         return;
       }
       const body = request.postDataJSON() as {
-        readonly domainId?: string;
         readonly confirmation?: {
           readonly draftId?: string;
-          readonly domainId?: string;
           readonly planId?: string;
           readonly planHash?: string;
         };
       };
-      expect(body.domainId).toBe(officialDomainId);
       expect(body.confirmation).toMatchObject({
         draftId: draft.draftId,
-        domainId: officialDomainId,
         planId,
         planHash
       });
@@ -335,7 +330,7 @@ async function installStoreGovernanceApiMock(
       await fulfillJson(route, 202, {
         draft,
         attestation: {
-          request: { domainId: body.domainId, planId, planHash, artifactHash },
+          request: { planId, planHash, artifactHash },
           log: { txLogId: draft.governanceTxLogId, status: "broadcasting", txHash: governanceTxHash }
         }
       });

@@ -1,7 +1,7 @@
 import { AlertTriangle, CheckCircle2, ClipboardCheck, FileCheck2, GitBranch, Layers3, Loader2, RefreshCw, Save, Search, ShieldCheck, Truck, UploadCloud, Users, Wand2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import { DEFAULT_OFFICIAL_DOMAIN_ID, type StoreProductSchemaDTO, type StoreProductSchemaValidationDTO } from "@uvp-eth/product-dto";
+import type { StoreProductSchemaDTO, StoreProductSchemaValidationDTO } from "@uvp-eth/product-dto";
 import { readableStoreError } from "./api";
 import type {
   StoreAccessState,
@@ -98,7 +98,6 @@ export function StoreSearchPage({
   const [reviewDraft, setReviewDraft] = useState<StoreZhixuDraftDTO | undefined>();
   const [productSchema, setProductSchema] = useState<StoreProductSchemaDTO | undefined>();
   const [schemaText, setSchemaText] = useState("");
-  const [attestationDomainId, setAttestationDomainId] = useState(DEFAULT_OFFICIAL_DOMAIN_ID);
   const [attestationConfirmation, setAttestationConfirmation] = useState<AttestationConfirmationState>({
     draftId: "",
     planId: "",
@@ -158,7 +157,7 @@ export function StoreSearchPage({
   async function handleImportDraft(): Promise<void> {
     const content = importForm.content.trim();
     if (!content) {
-      setImportAction({ phase: "error", message: "请先粘贴 Zhixu YAML 或 HookPlan manifest 内容；不会发送空导入请求。" });
+      setImportAction({ phase: "error", message: "请先粘贴 Zhixu YAML 或 on-chain HookPlan manifest 内容；不会发送空导入请求。" });
       return;
     }
     setImportAction({ phase: "pending", message: "正在调用 Store 导入接口" });
@@ -288,13 +287,8 @@ export function StoreSearchPage({
     if (!reviewDraft) {
       return;
     }
-    const domainId = attestationDomainId.trim();
     const expectedPlanId = reviewDraft.compilePreview?.planId;
     const expectedPlanHash = reviewDraft.compilePreview?.planHash;
-    if (!domainId) {
-      setGovernanceAction({ phase: "error", message: "请填写官方 trust domain id 后再请求链上背书" });
-      return;
-    }
     if (
       attestationConfirmation.draftId.trim() !== reviewDraft.draftId ||
       (expectedPlanId && attestationConfirmation.planId.trim() !== expectedPlanId) ||
@@ -306,10 +300,8 @@ export function StoreSearchPage({
     setGovernanceAction({ phase: "pending", message: "正在调用 request-attestation；Store metadata 不会创建 trust" });
     try {
       const result = await onRequestDraftAttestation(reviewDraft.draftId, {
-        domainId,
         confirmation: {
           draftId: reviewDraft.draftId,
-          domainId,
           ...(expectedPlanId ? { planId: expectedPlanId } : {}),
           ...(expectedPlanHash ? { planHash: expectedPlanHash } : {})
         }
@@ -386,11 +378,11 @@ export function StoreSearchPage({
                 value={importForm.sourceKind}
                 onChange={(event) => setImportForm((current) => ({
                   ...current,
-                  sourceKind: event.target.value === "hook_plan_manifest" ? "hook_plan_manifest" : "zhixu_yaml"
+                  sourceKind: event.target.value === "onchain_hook_plan_manifest" ? "onchain_hook_plan_manifest" : "zhixu_yaml"
                 }))}
               >
                 <option value="zhixu_yaml">Zhixu YAML</option>
-                <option value="hook_plan_manifest">HookPlan Manifest</option>
+                <option value="onchain_hook_plan_manifest">On-chain HookPlan Manifest</option>
               </select>
             </label>
             <label className="field">
@@ -429,7 +421,7 @@ export function StoreSearchPage({
               <span>内容<em>*</em></span>
               <textarea
                 onChange={(event) => setImportForm((current) => ({ ...current, content: event.target.value }))}
-                placeholder="粘贴 Zhixu YAML 或 HookPlan manifest JSON"
+                placeholder="粘贴 Zhixu YAML 或 on-chain HookPlan manifest JSON"
                 value={importForm.content}
               />
             </label>
@@ -524,10 +516,8 @@ export function StoreSearchPage({
           <DraftGovernancePanel
             access={access}
             action={governanceAction}
-            domainId={attestationDomainId}
             draft={reviewDraft}
             confirmation={attestationConfirmation}
-            onDomainIdChange={setAttestationDomainId}
             onConfirmationChange={setAttestationConfirmation}
             onRequestAttestation={() => void handleRequestAttestation()}
             onRefreshCatalog={onRefreshCatalog}
@@ -542,20 +532,16 @@ function DraftGovernancePanel({
   access,
   action,
   confirmation,
-  domainId,
   draft,
   onConfirmationChange,
-  onDomainIdChange,
   onRequestAttestation,
   onRefreshCatalog
 }: {
   readonly access: StoreAccessState;
   readonly action: ActionState;
   readonly confirmation: AttestationConfirmationState;
-  readonly domainId: string;
   readonly draft: StoreZhixuDraftDTO;
   readonly onConfirmationChange: (value: AttestationConfirmationState) => void;
-  readonly onDomainIdChange: (value: string) => void;
   readonly onRequestAttestation: () => void;
   readonly onRefreshCatalog?: () => Promise<StoreZhixuSearchResultDTO>;
 }) {
@@ -608,20 +594,12 @@ function DraftGovernancePanel({
       {draft.status === "approved_for_broadcast" && !access.canAdmin ? (
         <div className="store-access-note compact" data-testid="store-governance-admin-wait" data-state="admin_wait">
           <ShieldCheck />
-          <span>等待 governance admin 请求 request-attestation；普通 Store operator 不能广播官方信任域背书。</span>
+          <span>等待 governance admin 请求 request-attestation；普通 Store operator 不能广播 registry 背书。</span>
         </div>
       ) : null}
 
       {canRequestAttestation ? (
         <div className="governance-request-row">
-          <label className="field">
-            <span>Official trust domain id</span>
-            <input
-              aria-label="Official trust domain id"
-              onChange={(event) => onDomainIdChange(event.target.value)}
-              value={domainId}
-            />
-          </label>
           <label className="field">
             <span>Confirm Draft ID</span>
             <input
@@ -652,7 +630,7 @@ function DraftGovernancePanel({
           <button
             className="primary-button"
             data-testid="store-request-attestation-button"
-            disabled={action.phase === "pending" || !domainId.trim() || !confirmationReady}
+            disabled={action.phase === "pending" || !confirmationReady}
             onClick={onRequestAttestation}
           >
             {action.phase === "pending" ? <Loader2 className="spin" /> : <ShieldCheck />}
@@ -945,7 +923,7 @@ function publishingChecklistItems(
       label: "governance broadcast requested",
       detail: governanceRequested
         ? draft.governanceTxLogId ? `request-attestation 已创建 tx log ${draft.governanceTxLogId}` : "request-attestation 已提交。"
-        : "等待 governance admin 请求官方 trust domain attestation。",
+        : "等待 governance admin 请求 registry attestation。",
       state: governanceRequested ? "done" : reviewApproved ? "current" : "pending",
       tone: governanceRequested ? "success" : reviewApproved ? "info" : "default"
     },
