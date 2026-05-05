@@ -25,7 +25,7 @@ not affected.
 
 - Ordinary users should see orders, tasks, evidence, payment conditions,
   disputes, and proof. They should not see protocol words such as signal,
-  HookReady, ABI, gas, or trust domain.
+  HookReady, ABI, gas, or registryAddress.
 - Source of truth for chain-native UVP state remains EVM contracts and chain
   events.
 - `chain-services` provides the first read projections, task projection, proof
@@ -124,7 +124,7 @@ The baseline expectations are:
 - Store detail explains lifecycle, plan identity, chain attestation, next
   action, and advanced proof without presenting Store metadata as chain truth.
 - Ordinary Product pages continue to avoid protocol jargon such as HookPlan,
-  ABI, gas, sourceId, signalId, and trust domain.
+  ABI, gas, sourceId, signalId, and registryAddress.
 
 ## Phase 1-4 Store Productization
 

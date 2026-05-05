@@ -125,7 +125,7 @@ interface ProductWorkbenchE2EState {
   readonly taskId: string | null;
   readonly evidenceId: string | null;
   readonly submissionId: string | null;
-  readonly registrationTxHash: string | null;
+  readonly triggerTxHash: string | null;
   readonly signalTxHash: string | null;
 }
 
@@ -329,13 +329,29 @@ export function ProductWorkbenchApp() {
     if (!currentDraft) {
       return;
     }
-    setRegisterDraftAction({ phase: "pending", message: "订单启动中，等待确认" });
     try {
-      const result = await api.submitOrderDraft(currentDraft.draftId);
+      setRegisterDraftAction({ phase: "pending", message: "正在准备订单启动签名" });
+      const account = await requestWalletAccount(allowMockWallet);
+      const prepared = await api.prepareOrderTrigger(currentDraft.draftId, { walletAddress: account.address });
+      setRegisterDraftAction({ phase: "pending", message: "等待钱包授权", source: prepared.source });
+      const signature = await signTypedData(account, prepared.data.typedData, { allowMock: allowMockWallet });
+      const result = await api.triggerOrder(currentDraft.draftId, {
+        prepareId: prepared.data.prepareId,
+        signature,
+        walletAddress: account.address
+      });
       setDraft(result.data);
       setRegisterDraftAction({ phase: "success", message: "订单已启动，正在等待订单页同步", source: result.source });
       window.setTimeout(() => setView("order"), 500);
     } catch (error) {
+      if (error instanceof WalletNotConnectedError) {
+        setRegisterDraftAction({ phase: "error", message: "请连接浏览器钱包后再启动订单" });
+        return;
+      }
+      if (error instanceof WalletRejectedError) {
+        setRegisterDraftAction({ phase: "error", message: "你取消了签名，可以重新启动" });
+        return;
+      }
       setRegisterDraftAction({ phase: "error", message: readableError(error, "订单启动失败") });
     }
   }
@@ -525,11 +541,11 @@ export function ProductWorkbenchApp() {
     syncState: data?.syncState ?? null,
     zhixuId: selectedZhixu?.zhixuId ?? null,
     draftId: draft?.draftId ?? null,
-    orderId: draft?.registeredOrderId ?? selectedOrder?.orderId ?? null,
+    orderId: draft?.triggeredOrderId ?? selectedOrder?.orderId ?? null,
     taskId: activeTask?.taskId ?? null,
     evidenceId: evidence?.evidenceId ?? null,
     submissionId: submitMachine.submission?.submissionId ?? null,
-    registrationTxHash: draft?.registrationTxHash ?? null,
+    triggerTxHash: draft?.triggerTxHash ?? null,
     signalTxHash: submitMachine.submission?.txHash ?? evidence?.boundSignalTxHash ?? null
   };
 
@@ -678,7 +694,7 @@ export function ProductWorkbenchApp() {
       data-uvp-evidence-id={e2eState.evidenceId ?? ""}
       data-uvp-mode={e2eState.mode}
       data-uvp-order-id={e2eState.orderId ?? ""}
-      data-uvp-registration-tx-hash={e2eState.registrationTxHash ?? ""}
+      data-uvp-trigger-tx-hash={e2eState.triggerTxHash ?? ""}
       data-uvp-signal-tx-hash={e2eState.signalTxHash ?? ""}
       data-uvp-source={e2eState.sourceKind ?? ""}
       data-uvp-submission-id={e2eState.submissionId ?? ""}
@@ -2022,12 +2038,14 @@ function draftStatusLabel(status: ProductOrderDraftDTO["status"]): string {
       return "草稿";
     case "awaiting_participants":
       return "等待参与方";
-    case "ready_to_register":
+    case "ready_to_trigger":
       return "可启动";
-    case "registering":
+    case "triggering":
       return "启动中";
-    case "registered":
+    case "triggered":
       return "已启动";
+    case "failed":
+      return "启动失败";
     case "cancelled":
       return "已取消";
   }

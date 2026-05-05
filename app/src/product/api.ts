@@ -71,9 +71,10 @@ export class WorkbenchLoadError extends Error {
 export type ProductOrderDraftStatus =
   | "draft"
   | "awaiting_participants"
-  | "ready_to_register"
-  | "registering"
-  | "registered"
+  | "ready_to_trigger"
+  | "triggering"
+  | "triggered"
+  | "failed"
   | "cancelled";
 
 export type DraftParticipantStatus = "missing" | "invited" | "accepted" | "rejected" | "replaced";
@@ -96,8 +97,8 @@ export interface ProductOrderDraftDTO {
   readonly createdBy: string;
   readonly createdAt: string;
   readonly updatedAt: string;
-  readonly registeredOrderId?: string;
-  readonly registrationTxHash?: string;
+  readonly triggeredOrderId?: string;
+  readonly triggerTxHash?: string;
 }
 
 export interface DraftParticipantDTO {
@@ -264,6 +265,23 @@ export interface SubmitTaskInput {
   readonly walletAddress: string;
 }
 
+export interface PreparedOrderTriggerDTO {
+  readonly prepareId: string;
+  readonly triggerId: string;
+  readonly draftId: string;
+  readonly orderId: string;
+  readonly expiresAt: string;
+  readonly submitter: string;
+  readonly typedData: unknown;
+  readonly summary?: Readonly<Record<string, unknown>>;
+}
+
+export interface TriggerOrderInput {
+  readonly prepareId: string;
+  readonly signature: string;
+  readonly walletAddress: string;
+}
+
 export interface ProductApiClient {
   readonly baseUrl?: string;
   loadWorkbenchData(): Promise<ProductWorkbenchData>;
@@ -274,7 +292,8 @@ export interface ProductApiClient {
   acceptInvite(inviteId: string, input: { readonly displayName: string; readonly walletAddress: string; readonly contact: string }): Promise<ProductApiResult<ProductInviteDTO>>;
   rejectInvite(inviteId: string): Promise<ProductApiResult<ProductInviteDTO>>;
   listParticipants(draftId: string): Promise<ProductApiResult<readonly DraftParticipantDTO[]>>;
-  submitOrderDraft(draftId: string): Promise<ProductApiResult<ProductOrderDraftDTO>>;
+  prepareOrderTrigger(draftId: string, input: { readonly walletAddress: string }): Promise<ProductApiResult<PreparedOrderTriggerDTO>>;
+  triggerOrder(draftId: string, input: TriggerOrderInput): Promise<ProductApiResult<ProductOrderDraftDTO>>;
   uploadEvidence(input: UploadEvidenceInput): Promise<ProductApiResult<EvidenceObjectDTO>>;
   getEvidence(evidenceId: string): Promise<ProductApiResult<EvidenceObjectDTO>>;
   getEvidenceProof(evidenceId: string): Promise<ProductApiResult<EvidenceProofDTO>>;
@@ -496,15 +515,32 @@ class BrowserProductApiClient implements ProductApiClient {
     );
   }
 
-  async submitOrderDraft(draftId: string): Promise<ProductApiResult<ProductOrderDraftDTO>> {
+  async prepareOrderTrigger(
+    draftId: string,
+    input: { readonly walletAddress: string }
+  ): Promise<ProductApiResult<PreparedOrderTriggerDTO>> {
     return await this.withFallback(
       "POST",
-      `/product/order-drafts/${encodeURIComponent(draftId)}/submit`,
+      `/product/order-drafts/${encodeURIComponent(draftId)}/prepare-trigger`,
+      async () => await this.requestJson<{ readonly prepared: PreparedOrderTriggerDTO }>(
+        "POST",
+        `/product/order-drafts/${encodeURIComponent(draftId)}/prepare-trigger`,
+        input
+      ).then((response) => response.prepared),
+      () => mockPrepareOrderTrigger(draftId, input)
+    );
+  }
+
+  async triggerOrder(draftId: string, input: TriggerOrderInput): Promise<ProductApiResult<ProductOrderDraftDTO>> {
+    return await this.withFallback(
+      "POST",
+      `/product/order-drafts/${encodeURIComponent(draftId)}/trigger`,
       async () => await this.requestJson<{ readonly draft: ProductOrderDraftDTO }>(
         "POST",
-        `/product/order-drafts/${encodeURIComponent(draftId)}/submit`
+        `/product/order-drafts/${encodeURIComponent(draftId)}/trigger`,
+        input
       ).then((response) => response.draft),
-      () => mockSubmitOrderDraft(draftId)
+      () => mockTriggerOrder(draftId, input)
     );
   }
 
@@ -932,20 +968,60 @@ function mockListParticipants(draftId: string): readonly DraftParticipantDTO[] {
   return participants;
 }
 
-function mockSubmitOrderDraft(draftId: string): ProductOrderDraftDTO {
+function mockPrepareOrderTrigger(
+  draftId: string,
+  input: { readonly walletAddress: string }
+): PreparedOrderTriggerDTO {
   const draft = ensureDraft(draftId);
   const participants = mockListParticipants(draftId);
   const requiredReady = participants.filter((participant) => participant.required).every((participant) =>
     participant.status === "accepted"
   );
   if (!requiredReady) {
-    throw new ApiRequestError(`/product/order-drafts/${draftId}/submit`, 409, "required_participants_missing");
+    throw new ApiRequestError(`/product/order-drafts/${draftId}/prepare-trigger`, 409, "required_participants_missing");
   }
+  const prepareId = `prepare-${pseudoHash(`${draftId}:${input.walletAddress}:${Date.now()}`).slice(2, 14)}`;
+  const orderId = pseudoHash(`${draftId}:order`);
+  return {
+    prepareId,
+    triggerId: `trigger-${prepareId.slice("prepare-".length)}`,
+    draftId,
+    orderId,
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    submitter: input.walletAddress,
+    typedData: {
+      domain: {
+        name: "UVPStateMachine",
+        version: "0.7",
+        chainId: 31337,
+        verifyingContract: "0x0000000000000000000000000000000000000001"
+      },
+      types: {
+        UVPStateMachineTriggerOrderFromOutside: [
+          { name: "orderId", type: "bytes32" },
+          { name: "planId", type: "bytes32" },
+          { name: "submitter", type: "address" },
+          { name: "deadline", type: "uint256" }
+        ]
+      },
+      primaryType: "UVPStateMachineTriggerOrderFromOutside",
+      message: {
+        orderId,
+        planId: draft.planId,
+        submitter: input.walletAddress,
+        deadline: Math.floor(Date.now() / 1000 + 3600).toString()
+      }
+    }
+  };
+}
+
+function mockTriggerOrder(draftId: string, input: TriggerOrderInput): ProductOrderDraftDTO {
+  const draft = ensureDraft(draftId);
   const submitted: ProductOrderDraftDTO = {
     ...draft,
-    status: "registered",
-    registeredOrderId: DEMO_ORDER_ID,
-    registrationTxHash: pseudoHash(`${draftId}:registration:${Date.now()}`),
+    status: "triggered",
+    triggeredOrderId: pseudoHash(`${draftId}:${input.prepareId}:order`),
+    triggerTxHash: pseudoHash(`${draftId}:trigger:${input.signature}`),
     updatedAt: new Date().toISOString()
   };
   mockDrafts.set(draftId, submitted);

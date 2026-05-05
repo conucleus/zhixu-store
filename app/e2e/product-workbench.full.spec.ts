@@ -12,14 +12,12 @@ interface ProductWorkbenchE2EState {
   readonly syncState?: string | null;
   readonly zhixuId?: string | null;
   readonly draftId?: string | null;
-  readonly registrationId?: string | null;
-  readonly startId?: string | null;
+  readonly triggerId?: string | null;
   readonly orderId?: string | null;
   readonly taskId?: string | null;
   readonly evidenceId?: string | null;
   readonly submissionId?: string | null;
-  readonly registrationTxHash?: string | null;
-  readonly startTxHash?: string | null;
+  readonly triggerTxHash?: string | null;
   readonly signalTxHash?: string | null;
   readonly projection?: ProductProjectionSummary;
   readonly proof?: ProductProofSummary;
@@ -39,7 +37,7 @@ interface ProductProofSummary {
   readonly proofEventCount: number;
   readonly transactionHashes: readonly string[];
   readonly blockNumbers: readonly string[];
-  readonly hasRegistrationProof: boolean;
+  readonly hasTriggerProof: boolean;
   readonly hasSignalProof: boolean;
 }
 
@@ -113,20 +111,19 @@ test.describe("Product Workbench full browser Product E2E @full", () => {
       await expect(page.getByTestId("register-order-button")).toBeEnabled();
       await writeRunScreenshot(page, testInfo, "full-invite-participants");
 
-      const registrationResponsePromise = waitForProductResponse(page, /\/product\/order-drafts\/[^/]+\/submit$/);
+      const registrationResponsePromise = waitForProductResponse(page, /\/product\/order-drafts\/[^/]+\/trigger$/);
       await page.getByTestId("register-order-button").click();
-      const registrationBody = await responseJson(await registrationResponsePromise, "api", "submit draft registration");
-      const registration = requireRecord(registrationBody.registration, "registration");
-      const registrationId = requireString(registration.registrationId, "registration.registrationId");
+      const registrationBody = await responseJson(await registrationResponsePromise, "api", "trigger order");
+      const registration = requireRecord(registrationBody.trigger, "registration");
+      const triggerId = requireString(registration.triggerId, "registration.triggerId");
       Object.assign(closure, {
         draftId: requireString(requireRecord(registrationBody.draft, "draft").draftId, "draft.draftId"),
-        registrationId,
+        triggerId,
         orderId: requireString(registration.orderId, "registration.orderId"),
-        registrationTxHash: requireString(registration.txHash, "registration.txHash")
+        triggerTxHash: requireString(registration.txHash, "registration.txHash")
       });
       await expect(page.getByText(/订单已启动|订单启动中，等待确认/)).toBeVisible();
 
-      Object.assign(closure, await startOrder(page, apiBaseUrl, registrationId));
       await waitForStartedTaskProjection(page, apiBaseUrl, requireString(closure.orderId, "orderId"));
       await page.reload();
       await expectWorkbenchSource(page, "real");
@@ -169,7 +166,7 @@ test.describe("Product Workbench full browser Product E2E @full", () => {
       Object.assign(closure, {
         projection: await readOrderProjectionSummary(page, apiBaseUrl, orderId),
         proof: await waitForProofSummary(page, apiBaseUrl, orderId, {
-          registrationTxHash: requireString(closure.registrationTxHash, "registrationTxHash"),
+          triggerTxHash: requireString(closure.triggerTxHash, "triggerTxHash"),
           signalTxHash: requireString(closure.signalTxHash, "signalTxHash")
         })
       });
@@ -177,16 +174,16 @@ test.describe("Product Workbench full browser Product E2E @full", () => {
       const summary = { ...await productState(page), ...closure };
       await writeFullFlowSummary({ ...summary, success: true }, testInfo);
       expect(summary.draftId, "full summary should include draftId").toBeTruthy();
-      expect(summary.registrationId, "full summary should include registrationId").toBeTruthy();
+      expect(summary.triggerId, "full summary should include triggerId").toBeTruthy();
       expect(summary.startId, "full summary should include startId").toBeTruthy();
       expect(summary.orderId, "full summary should include orderId").toBeTruthy();
       expect(summary.evidenceId, "full summary should include evidenceId").toBeTruthy();
       expect(summary.submissionId, "full summary should include submissionId").toBeTruthy();
-      expect(summary.registrationTxHash, "full summary should include registrationTxHash").toBeTruthy();
+      expect(summary.triggerTxHash, "full summary should include triggerTxHash").toBeTruthy();
       expect(summary.startTxHash, "full summary should include startTxHash").toBeTruthy();
       expect(summary.signalTxHash, "full summary should include signalTxHash").toBeTruthy();
       expect(summary.projection?.syncStatus, "full summary should include projection sync status").toBeTruthy();
-      expect(summary.proof?.hasRegistrationProof, "order proof should include registration tx").toBe(true);
+      expect(summary.proof?.hasTriggerProof, "order proof should include trigger tx").toBe(true);
       expect(summary.proof?.hasSignalProof, "order proof should include signal tx").toBe(true);
     } catch (error) {
       const failedStage = error instanceof FullFlowStageError ? error.failedStage : "playwright";
@@ -391,20 +388,19 @@ async function openReadyTask(page: Page, walletAddress = "0x00000000000000000000
   expect(participantResult.missingRequired).toBe(0);
   await expect(page.getByTestId("register-order-button")).toBeEnabled();
 
-  const registrationResponsePromise = waitForProductResponse(page, /\/product\/order-drafts\/[^/]+\/submit$/);
+  const registrationResponsePromise = waitForProductResponse(page, /\/product\/order-drafts\/[^/]+\/trigger$/);
   await page.getByTestId("register-order-button").click();
-  const registrationBody = await responseJson(await registrationResponsePromise, "api", "submit draft registration");
-  const registration = requireRecord(registrationBody.registration, "registration");
-  const registrationId = requireString(registration.registrationId, "registration.registrationId");
+  const registrationBody = await responseJson(await registrationResponsePromise, "api", "trigger order");
+  const registration = requireRecord(registrationBody.trigger, "registration");
+  const triggerId = requireString(registration.triggerId, "registration.triggerId");
   Object.assign(closure, {
     draftId: requireString(requireRecord(registrationBody.draft, "draft").draftId, "draft.draftId"),
-    registrationId,
+    triggerId,
     orderId: requireString(registration.orderId, "registration.orderId"),
-    registrationTxHash: requireString(registration.txHash, "registration.txHash")
+    triggerTxHash: requireString(registration.txHash, "registration.txHash")
   });
 
   const apiBaseUrl = requireString((await productState(page)).apiBaseUrl, "apiBaseUrl");
-  Object.assign(closure, await startOrder(page, apiBaseUrl, registrationId));
   await waitForStartedTaskProjection(page, apiBaseUrl, requireString(closure.orderId, "orderId"));
   await page.reload();
   await expectWorkbenchSource(page, "real");
@@ -481,7 +477,7 @@ async function productState(page: Page): Promise<ProductWorkbenchE2EState> {
       taskId: workbench?.getAttribute("data-uvp-task-id") ?? null,
       evidenceId: workbench?.getAttribute("data-uvp-evidence-id") ?? null,
       submissionId: workbench?.getAttribute("data-uvp-submission-id") ?? null,
-      registrationTxHash: workbench?.getAttribute("data-uvp-registration-tx-hash") ?? null,
+      triggerTxHash: workbench?.getAttribute("data-uvp-trigger-tx-hash") ?? null,
       signalTxHash: workbench?.getAttribute("data-uvp-signal-tx-hash") ?? null
     };
   });
@@ -535,50 +531,6 @@ async function responseJson(response: Awaited<ReturnType<typeof waitForProductRe
   return body;
 }
 
-async function startOrder(page: Page, apiBaseUrl: string, registrationId: string): Promise<Partial<ProductWorkbenchE2EState>> {
-  const projectionTimeoutMs = Number(process.env.UVP_PRODUCT_E2E_PROJECTION_TIMEOUT_MS ?? "240000");
-  const deadline = Date.now() + projectionTimeoutMs;
-  let lastResult: { readonly status: number; readonly text: string } | undefined;
-  while (Date.now() <= deadline) {
-    const result = await page.evaluate(async ({ baseUrl, id }) => {
-      const response = await fetch(`${baseUrl}/product/order-registrations/${encodeURIComponent(id)}/start`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}"
-      });
-      const text = await response.text();
-      return { status: response.status, text };
-    }, { baseUrl: apiBaseUrl, id: registrationId });
-    lastResult = result;
-    const body = parseJsonObject(result.text, "start order");
-    if ([404, 405, 501].includes(result.status)) {
-      throw new FullFlowStageError("api", `PRD25 start API is not available: POST /product/order-registrations/${registrationId}/start returned ${result.status}`);
-    }
-    if (result.status === 409 && body.error === "registration_not_confirmed") {
-      await page.waitForTimeout(1000);
-      continue;
-    }
-    if (result.status === 502) {
-      throw new FullFlowStageError("tx", `Product start API broadcast failed: ${result.text.slice(0, 500)}`);
-    }
-    if (result.status < 200 || result.status >= 300) {
-      throw new FullFlowStageError("api", `Product start API returned ${result.status}: ${result.text.slice(0, 500)}`);
-    }
-    const start = requireRecord(body.start, "start");
-    const registration = requireRecord(body.registration, "registration");
-    return {
-      registrationId,
-      startId: requireString(start.startId, "start.startId"),
-      orderId: requireString(start.orderId ?? registration.orderId, "start.orderId"),
-      startTxHash: requireString(start.txHash, "start.txHash")
-    };
-  }
-  throw new FullFlowStageError(
-    "indexer",
-    `registration ${registrationId} was not confirmed before start timeout; last response=${lastResult ? `${lastResult.status}: ${lastResult.text.slice(0, 500)}` : "none"}`
-  );
-}
-
 async function waitForStartedTaskProjection(page: Page, apiBaseUrl: string, orderId: string): Promise<void> {
   const projectionTimeoutMs = Number(process.env.UVP_PRODUCT_E2E_PROJECTION_TIMEOUT_MS ?? "240000");
   const deadline = Date.now() + projectionTimeoutMs;
@@ -629,7 +581,7 @@ async function readProofSummary(
   page: Page,
   apiBaseUrl: string,
   orderId: string,
-  hashes: { readonly registrationTxHash: string; readonly signalTxHash: string }
+  hashes: { readonly triggerTxHash: string; readonly signalTxHash: string }
 ): Promise<ProductProofSummary> {
   const [timelineResult, proofResult] = await Promise.all([
     page.evaluate(async ({ baseUrl, id }) => {
@@ -658,7 +610,7 @@ async function readProofSummary(
     proofEventCount: proof.length,
     transactionHashes,
     blockNumbers,
-    hasRegistrationProof: transactionHashes.some((hash) => hash.toLowerCase() === hashes.registrationTxHash.toLowerCase()),
+    hasTriggerProof: transactionHashes.some((hash) => hash.toLowerCase() === hashes.triggerTxHash.toLowerCase()),
     hasSignalProof: transactionHashes.some((hash) => hash.toLowerCase() === hashes.signalTxHash.toLowerCase())
   };
 }
@@ -667,21 +619,21 @@ async function waitForProofSummary(
   page: Page,
   apiBaseUrl: string,
   orderId: string,
-  hashes: { readonly registrationTxHash: string; readonly signalTxHash: string }
+  hashes: { readonly triggerTxHash: string; readonly signalTxHash: string }
 ): Promise<ProductProofSummary> {
   const projectionTimeoutMs = Number(process.env.UVP_PRODUCT_E2E_PROJECTION_TIMEOUT_MS ?? "240000");
   const deadline = Date.now() + projectionTimeoutMs;
   let lastSummary: ProductProofSummary | undefined;
   while (Date.now() <= deadline) {
     lastSummary = await readProofSummary(page, apiBaseUrl, orderId, hashes);
-    if (lastSummary.hasRegistrationProof && lastSummary.hasSignalProof) {
+    if (lastSummary.hasTriggerProof && lastSummary.hasSignalProof) {
       return lastSummary;
     }
     await page.waitForTimeout(1000);
   }
   throw new FullFlowStageError(
     "indexer",
-    `order proof did not include required txs for ${orderId}; hasRegistrationProof=${String(lastSummary?.hasRegistrationProof ?? false)} hasSignalProof=${String(lastSummary?.hasSignalProof ?? false)} txs=${JSON.stringify(lastSummary?.transactionHashes ?? [])}`
+    `order proof did not include required txs for ${orderId}; hasTriggerProof=${String(lastSummary?.hasTriggerProof ?? false)} hasSignalProof=${String(lastSummary?.hasSignalProof ?? false)} txs=${JSON.stringify(lastSummary?.transactionHashes ?? [])}`
   );
 }
 

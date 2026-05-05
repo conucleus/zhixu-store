@@ -84,7 +84,7 @@ export interface StoreZhixuSearchResultDTO {
   readonly search?: StoreSearchResponseDTO;
 }
 
-export type StoreZhixuDraftSourceKind = "zhixu_yaml" | "hook_plan_manifest";
+export type StoreZhixuDraftSourceKind = "zhixu_yaml" | "onchain_hook_plan_manifest";
 
 export interface StoreImportZhixuDraftInput {
   readonly sourceKind: StoreZhixuDraftSourceKind;
@@ -165,13 +165,11 @@ export interface StoreZhixuDraftReviewResultDTO {
 }
 
 export interface StoreZhixuDraftAttestationInput {
-  readonly domainId: string;
   readonly metadataURI?: string;
   readonly metadata?: unknown;
   readonly policy?: unknown;
   readonly confirmation?: {
     readonly draftId?: string;
-    readonly domainId?: string;
     readonly planId?: string;
     readonly planHash?: string;
   };

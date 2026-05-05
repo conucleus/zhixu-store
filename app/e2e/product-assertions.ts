@@ -6,7 +6,7 @@ export const forbiddenOrdinaryTerms = [
   { label: "sourceId", pattern: /sourceId/i },
   { label: "raw calldata", pattern: /raw calldata/i },
   { label: "gas", pattern: /\bgas\b/i },
-  { label: "trust domain", pattern: /trust domain/i }
+  { label: "registryAddress", pattern: /registryAddress/i }
 ] as const;
 
 export async function assertOrdinaryPageCopy(page: Page): Promise<void> {
