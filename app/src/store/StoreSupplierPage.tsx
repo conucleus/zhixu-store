@@ -1,5 +1,6 @@
-import { AlertTriangle, CheckCircle2, Loader2, ShieldCheck, Tag, Users } from "lucide-react";
-import { useEffect, useState } from "react";
+import { AlertTriangle, CheckCircle2, Loader2, Pencil, RefreshCw, Save, ShieldCheck, Tag, Users, X } from "lucide-react";
+import { STORE_SUPPLIER_CAPABILITY_TAGS } from "@uvp-eth/product-dto";
+import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { readableStoreError, type StoreApiClient } from "./api";
 import type { StoreAccessState, StoreSupplierDTO } from "./types";
@@ -9,6 +10,20 @@ type SupplierState =
   | { readonly status: "ready"; readonly suppliers: readonly StoreSupplierDTO[] }
   | { readonly status: "error"; readonly message: string };
 
+type SupplierActionState =
+  | { readonly phase: "idle" }
+  | { readonly phase: "pending"; readonly message: string }
+  | { readonly phase: "success"; readonly message: string }
+  | { readonly phase: "error"; readonly message: string };
+
+interface SupplierEditForm {
+  readonly capabilityTags: readonly string[];
+  readonly roleSlotIdsText: string;
+  readonly stageIdsText: string;
+}
+
+const supplierTagOptions = [...STORE_SUPPLIER_CAPABILITY_TAGS];
+
 export function StoreSupplierPage({
   access,
   api
@@ -17,54 +32,113 @@ export function StoreSupplierPage({
   readonly api: StoreApiClient;
 }) {
   const [state, setState] = useState<SupplierState>({ status: "loading" });
-  const [notice, setNotice] = useState<string | undefined>();
+  const [action, setAction] = useState<SupplierActionState>({ phase: "idle" });
+  const [editingSupplierId, setEditingSupplierId] = useState<string | undefined>();
+  const [editForm, setEditForm] = useState<SupplierEditForm | undefined>();
+  const canUpdateSupplierTags = hasStoreCapability(access, "store.supplier.tags.update");
+  const canReviewSupplier = hasStoreCapability(access, "store.supplier.review");
+  const canEditSupplierCapabilities = canUpdateSupplierTags && canReviewSupplier;
+
+  const loadSuppliers = useCallback(async (
+    showLoading = true,
+    isCancelled: () => boolean = () => false
+  ) => {
+    if (showLoading && !isCancelled()) {
+      setState({ status: "loading" });
+    }
+    try {
+      const result = await api.listSuppliers();
+      if (!isCancelled()) {
+        setState({ status: "ready", suppliers: result.data });
+      }
+    } catch (error) {
+      if (!isCancelled()) {
+        setState({ status: "error", message: readableStoreError(error, "供应商列表加载失败") });
+      }
+    }
+  }, [api]);
 
   useEffect(() => {
     let cancelled = false;
-    void api.listSuppliers().then((result) => {
-      if (!cancelled) {
-        setState({ status: "ready", suppliers: result.data });
-      }
-    }).catch((error) => {
-      if (!cancelled) {
-        setState({ status: "error", message: readableStoreError(error, "供应商列表加载失败") });
-      }
-    });
+    void loadSuppliers(true, () => cancelled);
     return () => {
       cancelled = true;
     };
-  }, [api]);
+  }, [loadSuppliers]);
+
+  const openEdit = (supplier: StoreSupplierDTO) => {
+    setEditingSupplierId(supplier.supplierId);
+    setEditForm({
+      capabilityTags: supplier.capabilityTags,
+      roleSlotIdsText: supplier.supportedRoleSlotIds.join("\n"),
+      stageIdsText: supplier.supportedStageIds.join("\n")
+    });
+    setAction({ phase: "idle" });
+  };
+
+  const cancelEdit = () => {
+    setEditingSupplierId(undefined);
+    setEditForm(undefined);
+    setAction({ phase: "idle" });
+  };
+
+  const saveEdit = async (supplier: StoreSupplierDTO) => {
+    if (!editForm) {
+      return;
+    }
+    setAction({ phase: "pending", message: "正在写入 Store 供应商能力 metadata" });
+    try {
+      const result = await api.updateSupplierCapabilities(supplier.supplierId, {
+        capabilityTags: editForm.capabilityTags,
+        supportedRoleSlotIds: normalizeTextList(editForm.roleSlotIdsText),
+        supportedStageIds: normalizeTextList(editForm.stageIdsText),
+        reviewStatus: supplier.reviewStatus
+      });
+      setState((current) => current.status === "ready"
+        ? {
+            status: "ready",
+            suppliers: current.suppliers.map((item) =>
+              item.supplierId === result.data.supplier.supplierId ? result.data.supplier : item
+            )
+          }
+        : current);
+      setEditingSupplierId(undefined);
+      setEditForm(undefined);
+      setAction({ phase: "success", message: "能力 metadata 已保存；链上供应商 trust 仍以 SupplierAttested 投影为准。" });
+      void loadSuppliers(false);
+    } catch (error) {
+      setAction({ phase: "error", message: readableStoreError(error, "供应商能力 metadata 保存失败") });
+    }
+  };
 
   return (
     <section className="page-shell" data-testid="store-supplier-page">
       <div className="page-title-row">
         <div>
           <h2>供应商背书</h2>
-          <p>查看官方域下的供应商背书和能力标签；标签写入接口由后续 Store 后端接入。</p>
+          <p>查看 Trust Registry 供应商投影，并维护 Store 侧能力 metadata；能力标签不创建链上 trust。</p>
         </div>
-        {access.canWrite ? (
-          <button className="secondary-button" data-testid="store-edit-supplier-tags-button" onClick={() => setNotice("能力标签写接口尚未接入，未写入任何 Store 或链上状态。")}>
-            <Tag /> 编辑能力标签
-          </button>
-        ) : null}
+        <button className="secondary-button" onClick={() => void loadSuppliers()} type="button">
+          <RefreshCw /> 刷新
+        </button>
       </div>
 
-      {!access.canWrite ? (
+      {!canEditSupplierCapabilities ? (
         <div className="store-access-note">
           <ShieldCheck />
-          <span>当前只读访问，不显示供应商标签编辑按钮。</span>
+          <span>{supplierCapabilityBlockedCopy(access, canUpdateSupplierTags, canReviewSupplier)}</span>
         </div>
-      ) : null}
+      ) : (
+        <div className="store-access-note">
+          <ShieldCheck />
+          <span>当前会话包含 store.supplier.tags.update；编辑仅写入 Store metadata，不替代链上背书。</span>
+        </div>
+      )}
 
-      {notice ? (
-        <div className="action-notice error">
-          <AlertTriangle />
-          <span>{notice}</span>
-        </div>
-      ) : null}
+      <ActionNotice state={action} />
 
       {state.status === "loading" ? (
-        <StatePanel icon={<Loader2 className="spin" />} title="正在加载供应商" desc="读取 Trust Registry 供应商投影。" />
+        <StatePanel icon={<Loader2 className="spin" />} title="正在加载供应商" desc="读取 Trust Registry 供应商投影和 Store metadata。" />
       ) : null}
 
       {state.status === "error" ? (
@@ -73,22 +147,54 @@ export function StoreSupplierPage({
 
       {state.status === "ready" ? (
         <div className="store-card-grid">
-          {state.suppliers.map((supplier) => (
-            <article className="store-supplier-card" key={supplier.supplierId}>
-              <div className="store-card-title">
-                <Users />
-                <div>
-                  <strong>{supplier.displayName}</strong>
-                  <span>{supplier.wallet ?? supplier.supplierId}</span>
+          {state.suppliers.map((supplier) => {
+            const editing = editingSupplierId === supplier.supplierId && editForm;
+            return (
+              <article className="store-supplier-card" key={supplier.supplierId}>
+                <div className="store-card-title">
+                  <Users />
+                  <div>
+                    <strong>{supplier.displayName}</strong>
+                    <span>{supplier.wallet ?? supplier.supplierSubjectId}</span>
+                  </div>
+                  <span className={`status-badge ${supplier.trustStatus === "attested" ? "success" : "warning"}`}>
+                    {supplier.trustLabel}
+                  </span>
                 </div>
-                <span className={`status-badge ${supplier.status === "attested" ? "success" : "warning"}`}>
-                  {supplier.status === "attested" ? "已背书" : supplier.status === "revoked" ? "已撤销" : "未发现"}
-                </span>
-              </div>
-              <p>{supplier.capabilityLabel}</p>
-              {supplier.updatedAt ? <small>更新：{supplier.updatedAt}</small> : null}
-            </article>
-          ))}
+
+                <div className="store-supplier-meta-row">
+                  <span>审核：{supplierReviewLabel(supplier.reviewStatus)}</span>
+                  <span>订单：{supplier.recentOrderCount}</span>
+                  <span>待办：{supplier.openTaskCount}</span>
+                </div>
+
+                <SupplierTagRow icon={<Tag />} label="能力" values={supplier.capabilityTags} empty="未配置能力标签" />
+                <SupplierTagRow label="角色槽" values={supplier.supportedRoleSlotIds} empty="未绑定角色槽" />
+                <SupplierTagRow label="阶段" values={supplier.supportedStageIds} empty="未绑定阶段" />
+                <p>{supplier.nextAction}</p>
+                {supplier.updatedAt ? <small>更新：{supplier.updatedAt}</small> : null}
+
+                {editing ? (
+                  <SupplierEditPanel
+                    form={editing}
+                    setForm={setEditForm}
+                    saving={action.phase === "pending"}
+                    onCancel={cancelEdit}
+                    onSave={() => void saveEdit(supplier)}
+                  />
+                ) : canEditSupplierCapabilities ? (
+                  <button
+                    className="secondary-button compact"
+                    data-testid="store-edit-supplier-tags-button"
+                    onClick={() => openEdit(supplier)}
+                    type="button"
+                  >
+                    <Pencil /> 编辑能力 metadata
+                  </button>
+                ) : null}
+              </article>
+            );
+          })}
         </div>
       ) : null}
 
@@ -96,6 +202,111 @@ export function StoreSupplierPage({
         <div className="inline-empty"><CheckCircle2 /> 当前官方域没有供应商背书投影。</div>
       ) : null}
     </section>
+  );
+}
+
+function SupplierEditPanel({
+  form,
+  setForm,
+  saving,
+  onCancel,
+  onSave
+}: {
+  readonly form: SupplierEditForm;
+  readonly setForm: (value: SupplierEditForm) => void;
+  readonly saving: boolean;
+  readonly onCancel: () => void;
+  readonly onSave: () => void;
+}) {
+  return (
+    <div className="store-supplier-edit-panel" data-testid="store-supplier-edit-panel">
+      <div className="store-checkbox-grid">
+        {supplierTagOptions.map((tag) => {
+          const checked = form.capabilityTags.includes(tag);
+          return (
+            <label className={`store-checkbox-chip ${checked ? "checked" : ""}`} key={tag}>
+              <input
+                checked={checked}
+                onChange={(event) => {
+                  const nextTags = event.target.checked
+                    ? uniqueSorted([...form.capabilityTags, tag])
+                    : form.capabilityTags.filter((item) => item !== tag);
+                  setForm({ ...form, capabilityTags: nextTags });
+                }}
+                type="checkbox"
+              />
+              <span>{tag}</span>
+            </label>
+          );
+        })}
+      </div>
+
+      <div className="form-grid store-supplier-edit-form">
+        <label className="field">
+          <span>supportedRoleSlotIds</span>
+          <textarea
+            onChange={(event) => setForm({ ...form, roleSlotIdsText: event.target.value })}
+            placeholder="每行一个 roleSlotId"
+            value={form.roleSlotIdsText}
+          />
+        </label>
+        <label className="field">
+          <span>supportedStageIds</span>
+          <textarea
+            onChange={(event) => setForm({ ...form, stageIdsText: event.target.value })}
+            placeholder="每行一个 stageId"
+            value={form.stageIdsText}
+          />
+        </label>
+      </div>
+
+      <div className="store-inline-actions">
+        <button className="primary-button" disabled={saving} onClick={onSave} type="button">
+          {saving ? <Loader2 className="spin" /> : <Save />} 保存
+        </button>
+        <button className="secondary-button" disabled={saving} onClick={onCancel} type="button">
+          <X /> 取消
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SupplierTagRow({
+  icon,
+  label,
+  values,
+  empty
+}: {
+  readonly icon?: ReactNode;
+  readonly label: string;
+  readonly values: readonly string[];
+  readonly empty: string;
+}) {
+  return (
+    <div className="store-tag-row compact">
+      <span>{icon}{label}</span>
+      <div>
+        {values.length > 0 ? values.map((value) => <small key={value}>{value}</small>) : <em>{empty}</em>}
+      </div>
+    </div>
+  );
+}
+
+function ActionNotice({ state }: { readonly state: SupplierActionState }) {
+  if (state.phase === "idle") {
+    return null;
+  }
+  const icon = state.phase === "pending"
+    ? <Loader2 className="spin" />
+    : state.phase === "success"
+      ? <CheckCircle2 />
+      : <AlertTriangle />;
+  return (
+    <div className={`action-notice ${state.phase}`} data-testid="store-supplier-action-notice" data-phase={state.phase}>
+      {icon}
+      <span>{state.message}</span>
+    </div>
   );
 }
 
@@ -119,4 +330,51 @@ function StatePanel({
       </div>
     </section>
   );
+}
+
+function supplierCapabilityBlockedCopy(
+  access: StoreAccessState,
+  canUpdateSupplierTags: boolean,
+  canReviewSupplier: boolean
+): string {
+  if (!access.canWrite) {
+    return "当前只读访问，不显示供应商标签编辑按钮。";
+  }
+  if (!canUpdateSupplierTags) {
+    return "当前会话缺少 store.supplier.tags.update；供应商能力编辑已关闭，后端写入会返回 403。";
+  }
+  if (!canReviewSupplier) {
+    return "当前会话缺少 store.supplier.review；供应商能力编辑已关闭，后端写入会返回 403。";
+  }
+  return "当前会话不能编辑供应商能力 metadata。";
+}
+
+function supplierReviewLabel(status: StoreSupplierDTO["reviewStatus"]): string {
+  switch (status) {
+    case "draft":
+      return "草稿";
+    case "submitted":
+      return "待审";
+    case "approved_for_broadcast":
+      return "可请求背书";
+    case "rejected":
+      return "已拒绝";
+    case "revoked":
+      return "已撤销";
+  }
+}
+
+function hasStoreCapability(access: StoreAccessState, capability: string): boolean {
+  return access.capabilities.includes(capability as StoreAccessState["capabilities"][number]);
+}
+
+function normalizeTextList(value: string): readonly string[] {
+  return uniqueSorted(value
+    .split(/[\n,;]+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0));
+}
+
+function uniqueSorted(values: readonly string[]): readonly string[] {
+  return [...new Set(values)].sort((left, right) => left.localeCompare(right));
 }

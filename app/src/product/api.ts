@@ -17,6 +17,17 @@ import {
   demoTask,
   demoZhixuDetail
 } from "@uvp-eth/product-dto/fixtures";
+import {
+  isRecord,
+  normalizeBaseUrl,
+  normalizeRuntimeEnv,
+  readLocalStorage,
+  readQueryValue,
+  shortHash,
+  stringValue
+} from "../shared/frontend";
+
+export { shortHash } from "../shared/frontend";
 
 export type ProductApiSource =
   | {
@@ -765,10 +776,6 @@ function submissionStatusLabel(status: ProductSubmissionStatus | undefined): str
   }
 }
 
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
 class ApiFallbackError extends Error {
   readonly pathname: string;
   readonly status?: number;
@@ -1206,11 +1213,6 @@ function stripPollCount(submission: ProductSubmissionDTO & { readonly pollCount:
   return publicSubmission;
 }
 
-function normalizeBaseUrl(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed.replace(/\/+$/, "") : undefined;
-}
-
 const UVP_WORKBENCH_FETCH_TIMEOUT_MS = Number(
   import.meta.env.VITE_UVP_WORKBENCH_FETCH_TIMEOUT_MS
 ) || 6000;
@@ -1358,10 +1360,6 @@ function mockSourceFromError(error: unknown, baseUrl: string | undefined, attemp
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
 function isDefined<TValue>(value: TValue | undefined): value is TValue {
   return value !== undefined;
 }
@@ -1375,11 +1373,7 @@ function isProductE2EEnabled(): boolean {
 }
 
 function readE2EApiBaseUrl(): string | undefined {
-  if (typeof window === "undefined") {
-    return undefined;
-  }
-  const params = new URLSearchParams(window.location.search);
-  return params.get("productApiBase") ?? undefined;
+  return readQueryValue("productApiBase");
 }
 
 function isExplicitProductDemoMode(): boolean {
@@ -1399,31 +1393,16 @@ function isProductionLikeFrontendRuntime(): boolean {
   return import.meta.env.PROD === true && import.meta.env.VITE_UVP_PRODUCT_E2E !== "1";
 }
 
-function normalizeRuntimeEnv(value: string | undefined): string | undefined {
-  const trimmed = value?.trim().toLowerCase();
-  if (!trimmed) {
-    return undefined;
-  }
-  return trimmed;
-}
-
 function isProductDemoSourceSelected(): boolean {
   if (import.meta.env.VITE_UVP_PRODUCT_DEMO_SELECTED === "1") {
     return true;
   }
-  if (typeof window === "undefined") {
-    return false;
-  }
-  const params = new URLSearchParams(window.location.search);
-  const demo = params.get("demo");
-  if (params.get("fallback") === "demo" || demo === "1" || demo === "true") {
+  const fallback = readQueryValue("fallback");
+  const demo = readQueryValue("demo");
+  if (fallback === "demo" || demo === "1" || demo === "true") {
     return true;
   }
-  try {
-    return window.localStorage.getItem(PRODUCT_DEMO_MODE_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
+  return readLocalStorage(PRODUCT_DEMO_MODE_STORAGE_KEY) === "1";
 }
 
 function sortLatestProjectionFirst<TItem>(items: readonly TItem[]): readonly TItem[] {
@@ -1468,10 +1447,6 @@ function pseudoHash(seed: string): string {
     hex += (state >>> 0).toString(16).padStart(8, "0");
   }
   return `0x${hex.slice(0, 64)}`;
-}
-
-export function shortHash(value: string): string {
-  return value.length > 18 ? `${value.slice(0, 10)}...${value.slice(-8)}` : value;
 }
 
 export function participantFromDraftParticipant(participant: DraftParticipantDTO): ParticipantDTO {

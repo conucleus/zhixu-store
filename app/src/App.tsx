@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { ParticipantApp } from "./app/ParticipantApp";
+import { ProductWorkbenchApp } from "./ProductWorkbenchApp";
+import { readLocalStorage, readQueryValue } from "./shared/frontend";
 import { StoreApp } from "./store/StoreApp";
 
 type FrontendEntry = "participant" | "store";
@@ -25,7 +26,7 @@ export default function App() {
     );
   }
 
-  return <ParticipantApp />;
+  return <ProductWorkbenchApp />;
 }
 
 function selectEntry(): FrontendEntry {
@@ -76,23 +77,4 @@ function isStoreOperatorModeSelected(): boolean {
     accessLevel === "operator" ||
     accessLevel === "store_admin" ||
     accessLevel === "admin";
-}
-
-function readQueryValue(name: string): string | undefined {
-  if (typeof window === "undefined") {
-    return undefined;
-  }
-  const value = new URLSearchParams(window.location.search).get(name)?.trim();
-  return value || undefined;
-}
-
-function readLocalStorage(key: string): string | undefined {
-  if (typeof window === "undefined") {
-    return undefined;
-  }
-  try {
-    return window.localStorage.getItem(key)?.trim() || undefined;
-  } catch {
-    return undefined;
-  }
 }

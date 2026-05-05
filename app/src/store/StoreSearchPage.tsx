@@ -17,6 +17,7 @@ import type {
   StoreZhixuDraftSourceKind,
   StoreZhixuSearchResultDTO
 } from "./types";
+import { isRecord, shortHash } from "../shared/frontend";
 
 type ActionPhase = "idle" | "pending" | "success" | "error";
 
@@ -462,7 +463,7 @@ export function StoreSearchPage({
               <div className="schema-review-grid">
                 <SummaryItem icon={<Layers3 />} label="阶段" title={`${productSchema.stages.length} 个`} />
                 <SummaryItem icon={<Users />} label="插槽" title={`${productSchema.roleSlots.length} 个`} />
-                <SummaryItem icon={<ClipboardCheck />} label="schema" title={shortHash(productSchema.schemaHash)} />
+                <SummaryItem icon={<ClipboardCheck />} label="schema" title={shortHash(productSchema.schemaHash, { prefixLength: 8, suffixLength: 8 })} />
                 <SummaryItem
                   icon={productSchema.validation.ok ? <CheckCircle2 /> : <AlertTriangle />}
                   label="校验"
@@ -886,7 +887,7 @@ function publishingChecklistItems(
       id: "compile",
       label: "compile valid",
       detail: draft.compilePreview
-        ? `${shortHash(draft.compilePreview.planId)} / ${shortHash(draft.compilePreview.planHash)}`
+        ? `${shortHash(draft.compilePreview.planId, { prefixLength: 8, suffixLength: 8 })} / ${shortHash(draft.compilePreview.planHash, { prefixLength: 8, suffixLength: 8 })}`
         : "等待编译预览生成 deterministic plan identity。",
       state: draft.compilePreview ? "done" : draft.status === "compile_failed" ? "blocked" : "pending",
       tone: draft.compilePreview ? "success" : draft.status === "compile_failed" ? "warning" : "default"
@@ -1062,7 +1063,7 @@ function trustProjectionCopy(draft: StoreZhixuDraftDTO): {
   const projection = draft.projection;
   if (projection) {
     const meta = [
-      projection.txHash ? `tx ${shortHash(projection.txHash)}` : undefined,
+      projection.txHash ? `tx ${shortHash(projection.txHash, { prefixLength: 8, suffixLength: 8 })}` : undefined,
       projection.blockNumber ? `block ${projection.blockNumber}` : undefined,
       projection.indexedAt ? `indexed ${projection.indexedAt}` : undefined
     ].filter((item): item is string => Boolean(item)).join(" · ");
@@ -1421,12 +1422,4 @@ function confirmSchemaPluginsExplicit(schema: StoreProductSchemaDTO): StoreProdu
     roleSlots,
     capabilityPlugins: roleSlots.flatMap((slot) => slot.capabilityPlugins ?? [])
   };
-}
-
-function shortHash(value: string): string {
-  return value.length > 18 ? `${value.slice(0, 8)}...${value.slice(-8)}` : value;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
