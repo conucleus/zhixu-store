@@ -38,11 +38,13 @@ import type {
   StoreZhixuSearchResultDTO
 } from "./types";
 import {
+  isExplicitFrontendDemoMode,
+  isProductionLikeFrontendRuntime,
   isRecord,
   normalizeBaseUrl,
-  normalizeRuntimeEnv,
   readLocalStorage,
   readQueryValue,
+  resolveFrontendApiBaseUrl,
   shortValue,
   stringValue
 } from "../shared/frontend";
@@ -206,7 +208,7 @@ class BrowserStoreApiClient implements StoreApiClient {
   async search(query: StoreSearchInput = {}): Promise<StoreApiResult<StoreZhixuSearchResultDTO>> {
     const keyword = query.keyword?.trim();
     const pathname = keyword ? `/store/search?${storeSearchParams({ ...query, keyword })}` : "/store/zhixus";
-    return await this.withReadFallback(
+    return await this.withReadOrDemo(
       pathname,
       async () => {
         if (!keyword) {
@@ -227,7 +229,7 @@ class BrowserStoreApiClient implements StoreApiClient {
 
   async getZhixuDetail(zhixuId: string): Promise<StoreApiResult<StoreZhixuDetailDTO>> {
     const pathname = `/store/zhixus/${encodeURIComponent(zhixuId)}`;
-    return await this.withReadFallback(
+    return await this.withReadOrDemo(
       pathname,
       async () => await this.requestJson<{ readonly zhixu: StoreZhixuDetailDTO }>("GET", pathname).then((response) => response.zhixu),
       () => mockStoreZhixu(zhixuId)
@@ -305,7 +307,7 @@ class BrowserStoreApiClient implements StoreApiClient {
 
   async listSuppliers(): Promise<StoreApiResult<readonly StoreSupplierDTO[]>> {
     const pathname = "/store/suppliers";
-    return await this.withReadFallback(
+    return await this.withReadOrDemo(
       pathname,
       async () => await this.requestJson<{ readonly suppliers: readonly unknown[] }>("GET", pathname)
         .then((response) => response.suppliers.map(storeSupplierFromTrustProjection)),
@@ -334,7 +336,7 @@ class BrowserStoreApiClient implements StoreApiClient {
 
   async getRuntimeSummary(): Promise<StoreApiResult<StoreRuntimeSummaryDTO>> {
     const pathname = "/store/runtime/summary";
-    return await this.withReadFallback(
+    return await this.withReadOrDemo(
       pathname,
       async () => await this.requestJson<unknown>("GET", pathname).then(runtimeSummaryFromResponse),
       () => mockRuntimeSummary()
@@ -373,7 +375,7 @@ class BrowserStoreApiClient implements StoreApiClient {
       .then((result) => ({ data: dockingSessionFromResponse(result.data), source: result.source }));
   }
 
-  private async withReadFallback<TData>(
+  private async withReadOrDemo<TData>(
     pathname: string,
     request: () => Promise<TData>,
     fallback: () => TData
@@ -391,17 +393,6 @@ class BrowserStoreApiClient implements StoreApiClient {
         source: { kind: "real", baseUrl: this.baseUrl }
       };
     } catch (error) {
-      if (this.demoMode && error instanceof StoreApiUnavailableError) {
-        return {
-          data: fallback(),
-          source: {
-            kind: "mock",
-            reason: `Store API 暂不可用：${error.message}`,
-            baseUrl: this.baseUrl,
-            attemptedPath: pathname
-          }
-        };
-      }
       throw error;
     }
   }
@@ -604,12 +595,12 @@ function storeSearchParams(query: StoreSearchInput): string {
 }
 
 function runtimeSummaryFromResponse(response: unknown): StoreRuntimeSummaryDTO {
-  const record = isRecord(response) ? response : {};
+  const record = requiredStoreRecord(response, "/store/runtime/summary", "store_runtime_summary_response_invalid");
   return {
-    activeZhixus: numberValue(record.activeZhixuCount) ?? numberValue(record.activeZhixus) ?? 0,
-    runningOrders: numberValue(record.runningOrderCount) ?? numberValue(record.runningOrders) ?? 0,
-    openTasks: numberValue(record.openTaskCount) ?? numberValue(record.openTasks) ?? 0,
-    trustedSuppliers: numberValue(record.trustedSupplierCount) ?? numberValue(record.trustedSuppliers) ?? 0,
+    activeZhixus: requiredStoreNumber(record.activeZhixuCount, "/store/runtime/summary", "store_runtime_summary_response_invalid"),
+    runningOrders: requiredStoreNumber(record.runningOrderCount, "/store/runtime/summary", "store_runtime_summary_response_invalid"),
+    openTasks: requiredStoreNumber(record.openTaskCount, "/store/runtime/summary", "store_runtime_summary_response_invalid"),
+    trustedSuppliers: requiredStoreNumber(record.trustedSupplierCount, "/store/runtime/summary", "store_runtime_summary_response_invalid"),
     sourceOfTruth: "contracts-and-chain-events"
   };
 }
@@ -687,6 +678,20 @@ function supplierMutationResultFromResponse(pathname: string, response: unknown)
     supplier: storeSupplierFromTrustProjection(record.supplier),
     ...(record.governance !== undefined ? { governance: record.governance } : {})
   };
+}
+
+function requiredStoreRecord(value: unknown, pathname: string, code: string): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new StoreApiError(pathname, 0, code, { code });
+  }
+  return value;
+}
+
+function requiredStoreNumber(value: unknown, pathname: string, code: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new StoreApiError(pathname, 0, code, { code });
+  }
+  return value;
 }
 
 function proofRowsFromResponse(value: unknown): StoreSupplierDTO["proofRows"] {
@@ -892,43 +897,20 @@ function normalizeStoreAccessLevel(value: string | undefined): StoreAccessLevel 
 }
 
 function isExplicitStoreDemoMode(): boolean {
-  if (isProductionLikeFrontendRuntime()) {
-    return false;
-  }
-  const envEnabled = import.meta.env.VITE_UVP_STORE_DEMO_MODE === "1" ||
-    import.meta.env.VITE_UVP_PRODUCT_DEMO_MODE === "1";
-  return envEnabled && isStoreDemoSourceSelected();
-}
-
-function isStoreDemoSourceSelected(): boolean {
-  if (import.meta.env.VITE_UVP_STORE_DEMO_SELECTED === "1" || import.meta.env.VITE_UVP_PRODUCT_DEMO_SELECTED === "1") {
-    return true;
-  }
-  const fallback = readQueryValue("fallback");
-  const demo = readQueryValue("demo");
-  const storeDemo = readQueryValue("storeDemo");
-  if (fallback === "demo" || demo === "1" || demo === "true" || storeDemo === "1" || storeDemo === "true") {
-    return true;
-  }
-  return readLocalStorage(STORE_DEMO_MODE_STORAGE_KEY) === "1";
-}
-
-function isProductionLikeFrontendRuntime(): boolean {
-  const runtime = normalizeRuntimeEnv(
-    import.meta.env.VITE_UVP_RUNTIME_ENV ?? import.meta.env.VITE_UVP_CHAIN_SERVICES_ENV ?? import.meta.env.VITE_CHAIN_SERVICES_ENV
-  );
-  if (runtime) {
-    return runtime === "production" || runtime === "staging" || runtime === "testnet";
-  }
-  return import.meta.env.PROD === true && import.meta.env.VITE_UVP_PRODUCT_E2E !== "1";
+  return isExplicitFrontendDemoMode(import.meta.env, {
+    demoEnabledAliases: ["VITE_UVP_STORE_DEMO_MODE", "VITE_UVP_PRODUCT_DEMO_MODE"],
+    demoSelectedAliases: ["VITE_UVP_STORE_DEMO_SELECTED", "VITE_UVP_PRODUCT_DEMO_SELECTED"],
+    queryKeys: ["demo", "storeDemo"],
+    storageKey: STORE_DEMO_MODE_STORAGE_KEY
+  });
 }
 
 function resolveStoreApiBaseUrl(): string | undefined {
-  const configured = import.meta.env.VITE_UVP_CHAIN_SERVICES_URL ?? import.meta.env.VITE_PRODUCT_API_BASE_URL;
+  const configured = resolveFrontendApiBaseUrl(import.meta.env, ["VITE_PRODUCT_API_BASE_URL"]);
   if (configured) {
     return configured;
   }
-  if (isProductionLikeFrontendRuntime()) {
+  if (isProductionLikeFrontendRuntime(import.meta.env)) {
     return undefined;
   }
   return readQueryValue("storeApiBase") ?? readLocalStorage("uvp.store.apiBaseUrl");

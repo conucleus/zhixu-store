@@ -149,6 +149,40 @@ test.describe("Product Workbench browser smoke", () => {
     await expect(page.getByTestId("participant-app-page")).toHaveCount(0);
   });
 
+  test("configured real API failures do not fall back to demo even when demo is selected", async ({ page }) => {
+    const apiBase = "http://127.0.0.1:9664";
+    await page.route(`${apiBase}/**`, async (route) => {
+      const pathname = new URL(route.request().url()).pathname;
+      if (pathname === "/product/zhixus") {
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ zhixus: [] }) });
+        return;
+      }
+      if (pathname === "/product/orders") {
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ orders: [] }) });
+        return;
+      }
+      if (pathname === "/product/tasks") {
+        await route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "product_storage_unavailable" })
+        });
+        return;
+      }
+      if (pathname === "/product/me") {
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ participant: { participantId: "test", displayName: "测试", roleLabels: [], source: "mock" } }) });
+        return;
+      }
+      await route.abort();
+    });
+
+    await page.goto(`/app?demo=1&productApiBase=${encodeURIComponent(apiBase)}`);
+    await expect(page.getByTestId("workbench-diagnostic-panel")).toBeVisible();
+    await expect(page.getByTestId("product-workbench")).toHaveAttribute("data-uvp-source", "real");
+    await expect(page.getByText("开发样例模式")).toHaveCount(0);
+    await expect(page.getByTestId("participant-app-page")).toHaveCount(0);
+  });
+
   test("loading shell exposes product-workbench with real source before data arrives", async ({ page }) => {
     const apiBase = "http://127.0.0.1:9655";
     // hold all responses so loading state stays visible

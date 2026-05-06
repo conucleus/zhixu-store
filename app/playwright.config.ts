@@ -8,7 +8,7 @@ const mode = process.env.UVP_PRODUCT_BROWSER_E2E_MODE ?? "fixture";
 const chainBackedMode = mode === "full" || mode === "base-sepolia" || mode === "testnet";
 const fixtureDevEnv = chainBackedMode
   ? ""
-  : "VITE_UVP_PRODUCT_DEMO_MODE=1 VITE_UVP_STORE_DEMO_MODE=1 VITE_UVP_PRODUCT_E2E=1 ";
+  : "VITE_UVP_DEMO_MODE=1 VITE_UVP_PRODUCT_E2E=1 ";
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://${host}:${port}`;
 const htmlReportDir = process.env.PLAYWRIGHT_HTML_REPORT ??
   (runRoot ? resolve(runRoot, "playwright-report") : "playwright-report");

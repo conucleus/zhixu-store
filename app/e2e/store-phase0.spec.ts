@@ -67,4 +67,22 @@ test.describe("Store Phase 0 internal alpha baseline", () => {
     await expect(page.getByRole("heading", { name: "秩序商店加载失败" })).toBeVisible();
     await expect(page.getByText("Store API base URL is not configured")).toBeVisible();
   });
+
+  test("Store keeps real API errors visible when demo is selected with a configured API base", async ({ page }) => {
+    const apiBase = "http://127.0.0.1:9665";
+    await page.route(`${apiBase}/**`, async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "store_projection_unavailable", message: "projection store unavailable" })
+      });
+    });
+
+    await page.goto(`/store?storeDemo=1&storeApiBase=${encodeURIComponent(apiBase)}`);
+
+    await expect(page.getByTestId("store-app")).toBeVisible();
+    await expect(page.getByText("Store 开发样例模式", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "秩序商店加载失败" })).toBeVisible();
+    await expect(page.getByText("503：store_projection_unavailable")).toBeVisible();
+  });
 });

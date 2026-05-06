@@ -18,13 +18,12 @@ import {
   demoZhixuDetail
 } from "@uvp-eth/product-dto/fixtures";
 import {
+  isExplicitFrontendDemoMode,
   isRecord,
   normalizeBaseUrl,
-  normalizeRuntimeEnv,
-  readLocalStorage,
+  resolveFrontendApiBaseUrl,
   readQueryValue,
-  shortHash,
-  stringValue
+  shortHash
 } from "../shared/frontend";
 
 export { shortHash } from "../shared/frontend";
@@ -332,7 +331,7 @@ let evidenceSequence = 1;
 let submissionSequence = 1;
 
 export function createProductApiClient(): ProductApiClient {
-  const envBaseUrl = import.meta.env.VITE_UVP_CHAIN_SERVICES_URL ?? import.meta.env.VITE_PRODUCT_API_BASE_URL;
+  const envBaseUrl = resolveFrontendApiBaseUrl(import.meta.env, ["VITE_PRODUCT_API_BASE_URL"]);
   const e2eBaseUrl = isProductE2EEnabled() ? readE2EApiBaseUrl() : undefined;
   const baseUrl = normalizeBaseUrl(e2eBaseUrl ?? envBaseUrl);
   return new BrowserProductApiClient(baseUrl, { demoMode: isExplicitProductDemoMode() });
@@ -356,7 +355,7 @@ class BrowserProductApiClient implements ProductApiClient {
       if (this.demoMode) {
         return mockWorkbenchData(fallbackSource);
       }
-      throw new ApiFallbackError("/product/zhixus", "API base URL is not configured");
+      throw new ApiMissingConfigError("/product/zhixus", "API base URL is not configured");
     }
 
     try {
@@ -400,7 +399,7 @@ class BrowserProductApiClient implements ProductApiClient {
         const criticalFailed = diagnostics.some((diag) =>
           criticalEndpoints.some((endpoint) => endpoint.path === diag.endpoint)
         );
-        if (criticalFailed && !this.demoMode) {
+        if (criticalFailed) {
           throw new WorkbenchLoadError(diagnostics, { kind: "real", baseUrl: this.baseUrl });
         }
       }
@@ -430,16 +429,12 @@ class BrowserProductApiClient implements ProductApiClient {
         syncState: isSyncing(order, activeTask) ? "syncing" : "ready"
       };
     } catch (error) {
-      if (!this.demoMode || !isFallbackEligible(error)) {
-        throw error;
-      }
-      console.warn("Falling back to local product DTOs in explicit demo mode", error);
-      return mockWorkbenchData(mockSourceFromError(error, this.baseUrl, "/product/zhixus"));
+      throw error;
     }
   }
 
   async createOrderDraft(input: CreateOrderDraftInput): Promise<ProductApiResult<ProductOrderDraftDTO>> {
-    return await this.withFallback(
+    return await this.withRequestOrDemo(
       "POST",
       "/product/order-drafts",
       async () => await this.requestJson<{ readonly draft: ProductOrderDraftDTO }>("POST", "/product/order-drafts", input)
@@ -449,7 +444,7 @@ class BrowserProductApiClient implements ProductApiClient {
   }
 
   async updateOrderDraft(draftId: string, input: UpdateOrderDraftInput): Promise<ProductApiResult<ProductOrderDraftDTO>> {
-    return await this.withFallback(
+    return await this.withRequestOrDemo(
       "PATCH",
       `/product/order-drafts/${encodeURIComponent(draftId)}`,
       async () => await this.requestJson<{ readonly draft: ProductOrderDraftDTO }>(
@@ -462,7 +457,7 @@ class BrowserProductApiClient implements ProductApiClient {
   }
 
   async getOrderDraft(draftId: string): Promise<ProductApiResult<ProductOrderDraftDTO>> {
-    return await this.withFallback(
+    return await this.withRequestOrDemo(
       "GET",
       `/product/order-drafts/${encodeURIComponent(draftId)}`,
       async () => await this.requestJson<{ readonly draft: ProductOrderDraftDTO }>(
@@ -474,7 +469,7 @@ class BrowserProductApiClient implements ProductApiClient {
   }
 
   async createInvite(draftId: string, input: CreateInviteInput): Promise<ProductApiResult<ProductInviteDTO>> {
-    return await this.withFallback(
+    return await this.withRequestOrDemo(
       "POST",
       `/product/orders/${encodeURIComponent(draftId)}/invites`,
       async () => await this.requestJson<{ readonly invite: ProductInviteDTO }>(
@@ -490,7 +485,7 @@ class BrowserProductApiClient implements ProductApiClient {
     inviteId: string,
     input: { readonly displayName: string; readonly walletAddress: string; readonly contact: string }
   ): Promise<ProductApiResult<ProductInviteDTO>> {
-    return await this.withFallback(
+    return await this.withRequestOrDemo(
       "POST",
       `/product/invites/${encodeURIComponent(inviteId)}/accept`,
       async () => await this.requestJson<{ readonly invite: ProductInviteDTO }>(
@@ -503,7 +498,7 @@ class BrowserProductApiClient implements ProductApiClient {
   }
 
   async rejectInvite(inviteId: string): Promise<ProductApiResult<ProductInviteDTO>> {
-    return await this.withFallback(
+    return await this.withRequestOrDemo(
       "POST",
       `/product/invites/${encodeURIComponent(inviteId)}/reject`,
       async () => await this.requestJson<{ readonly invite: ProductInviteDTO }>(
@@ -515,7 +510,7 @@ class BrowserProductApiClient implements ProductApiClient {
   }
 
   async listParticipants(draftId: string): Promise<ProductApiResult<readonly DraftParticipantDTO[]>> {
-    return await this.withFallback(
+    return await this.withRequestOrDemo(
       "GET",
       `/product/orders/${encodeURIComponent(draftId)}/participants`,
       async () => await this.requestJson<{ readonly participants: readonly DraftParticipantDTO[] }>(
@@ -530,7 +525,7 @@ class BrowserProductApiClient implements ProductApiClient {
     draftId: string,
     input: { readonly walletAddress: string }
   ): Promise<ProductApiResult<PreparedOrderTriggerDTO>> {
-    return await this.withFallback(
+    return await this.withRequestOrDemo(
       "POST",
       `/product/order-drafts/${encodeURIComponent(draftId)}/prepare-trigger`,
       async () => await this.requestJson<{ readonly prepared: PreparedOrderTriggerDTO }>(
@@ -543,7 +538,7 @@ class BrowserProductApiClient implements ProductApiClient {
   }
 
   async triggerOrder(draftId: string, input: TriggerOrderInput): Promise<ProductApiResult<ProductOrderDraftDTO>> {
-    return await this.withFallback(
+    return await this.withRequestOrDemo(
       "POST",
       `/product/order-drafts/${encodeURIComponent(draftId)}/trigger`,
       async () => await this.requestJson<{ readonly draft: ProductOrderDraftDTO }>(
@@ -557,7 +552,7 @@ class BrowserProductApiClient implements ProductApiClient {
 
   async uploadEvidence(input: UploadEvidenceInput): Promise<ProductApiResult<EvidenceObjectDTO>> {
     const path = "/product/evidence";
-    return await this.withFallback(
+    return await this.withRequestOrDemo(
       "POST",
       path,
       async () => {
@@ -569,7 +564,7 @@ class BrowserProductApiClient implements ProductApiClient {
   }
 
   async getEvidence(evidenceId: string): Promise<ProductApiResult<EvidenceObjectDTO>> {
-    return await this.withFallback(
+    return await this.withRequestOrDemo(
       "GET",
       `/product/evidence/${encodeURIComponent(evidenceId)}`,
       async () => await this.requestJson<{ readonly evidence: EvidenceObjectDTO }>(
@@ -581,7 +576,7 @@ class BrowserProductApiClient implements ProductApiClient {
   }
 
   async getEvidenceProof(evidenceId: string): Promise<ProductApiResult<EvidenceProofDTO>> {
-    return await this.withFallback(
+    return await this.withRequestOrDemo(
       "GET",
       `/product/evidence/${encodeURIComponent(evidenceId)}/proof`,
       async () => await this.requestJson<{ readonly proof: EvidenceProofDTO }>(
@@ -593,7 +588,7 @@ class BrowserProductApiClient implements ProductApiClient {
   }
 
   async prepareTaskSubmit(taskId: string, input: PrepareSubmitInput): Promise<ProductApiResult<PreparedSubmitDTO>> {
-    return await this.withFallback(
+    return await this.withRequestOrDemo(
       "POST",
       `/product/tasks/${encodeURIComponent(taskId)}/prepare-submit`,
       async () => await this.requestJson<unknown>(
@@ -606,7 +601,7 @@ class BrowserProductApiClient implements ProductApiClient {
   }
 
   async submitTask(taskId: string, input: SubmitTaskInput): Promise<ProductApiResult<ProductSubmissionDTO>> {
-    return await this.withFallback(
+    return await this.withRequestOrDemo(
       "POST",
       `/product/tasks/${encodeURIComponent(taskId)}/submit`,
       async () => await this.requestJson<unknown>(
@@ -619,7 +614,7 @@ class BrowserProductApiClient implements ProductApiClient {
   }
 
   async getSubmission(submissionId: string): Promise<ProductApiResult<ProductSubmissionDTO>> {
-    return await this.withFallback(
+    return await this.withRequestOrDemo(
       "GET",
       `/product/submissions/${encodeURIComponent(submissionId)}`,
       async () => await this.requestJson<unknown>(
@@ -632,7 +627,7 @@ class BrowserProductApiClient implements ProductApiClient {
 
   private async fetchZhixuDetail(zhixuId: string): Promise<ZhixuDetailDTO> {
     if (!this.baseUrl) {
-      throw new Error("API base URL is not configured");
+      throw new ApiMissingConfigError(`/product/zhixus/${encodeURIComponent(zhixuId)}`, "API base URL is not configured");
     }
     const response = await fetchJson<{ readonly zhixu: ZhixuDetailDTO }>(
       this.baseUrl,
@@ -643,20 +638,20 @@ class BrowserProductApiClient implements ProductApiClient {
 
   private async requestJson<TResponse>(method: string, pathname: string, body?: unknown): Promise<TResponse> {
     if (!this.baseUrl) {
-      throw new ApiFallbackError(pathname, "API base URL is not configured");
+      throw new ApiMissingConfigError(pathname, "API base URL is not configured");
     }
     return await fetchJson<TResponse>(this.baseUrl, pathname, { method, body });
   }
 
-  private async withFallback<TData>(
-    method: string,
+  private async withRequestOrDemo<TData>(
+    _method: string,
     pathname: string,
     request: () => Promise<TData>,
     fallback: () => TData
   ): Promise<ProductApiResult<TData>> {
     if (!this.baseUrl) {
       if (!this.demoMode) {
-        throw new ApiFallbackError(pathname, "API base URL is not configured");
+        throw new ApiMissingConfigError(pathname, "API base URL is not configured");
       }
       return { data: fallback(), source: fallbackSource };
     }
@@ -667,13 +662,7 @@ class BrowserProductApiClient implements ProductApiClient {
         source: { kind: "real", baseUrl: this.baseUrl }
       };
     } catch (error) {
-      if (!this.demoMode || !isFallbackEligible(error)) {
-        throw error;
-      }
-      return {
-        data: fallback(),
-        source: mockSourceFromError(error, this.baseUrl, `${method} ${pathname}`)
-      };
+      throw error;
     }
   }
 }
@@ -702,8 +691,8 @@ async function fileToBase64(file: File): Promise<string> {
 }
 
 function evidenceFromResponse(response: unknown): EvidenceObjectDTO {
-  const record = isRecord(response) ? response : undefined;
-  const evidence = record && isRecord(record.evidence) ? record.evidence : record;
+  const record = requiredRecord(response, "evidence_response_invalid");
+  const evidence = requiredRecord(record.evidence, "evidence_response_invalid");
   if (!isRecord(evidence)) {
     throw new Error("evidence_response_invalid");
   }
@@ -711,47 +700,92 @@ function evidenceFromResponse(response: unknown): EvidenceObjectDTO {
 }
 
 function preparedSubmitFromResponse(response: unknown): PreparedSubmitDTO {
-  const record = isRecord(response) ? response : undefined;
-  const prepared = record && isRecord(record.prepared) ? record.prepared : record;
-  if (!isRecord(prepared)) {
-    throw new Error("prepared_submit_response_invalid");
-  }
-  if (isRecord(prepared.summary)) {
-    return prepared as unknown as PreparedSubmitDTO;
-  }
-
-  const humanSummary = isRecord(prepared.humanSummary) ? prepared.humanSummary : {};
+  const prepared = requiredRecord(response, "prepared_submit_response_invalid");
+  const humanSummary = requiredRecord(prepared.humanSummary, "prepared_submit_response_invalid");
   return {
     ...prepared,
+    prepareId: requiredString(prepared.prepareId, "prepared_submit_response_invalid"),
+    taskId: requiredString(prepared.taskId, "prepared_submit_response_invalid"),
+    expiresAt: requiredString(prepared.expiresAt, "prepared_submit_response_invalid"),
     summary: {
-      orderTitle: stringValue(humanSummary.orderId) ?? stringValue(prepared.orderId) ?? "当前订单",
-      stageName: stringValue(humanSummary.stage) ?? stringValue(prepared.stageIdentifier) ?? "当前阶段",
-      actionLabel: stringValue(humanSummary.action) ?? "确认本阶段完成",
-      evidenceFingerprint: stringValue(humanSummary.payloadHash) ?? stringValue(prepared.payloadHash) ?? "",
-      walletAddress: stringValue(humanSummary.submitter) ?? stringValue(prepared.submitter) ?? "",
-      authorizationValidUntil: stringValue(humanSummary.validUntil) ?? stringValue(prepared.expiresAt) ?? ""
+      orderTitle: requiredString(humanSummary.orderId, "prepared_submit_response_invalid"),
+      stageName: requiredString(humanSummary.stage, "prepared_submit_response_invalid"),
+      actionLabel: requiredString(humanSummary.action, "prepared_submit_response_invalid"),
+      evidenceFingerprint: requiredString(humanSummary.payloadHash, "prepared_submit_response_invalid"),
+      walletAddress: requiredString(humanSummary.submitter, "prepared_submit_response_invalid"),
+      authorizationValidUntil: requiredString(humanSummary.validUntil, "prepared_submit_response_invalid")
     },
-    typedData: prepared.typedData
+    typedData: requiredValue(prepared.typedData, "prepared_submit_response_invalid")
   } as unknown as PreparedSubmitDTO;
 }
 
 function submissionFromResponse(response: unknown): ProductSubmissionDTO {
-  const record = isRecord(response) ? response : undefined;
-  const submission = record && isRecord(record.submission) ? record.submission : record;
-  if (!isRecord(submission)) {
-    throw new Error("submission_response_invalid");
-  }
-  const status = stringValue(submission.status) as ProductSubmissionStatus | undefined;
+  const submission = requiredRecord(response, "submission_response_invalid");
+  const status = requiredSubmissionStatus(submission.status);
   return {
     ...submission,
-    status: status ?? "failed",
-    statusLabel: stringValue(submission.statusLabel) ?? submissionStatusLabel(status),
-    retryable: Boolean(submission.retryable),
-    proofRows: Array.isArray(submission.proofRows) ? submission.proofRows : []
+    submissionId: requiredString(submission.submissionId, "submission_response_invalid"),
+    taskId: requiredString(submission.taskId, "submission_response_invalid"),
+    status,
+    statusLabel: requiredString(submission.statusLabel, "submission_response_invalid"),
+    retryable: requiredBoolean(submission.retryable, "submission_response_invalid"),
+    proofRows: requiredArray(submission.proofRows, "submission_response_invalid") as readonly ChainProofRowDTO[]
   } as unknown as ProductSubmissionDTO;
 }
 
-function submissionStatusLabel(status: ProductSubmissionStatus | undefined): string {
+function requiredRecord(value: unknown, code: string): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new Error(code);
+  }
+  return value;
+}
+
+function requiredValue<TValue>(value: TValue | undefined, code: string): TValue {
+  if (value === undefined) {
+    throw new Error(code);
+  }
+  return value;
+}
+
+function requiredString(value: unknown, code: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(code);
+  }
+  return value;
+}
+
+function requiredBoolean(value: unknown, code: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(code);
+  }
+  return value;
+}
+
+function requiredArray(value: unknown, code: string): readonly unknown[] {
+  if (!Array.isArray(value)) {
+    throw new Error(code);
+  }
+  return value;
+}
+
+function requiredSubmissionStatus(value: unknown): ProductSubmissionStatus {
+  if (
+    value === "prepared" ||
+    value === "signature_received" ||
+    value === "broadcasting" ||
+    value === "submitted" ||
+    value === "indexing" ||
+    value === "confirmed" ||
+    value === "failed" ||
+    value === "expired" ||
+    value === "replaced"
+  ) {
+    return value;
+  }
+  throw new Error("submission_response_invalid");
+}
+
+export function productSubmissionStatusLabel(status: ProductSubmissionStatus): string {
   switch (status) {
     case "prepared":
       return "已准备";
@@ -771,18 +805,26 @@ function submissionStatusLabel(status: ProductSubmissionStatus | undefined): str
       return "已过期";
     case "replaced":
       return "已替换";
-    default:
-      return "处理中";
   }
 }
 
-class ApiFallbackError extends Error {
+class ApiMissingConfigError extends Error {
+  readonly pathname: string;
+
+  constructor(pathname: string, message: string) {
+    super(message);
+    this.name = "ApiMissingConfigError";
+    this.pathname = pathname;
+  }
+}
+
+class ApiNetworkError extends Error {
   readonly pathname: string;
   readonly status?: number;
 
   constructor(pathname: string, message: string, status?: number) {
     super(message);
-    this.name = "ApiFallbackError";
+    this.name = "ApiNetworkError";
     this.pathname = pathname;
     this.status = status;
   }
@@ -797,6 +839,13 @@ class ApiRequestError extends Error {
     this.name = "ApiRequestError";
     this.pathname = pathname;
     this.status = status;
+  }
+}
+
+class ApiUnsupportedEndpointError extends ApiRequestError {
+  constructor(pathname: string, status: number, message: string) {
+    super(pathname, status, message);
+    this.name = "ApiUnsupportedEndpointError";
   }
 }
 
@@ -1225,7 +1274,7 @@ async function fetchJsonWithTimeout<TResponse>(
 ): Promise<TResponse> {
   const fetchPromise = fetchJson<TResponse>(baseUrl, pathname, init);
   const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new ApiFallbackError(pathname, "请求超时", 0)), timeoutMs);
+    setTimeout(() => reject(new ApiNetworkError(pathname, "请求超时", 0)), timeoutMs);
   });
   return await Promise.race([fetchPromise, timeoutPromise]);
 }
@@ -1255,12 +1304,12 @@ async function fetchJson<TResponse>(
       body
     });
   } catch (error) {
-    throw new ApiFallbackError(pathname, error instanceof Error ? error.message : "network_error");
+    throw new ApiNetworkError(pathname, error instanceof Error ? error.message : "network_error");
   }
   if (!response.ok) {
     const message = await readErrorMessage(response);
     if (response.status === 404 || response.status === 405 || response.status === 501) {
-      throw new ApiFallbackError(pathname, message, response.status);
+      throw new ApiUnsupportedEndpointError(pathname, response.status, message);
     }
     throw new ApiRequestError(pathname, response.status, message);
   }
@@ -1274,10 +1323,6 @@ async function readErrorMessage(response: Response): Promise<string> {
   } catch {
     return `${response.status}`;
   }
-}
-
-function isFallbackEligible(error: unknown): boolean {
-  return error instanceof ApiFallbackError;
 }
 
 interface SettledEndpointResult {
@@ -1298,7 +1343,7 @@ function collectEndpointDiagnostics(endpoints: readonly SettledEndpointResult[])
           message: reason.message
         };
       }
-      if (reason instanceof ApiFallbackError) {
+      if (reason instanceof ApiNetworkError) {
         return {
           endpoint: reason.pathname,
           status: reason.status ?? 0,
@@ -1350,16 +1395,6 @@ function isSnakeCaseIdentifier(value: string): boolean {
   return /^[a-z][a-z0-9_]+$/.test(value) && value.includes("_") && value.length >= 6;
 }
 
-function mockSourceFromError(error: unknown, baseUrl: string | undefined, attemptedPath: string): ProductApiSource {
-  const reason = error instanceof Error ? error.message : "真实 API 暂不可用";
-  return {
-    kind: "mock",
-    reason: `真实 API 暂不可用或端点未实现：${reason}`,
-    baseUrl,
-    attemptedPath
-  };
-}
-
 function isDefined<TValue>(value: TValue | undefined): value is TValue {
   return value !== undefined;
 }
@@ -1377,32 +1412,12 @@ function readE2EApiBaseUrl(): string | undefined {
 }
 
 function isExplicitProductDemoMode(): boolean {
-  if (isProductionLikeFrontendRuntime()) {
-    return false;
-  }
-  return import.meta.env.VITE_UVP_PRODUCT_DEMO_MODE === "1" && isProductDemoSourceSelected();
-}
-
-function isProductionLikeFrontendRuntime(): boolean {
-  const explicitRuntime = normalizeRuntimeEnv(
-    import.meta.env.VITE_UVP_RUNTIME_ENV ?? import.meta.env.VITE_UVP_CHAIN_SERVICES_ENV ?? import.meta.env.VITE_CHAIN_SERVICES_ENV
-  );
-  if (explicitRuntime) {
-    return explicitRuntime === "production" || explicitRuntime === "staging" || explicitRuntime === "testnet";
-  }
-  return import.meta.env.PROD === true && import.meta.env.VITE_UVP_PRODUCT_E2E !== "1";
-}
-
-function isProductDemoSourceSelected(): boolean {
-  if (import.meta.env.VITE_UVP_PRODUCT_DEMO_SELECTED === "1") {
-    return true;
-  }
-  const fallback = readQueryValue("fallback");
-  const demo = readQueryValue("demo");
-  if (fallback === "demo" || demo === "1" || demo === "true") {
-    return true;
-  }
-  return readLocalStorage(PRODUCT_DEMO_MODE_STORAGE_KEY) === "1";
+  return isExplicitFrontendDemoMode(import.meta.env, {
+    demoEnabledAliases: ["VITE_UVP_PRODUCT_DEMO_MODE"],
+    demoSelectedAliases: ["VITE_UVP_PRODUCT_DEMO_SELECTED"],
+    queryKeys: ["demo"],
+    storageKey: PRODUCT_DEMO_MODE_STORAGE_KEY
+  });
 }
 
 function sortLatestProjectionFirst<TItem>(items: readonly TItem[]): readonly TItem[] {

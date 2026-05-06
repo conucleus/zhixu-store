@@ -1,4 +1,4 @@
-import { AlertTriangle, GitBranch, Loader2, PackageSearch, ShieldCheck, Store, Truck, Users } from "lucide-react";
+import { AlertTriangle, ExternalLink, GitBranch, Loader2, PackageSearch, ShieldCheck, Store, Truck, Users } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { accessFromStoreSession, createStoreApiClient, readableStoreError, StoreApiError } from "./api";
@@ -122,12 +122,30 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
 
   return (
     <section className="store-console-shell" data-testid="store-app" data-store-access={access.level}>
-      <div className="store-console-head">
-        <div>
-          <span className="store-section-kicker"><Store /> 秩序商店</span>
-          <h1>Store Console</h1>
-          <p>凝结核和治理操作员查看秩序、供应商、运行态和试拼草稿；普通订单动作仍留在订单工作台。</p>
+      <header className="store-console-head">
+        <div className="store-console-brand">
+          <span className="store-console-mark"><Store /></span>
+          <div>
+            <h1>Store Console</h1>
+            <p>凝结核和治理操作员查看秩序、供应商、运行态和试拼草稿。</p>
+          </div>
         </div>
+
+        <div className="store-tabs" role="tablist" aria-label="秩序商店导航">
+          {navItems.map((item) => (
+            <button
+              aria-selected={view === item.view}
+              className={`store-tab ${view === item.view ? "is-active" : ""}`}
+              key={item.view}
+              onClick={() => setView(item.view)}
+              role="tab"
+            >
+              {item.icon}
+              {item.label}
+            </button>
+          ))}
+        </div>
+
         <div className="store-head-actions">
           <span
             className={`store-access-pill ${access.canWrite ? "can-write" : ""}`}
@@ -136,28 +154,13 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
           >
             <ShieldCheck /> {access.label}
           </span>
-          <a className="secondary-button" href={productHref}>订单工作台</a>
+          <a className="secondary-button store-workbench-link" href={productHref}>前往订单工作台 <ExternalLink /></a>
         </div>
-      </div>
+      </header>
 
       {loadState.status === "ready" && loadState.source.kind === "mock" ? (
         <StoreRuntimeBanner source={loadState.source} />
       ) : null}
-
-      <div className="store-tabs" role="tablist" aria-label="秩序商店导航">
-        {navItems.map((item) => (
-          <button
-            aria-selected={view === item.view}
-            className={`store-tab ${view === item.view ? "is-active" : ""}`}
-            key={item.view}
-            onClick={() => setView(item.view)}
-            role="tab"
-          >
-            {item.icon}
-            {item.label}
-          </button>
-        ))}
-      </div>
 
       {loadState.status === "loading" ? (
         <StoreStatePanel icon={<Loader2 className="spin" />} title="正在加载秩序商店" desc="读取 Store 目录和链上投影摘要。" />
