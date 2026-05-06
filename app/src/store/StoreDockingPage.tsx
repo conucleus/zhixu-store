@@ -73,30 +73,55 @@ export function StoreDockingPage({
         </div>
       ) : null}
 
-      <div className="store-runtime-grid">
-        <div className="kpi-card">
-          <span>来源秩序</span>
-          <strong>{sourceZhixu?.title ?? "暂无"}</strong>
-        </div>
-        <div className="kpi-card">
-          <span>目标秩序</span>
-          <strong>{targetZhixu?.title ?? "暂无"}</strong>
-        </div>
-      </div>
-
-      {state.status === "ready" ? (
-        <section className="panel-card">
-          <div className="panel-heading">
-            <div>
-              <h2>{state.session.sessionId}</h2>
-              <p>{state.session.validation.ok ? "试拼校验通过" : "试拼仍需调整信号映射"}</p>
+      <div className="store-docking-layout">
+        <section className="panel-card store-docking-main">
+          <div className="store-panel-label">3. 试拼沙箱</div>
+          <div className="store-docking-pair">
+            <div className="kpi-card">
+              <span>来源秩序</span>
+              <strong>{sourceZhixu?.title ?? "暂无"}</strong>
+              <small>{sourceZhixu?.versionLabel ?? "无版本"} · {sourceZhixu?.chainAttestation.label ?? "无背书状态"}</small>
             </div>
-            <span className={`status-badge ${state.session.validation.ok ? "success" : "warning"}`}>
-              <ShieldCheck /> {state.session.status}
-            </span>
+            <div className="store-docking-arrow" aria-hidden="true">→</div>
+            <div className="kpi-card">
+              <span>目标秩序</span>
+              <strong>{targetZhixu?.title ?? "暂无"}</strong>
+              <small>{targetZhixu?.versionLabel ?? "无版本"} · {targetZhixu?.chainAttestation.label ?? "无背书状态"}</small>
+            </div>
+          </div>
+          <div className="store-access-note compact">
+            <ShieldCheck />
+            <span>试拼草稿不发布、不创建订单、不创建 order-level signal 授权。</span>
           </div>
         </section>
-      ) : null}
+
+        <aside className="panel-card store-docking-side">
+          <div className="store-panel-label">4. 验证结果</div>
+          {state.status === "ready" ? (
+            <div className="store-docking-result">
+              <div className="panel-heading compact">
+                <div>
+                  <h2>{state.session.sessionId}</h2>
+                  <p>{state.session.validation.ok ? "试拼校验通过" : "试拼仍需调整信号映射"}</p>
+                </div>
+                <span className={`status-badge ${state.session.validation.ok ? "success" : "warning"}`}>
+                  <ShieldCheck /> {state.session.status}
+                </span>
+              </div>
+              <div className="store-check-list">
+                <span><ShieldCheck /> 候选映射：{state.session.candidateMappings.length}</span>
+                <span><ShieldCheck /> 草稿映射：{state.session.draftSignalMap.length}</span>
+                <span><ShieldCheck /> 阻断项：{state.session.validation.errors.length}</span>
+              </div>
+            </div>
+          ) : (
+            <div className="store-docking-result empty">
+              <strong>尚未创建试拼会话</strong>
+              <p>创建后会显示候选映射、草稿映射和验证阻断项；结果只属于沙箱。</p>
+            </div>
+          )}
+        </aside>
+      </div>
 
       {state.status === "error" ? (
         <div className="runtime-banner is-mock">

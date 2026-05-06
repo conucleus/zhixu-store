@@ -17,6 +17,7 @@ import type { ReactNode } from "react";
 import { readableStoreError, type StoreApiClient } from "./api";
 import type { CapabilityPluginSource, StoreCapabilityReviewStatus, StoreZhixuDetailDTO } from "@uvp-eth/product-dto";
 import type { StoreAccessState } from "./types";
+import { shortValue } from "../shared/frontend";
 
 type DetailState =
   | { readonly status: "loading" }
@@ -75,11 +76,45 @@ export function StoreZhixuDetailPage({
         <section className="panel-card">
           <div className="panel-heading">
             <div>
+              <span className="store-section-kicker">跨境电商履约秩序</span>
               <h2>{zhixu.title}</h2>
               <p>{zhixu.subtitle}</p>
             </div>
             <span className={`status-badge ${statusTone(zhixu.lifecycleStatus)}`}>{zhixu.lifecycleLabel}</span>
           </div>
+
+          <div className="store-detail-id-row">
+            <span>Plan ID <code>{shortValue(zhixu.planId)}</code></span>
+            <span>Plan Hash <code>{shortValue(zhixu.planHash)}</code></span>
+            {zhixu.artifactHash ? <span>Artifact <code>{shortValue(zhixu.artifactHash)}</code></span> : null}
+          </div>
+
+          <section className="store-lifecycle-card" aria-label="生命周期事实">
+            <div className="store-mini-heading">
+              <h3>生命周期事实</h3>
+              <span>链上背书状态：{zhixu.chainAttestation.label}</span>
+            </div>
+            <div className="store-lifecycle-list">
+              {zhixu.versionHistory.slice(0, 4).map((version) => (
+                <div className="store-lifecycle-step" key={`${version.zhixuId}:${version.versionId}`}>
+                  <CheckCircle2 />
+                  <div>
+                    <strong>{version.versionLabel}</strong>
+                    <span>{version.status} · {version.attestationStatus}</span>
+                  </div>
+                </div>
+              ))}
+              {zhixu.versionHistory.length === 0 ? (
+                <div className="store-lifecycle-step muted">
+                  <CircleDashed />
+                  <div>
+                    <strong>暂无版本历史</strong>
+                    <span>等待 Store 投影返回版本记录。</span>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </section>
 
           <div className="store-fact-grid">
             <Fact label="维护方" value={zhixu.maintainer} />
@@ -95,6 +130,22 @@ export function StoreZhixuDetailPage({
             <Metric icon={<Truck />} label="订单" value={`${zhixu.orderCount} 单`} />
             <Metric icon={<Users />} label="供应商" value={`${zhixu.supplierCount} 个`} />
           </div>
+
+          <section className="store-role-matrix" aria-label="角色与阶段配置">
+            <div className="store-mini-heading">
+              <h3>角色/能力审查</h3>
+              <span>{slotReviewSummary.label}</span>
+            </div>
+            <div className="store-role-matrix-grid">
+              {zhixu.roleSlots.slice(0, 4).map((slot) => (
+                <div className={`store-role-matrix-row ${slotReviewTone(slot.capabilityReviewStatus)}`} key={slot.roleSlotId}>
+                  <strong>{slot.performanceSlotLabel}</strong>
+                  <span>{slot.capabilityReviewLabel}</span>
+                  <small>{slot.expectedEvidence.slice(0, 2).join("、") || "未声明凭证"}</small>
+                </div>
+              ))}
+            </div>
+          </section>
 
           <details className="store-advanced">
             <summary>高级标识</summary>
@@ -233,7 +284,17 @@ export function StoreZhixuDetailPage({
         </button>
         {proofOpen ? (
           <div className="proof-details">
-            {zhixu.proofRows.map((row) => <Fact key={row.label} label={row.label} value={row.value} mono={row.label.includes("Hash") || row.label.includes("ID")} />)}
+            {zhixu.proofSections.length > 0 ? zhixu.proofSections.map((section) => (
+              <section className="store-proof-section" key={section.sectionId}>
+                <div className="store-mini-heading">
+                  <h3>{section.title}</h3>
+                  <span>{section.sourceOfTruth}</span>
+                </div>
+                {section.rows.map((row) => (
+                  <Fact key={`${section.sectionId}:${row.label}:${row.value}`} label={row.label} value={row.value} mono={row.label.includes("Hash") || row.label.includes("ID") || row.copyable} />
+                ))}
+              </section>
+            )) : zhixu.proofRows.map((row) => <Fact key={row.label} label={row.label} value={row.value} mono={row.label.includes("Hash") || row.label.includes("ID")} />)}
           </div>
         ) : null}
       </section>

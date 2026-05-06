@@ -46,14 +46,40 @@ export function StoreRuntimePage({ api }: { readonly api: StoreApiClient }) {
       ) : null}
 
       {state.status === "ready" ? (
-        <>
-          <div className="store-runtime-grid">
-            <Metric icon={<Layers3 />} label="可用秩序" value={`${state.summary.activeZhixus} 条`} />
-            <Metric icon={<Truck />} label="运行订单" value={`${state.summary.runningOrders} 单`} />
-            <Metric icon={<ClipboardCheck />} label="开放待办" value={`${state.summary.openTasks} 个`} />
-            <Metric icon={<Users />} label="已背书执行方" value={`${state.summary.trustedSuppliers} 个`} />
-          </div>
-          <section className="panel-card">
+        <div className="store-runtime-layout">
+          <section className="panel-card store-runtime-main">
+            <div className="store-panel-label">1. 运行态总览</div>
+            <div className="store-runtime-grid">
+              <Metric icon={<Layers3 />} label="可用秩序" value={`${state.summary.activeZhixus} 条`} />
+              <Metric icon={<Truck />} label="运行订单" value={`${state.summary.runningOrders} 单`} />
+              <Metric icon={<ClipboardCheck />} label="开放待办" value={`${state.summary.openTasks} 个`} />
+              <Metric icon={<Users />} label="已背书执行方" value={`${state.summary.trustedSuppliers} 个`} />
+            </div>
+            <section className="store-event-table" aria-label="运行态来源">
+              <div className="store-table-head store-event-head">
+                <span>来源</span>
+                <span>对象</span>
+                <span>状态</span>
+              </div>
+              <div className="store-event-row">
+                <span>UVPStateMachine</span>
+                <strong>订单 / 待办</strong>
+                <em>事件投影</em>
+              </div>
+              <div className="store-event-row">
+                <span>Trust Registry</span>
+                <strong>计划 / 供应商背书</strong>
+                <em>事件投影</em>
+              </div>
+              <div className="store-event-row">
+                <span>Projection Engine</span>
+                <strong>运行态摘要</strong>
+                <em>可重建</em>
+              </div>
+            </section>
+          </section>
+          <aside className="panel-card store-runtime-side">
+            <div className="store-panel-label">2. 回放边界</div>
             <div className="panel-heading">
               <div>
                 <h2>回放边界</h2>
@@ -66,8 +92,8 @@ export function StoreRuntimePage({ api }: { readonly api: StoreApiClient }) {
               <span><CheckCircle2 /> 计划和供应商背书从 Trust Registry 投影</span>
               <span><CheckCircle2 /> 试拼草稿不会创建订单授权或发布新秩序</span>
             </div>
-          </section>
-        </>
+          </aside>
+        </div>
       ) : null}
     </section>
   );

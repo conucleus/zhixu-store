@@ -146,11 +146,13 @@ export function StoreSupplierPage({
       ) : null}
 
       {state.status === "ready" ? (
-        <div className="store-card-grid">
-          {state.suppliers.map((supplier) => {
-            const editing = editingSupplierId === supplier.supplierId && editForm;
-            return (
-              <article className="store-supplier-card" key={supplier.supplierId}>
+        <div className="store-supplier-layout">
+          <div className="store-card-grid">
+            {state.suppliers.map((supplier) => (
+              <article
+                className={`store-supplier-card ${editingSupplierId === supplier.supplierId ? "is-selected" : ""}`}
+                key={supplier.supplierId}
+              >
                 <div className="store-card-title">
                   <Users />
                   <div>
@@ -174,15 +176,7 @@ export function StoreSupplierPage({
                 <p>{supplier.nextAction}</p>
                 {supplier.updatedAt ? <small>更新：{supplier.updatedAt}</small> : null}
 
-                {editing ? (
-                  <SupplierEditPanel
-                    form={editing}
-                    setForm={setEditForm}
-                    saving={action.phase === "pending"}
-                    onCancel={cancelEdit}
-                    onSave={() => void saveEdit(supplier)}
-                  />
-                ) : canEditSupplierCapabilities ? (
+                {canEditSupplierCapabilities ? (
                   <button
                     className="secondary-button compact"
                     data-testid="store-edit-supplier-tags-button"
@@ -193,8 +187,51 @@ export function StoreSupplierPage({
                   </button>
                 ) : null}
               </article>
-            );
-          })}
+            ))}
+          </div>
+
+          <aside className="store-supplier-drawer" aria-label="供应商 metadata 编辑">
+            {(() => {
+              const editingSupplier = state.suppliers.find((supplier) => supplier.supplierId === editingSupplierId);
+              if (editingSupplier && editForm) {
+                return (
+                  <section className="panel-card store-supplier-editor-card">
+                    <div className="panel-heading compact">
+                      <div>
+                        <h2>编辑供应商元数据</h2>
+                        <p>{editingSupplier.displayName} · 仅写入 Store metadata。</p>
+                      </div>
+                    </div>
+                    <div className="store-access-note compact">
+                      <ShieldCheck />
+                      <span>能力标签不创建链上 trust；供应商背书仍以 SupplierAttested 投影为准。</span>
+                    </div>
+                    <SupplierEditPanel
+                      form={editForm}
+                      setForm={setEditForm}
+                      saving={action.phase === "pending"}
+                      onCancel={cancelEdit}
+                      onSave={() => void saveEdit(editingSupplier)}
+                    />
+                  </section>
+                );
+              }
+              return (
+                <section className="panel-card store-supplier-editor-card">
+                  <div className="panel-heading compact">
+                    <div>
+                      <h2>编辑抽屉</h2>
+                      <p>选择一张供应商卡片后，在这里维护 Store 侧能力 metadata。</p>
+                    </div>
+                  </div>
+                  <div className="store-access-note compact">
+                    <ShieldCheck />
+                    <span>{canEditSupplierCapabilities ? "metadata 编辑不会改变链上背书状态。" : "当前会话不能打开 metadata 编辑抽屉；写入仍会被权限边界阻断。"}</span>
+                  </div>
+                </section>
+              );
+            })()}
+          </aside>
         </div>
       ) : null}
 

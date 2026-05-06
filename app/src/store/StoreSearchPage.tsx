@@ -1,7 +1,7 @@
-import { AlertTriangle, CheckCircle2, ClipboardCheck, FileCheck2, GitBranch, Layers3, Loader2, RefreshCw, Save, Search, ShieldCheck, Truck, UploadCloud, Users, Wand2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ClipboardCheck, FileCheck2, GitBranch, Layers3, Loader2, RefreshCw, Save, Search, ShieldCheck, SlidersHorizontal, Truck, UploadCloud, Users, Wand2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import type { StoreProductSchemaDTO, StoreProductSchemaValidationDTO } from "@uvp-eth/product-dto";
+import type { StoreProductSchemaDTO, StoreProductSchemaValidationDTO, StoreSearchType } from "@uvp-eth/product-dto";
 import { readableStoreError } from "./api";
 import type {
   StoreAccessState,
@@ -91,6 +91,7 @@ export function StoreSearchPage({
   readonly onRefreshCatalog?: () => Promise<StoreZhixuSearchResultDTO>;
 }) {
   const [keyword, setKeyword] = useState("");
+  const [searchType, setSearchType] = useState<StoreSearchType>("all");
   const [searchAction, setSearchAction] = useState<ActionState>({ phase: "idle" });
   const [importAction, setImportAction] = useState<ActionState>({ phase: "idle" });
   const [schemaAction, setSchemaAction] = useState<ActionState>({ phase: "idle" });
@@ -148,7 +149,7 @@ export function StoreSearchPage({
     }
     setSearchAction({ phase: "pending", message: "正在调用 /store/search" });
     try {
-      await onSearch({ keyword: trimmed, type: "all", limit: 20 });
+      await onSearch({ keyword: trimmed, type: searchType, limit: 20 });
       setSearchAction({ phase: "success", message: "搜索结果来自 /store/search" });
     } catch (error) {
       setSearchAction({ phase: "error", message: readableStoreError(error, "Store 搜索失败") });
@@ -316,123 +317,195 @@ export function StoreSearchPage({
   }
 
   return (
-    <section className="page-shell" data-testid="store-search-page">
-      <div className="summary-strip store-summary-strip">
-        <SummaryItem icon={<Layers3 />} label="秩序" title={`${result.summary.totalZhixus} 条`} />
-        <SummaryItem icon={<ShieldCheck />} label="可用" title={`${result.summary.activeZhixus} 条`} tone="success" />
-        <SummaryItem icon={<ClipboardCheck />} label="待处理" title={`${result.summary.needsReview} 条`} />
-        <SummaryItem icon={<Truck />} label="运行订单" title={`${result.summary.runningOrders} 单`} />
-        <SummaryItem icon={<Users />} label="已背书执行方" title={`${result.summary.trustedSuppliers} 个`} />
+    <section className="page-shell store-console-page" data-testid="store-search-page">
+      <div className="store-dashboard-grid">
+        <div className="store-dashboard-main">
+          <section className="panel-card store-summary-panel" aria-labelledby="store-summary-title">
+            <div className="store-panel-label">3. 摘要数据条</div>
+            <div className="panel-heading compact">
+              <div>
+                <h2 id="store-summary-title">Store 投影摘要</h2>
+                <p>摘要来自可重建投影；Store 目录和 metadata 不替代链上事实。</p>
+              </div>
+              <span className="status-badge success"><ShieldCheck /> {result.sourceOfTruth}</span>
+            </div>
+            <div className="summary-strip store-summary-strip">
+              <SummaryItem icon={<Layers3 />} label="秩序" title={`${result.summary.totalZhixus} 条`} />
+              <SummaryItem icon={<ShieldCheck />} label="可用" title={`${result.summary.activeZhixus} 条`} tone="success" />
+              <SummaryItem icon={<ClipboardCheck />} label="待处理" title={`${result.summary.needsReview} 条`} tone={result.summary.needsReview > 0 ? "warning" : undefined} />
+              <SummaryItem icon={<Truck />} label="运行订单" title={`${result.summary.runningOrders} 单`} />
+              <SummaryItem icon={<Users />} label="已背书执行方" title={`${result.summary.trustedSuppliers} 个`} />
+            </div>
+          </section>
+
+          <section className="panel-card store-catalog-panel" aria-labelledby="store-catalog-title">
+            <div className="store-panel-label">4. 检索与目录</div>
+            <div className="panel-heading compact">
+              <div>
+                <h2 id="store-catalog-title">秩序目录</h2>
+                <p>检索秩序、订单和供应商；动作仍受 Store 会话权限控制。</p>
+              </div>
+              {access.canWrite ? (
+                <button className="primary-button" data-testid="store-open-docking-button" onClick={onGoDocking} type="button">
+                  <GitBranch /> 进入试拼
+                </button>
+              ) : null}
+            </div>
+
+            <form className="store-toolbar store-search-toolbar" onSubmit={(event) => void handleSearchSubmit(event)}>
+              <label className="catalog-search store-search-input">
+                <Search />
+                <input
+                  aria-label="搜索 Store"
+                  onChange={(event) => setKeyword(event.target.value)}
+                  placeholder="搜索秩序、订单或供应商"
+                  value={keyword}
+                />
+              </label>
+              <label className="store-filter-control">
+                <SlidersHorizontal />
+                <span>类型</span>
+                <select
+                  aria-label="搜索类型"
+                  onChange={(event) => setSearchType(event.target.value as StoreSearchType)}
+                  value={searchType}
+                >
+                  <option value="all">全部</option>
+                  <option value="zhixu">秩序</option>
+                  <option value="order">订单</option>
+                  <option value="supplier">供应商</option>
+                </select>
+              </label>
+              <button className="primary-button" disabled={searchAction.phase === "pending"} type="submit">
+                {searchAction.phase === "pending" ? <Loader2 className="spin" /> : <Search />}
+                检索
+              </button>
+              <button
+                className="secondary-button"
+                disabled={searchAction.phase === "pending"}
+                onClick={() => {
+                  setKeyword("");
+                  setSearchType("all");
+                  void onSearch({}).then(() => setSearchAction({ phase: "idle" })).catch((error) => {
+                    setSearchAction({ phase: "error", message: readableStoreError(error, "Store 搜索失败") });
+                  });
+                }}
+                type="button"
+              >
+                重置
+              </button>
+            </form>
+
+            {!access.canWrite ? (
+              <div className="store-access-note">
+                <ShieldCheck />
+                <span>当前为只读访问，导入、供应商标签、试拼草稿保存等写按钮已隐藏。</span>
+              </div>
+            ) : null}
+            <ActionNotice state={searchAction} />
+
+            {result.search ? (
+              <TypedSearchResults result={result} onOpenZhixu={onOpenZhixu} />
+            ) : (
+              <ZhixuCatalogTable result={result} onOpenZhixu={onOpenZhixu} />
+            )}
+          </section>
+        </div>
+
+        <aside className="panel-card store-import-panel store-import-side" aria-labelledby="store-import-title">
+          <div className="store-panel-label">5. 导入秩序草稿</div>
+          {access.canWrite ? (
+            <>
+              <div className="panel-heading compact">
+                <div>
+                  <h2 id="store-import-title">导入 Zhixu 草稿</h2>
+                  <p>导入只创建 Store 草稿，不编译、不审核、不发布。</p>
+                </div>
+              </div>
+              <div className="form-grid store-import-form">
+                <label className="field">
+                  <span>来源类型</span>
+                  <select
+                    value={importForm.sourceKind}
+                    onChange={(event) => setImportForm((current) => ({
+                      ...current,
+                      sourceKind: event.target.value === "onchain_hook_plan_manifest" ? "onchain_hook_plan_manifest" : "zhixu_yaml"
+                    }))}
+                  >
+                    <option value="zhixu_yaml">Zhixu YAML</option>
+                    <option value="onchain_hook_plan_manifest">On-chain HookPlan Manifest</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>标题</span>
+                  <input
+                    onChange={(event) => setImportForm((current) => ({ ...current, title: event.target.value }))}
+                    placeholder="可选"
+                    value={importForm.title}
+                  />
+                </label>
+                <label className="field">
+                  <span>维护方</span>
+                  <input
+                    onChange={(event) => setImportForm((current) => ({ ...current, maintainer: event.target.value }))}
+                    placeholder="可选"
+                    value={importForm.maintainer}
+                  />
+                </label>
+                <label className="field">
+                  <span>标签</span>
+                  <input
+                    onChange={(event) => setImportForm((current) => ({ ...current, tagsText: event.target.value }))}
+                    placeholder="逗号分隔，可选"
+                    value={importForm.tagsText}
+                  />
+                </label>
+                <label className="field">
+                  <span>公开摘要</span>
+                  <input
+                    onChange={(event) => setImportForm((current) => ({ ...current, publicSummary: event.target.value }))}
+                    placeholder="可选"
+                    value={importForm.publicSummary}
+                  />
+                </label>
+                <label className="field">
+                  <span>内容<em>*</em></span>
+                  <textarea
+                    onChange={(event) => setImportForm((current) => ({ ...current, content: event.target.value }))}
+                    placeholder="粘贴 Zhixu YAML 或 on-chain HookPlan manifest JSON"
+                    value={importForm.content}
+                  />
+                </label>
+              </div>
+              <div className="store-access-note compact">
+                <ShieldCheck />
+                <span>导入内容只作为 Store 元数据草稿，不能代表审核或链上背书。</span>
+              </div>
+              <div className="store-inline-actions store-import-actions">
+                <button className="secondary-button" disabled type="button">
+                  <Wand2 /> 导入后审查
+                </button>
+                <button className="primary-button" data-testid="store-import-draft-button" disabled={importAction.phase === "pending"} onClick={() => void handleImportDraft()} type="button">
+                  {importAction.phase === "pending" ? <Loader2 className="spin" /> : <UploadCloud />}
+                  导入为 Store 元数据
+                </button>
+              </div>
+              <ActionNotice state={importAction} testId="store-import-action-notice" />
+            </>
+          ) : (
+            <StoreBoundaryCard
+              icon={<ShieldCheck />}
+              title="只读会话"
+              text="当前访问不显示导入、试拼保存或治理广播入口；后端写入探测也会 fail closed。"
+            />
+          )}
+        </aside>
       </div>
 
-      <form className="store-toolbar" onSubmit={(event) => void handleSearchSubmit(event)}>
-        <label className="catalog-search">
-          <Search />
-          <input
-            aria-label="搜索 Store"
-            onChange={(event) => setKeyword(event.target.value)}
-            placeholder="搜索秩序、订单或供应商"
-            value={keyword}
-          />
-        </label>
-        <div className="button-row store-toolbar-actions">
-          <button className="secondary-button" disabled={searchAction.phase === "pending"} type="submit">
-            {searchAction.phase === "pending" ? <Loader2 className="spin" /> : <Search />}
-            搜索
-          </button>
-          {access.canWrite ? (
-            <button className="primary-button" data-testid="store-open-docking-button" onClick={onGoDocking} type="button"><GitBranch /> 进入试拼</button>
-          ) : null}
-        </div>
-      </form>
-
-      {!access.canWrite ? (
-        <div className="store-access-note">
-          <ShieldCheck />
-          <span>当前为只读访问，导入、供应商标签、试拼草稿保存等写按钮已隐藏。</span>
-        </div>
-      ) : null}
-      <ActionNotice state={searchAction} />
-
-      {result.search ? (
-        <TypedSearchResults result={result} onOpenZhixu={onOpenZhixu} />
-      ) : (
-        <ZhixuCatalogTable result={result} onOpenZhixu={onOpenZhixu} />
-      )}
-
-      {access.canWrite ? (
-        <section className="panel-card store-import-panel">
-          <div className="panel-heading">
-            <div>
-              <h2>导入 Zhixu 草稿</h2>
-              <p>导入只创建 Store 草稿，不编译、不审核、不发布。</p>
-            </div>
-            <button className="secondary-button" data-testid="store-import-draft-button" disabled={importAction.phase === "pending"} onClick={() => void handleImportDraft()}>
-              {importAction.phase === "pending" ? <Loader2 className="spin" /> : <UploadCloud />}
-              导入草稿
-            </button>
-          </div>
-          <div className="form-grid store-import-form">
-            <label className="field">
-              <span>来源类型</span>
-              <select
-                value={importForm.sourceKind}
-                onChange={(event) => setImportForm((current) => ({
-                  ...current,
-                  sourceKind: event.target.value === "onchain_hook_plan_manifest" ? "onchain_hook_plan_manifest" : "zhixu_yaml"
-                }))}
-              >
-                <option value="zhixu_yaml">Zhixu YAML</option>
-                <option value="onchain_hook_plan_manifest">On-chain HookPlan Manifest</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>标题</span>
-              <input
-                onChange={(event) => setImportForm((current) => ({ ...current, title: event.target.value }))}
-                placeholder="可选"
-                value={importForm.title}
-              />
-            </label>
-            <label className="field">
-              <span>维护方</span>
-              <input
-                onChange={(event) => setImportForm((current) => ({ ...current, maintainer: event.target.value }))}
-                placeholder="可选"
-                value={importForm.maintainer}
-              />
-            </label>
-            <label className="field">
-              <span>标签</span>
-              <input
-                onChange={(event) => setImportForm((current) => ({ ...current, tagsText: event.target.value }))}
-                placeholder="逗号分隔，可选"
-                value={importForm.tagsText}
-              />
-            </label>
-            <label className="field span-2">
-              <span>公开摘要</span>
-              <input
-                onChange={(event) => setImportForm((current) => ({ ...current, publicSummary: event.target.value }))}
-                placeholder="可选"
-                value={importForm.publicSummary}
-              />
-            </label>
-            <label className="field span-2">
-              <span>内容<em>*</em></span>
-              <textarea
-                onChange={(event) => setImportForm((current) => ({ ...current, content: event.target.value }))}
-                placeholder="粘贴 Zhixu YAML 或 on-chain HookPlan manifest JSON"
-                value={importForm.content}
-              />
-            </label>
-          </div>
-          <ActionNotice state={importAction} testId="store-import-action-notice" />
-        </section>
-      ) : null}
-
-      {access.canWrite && reviewDraft ? (
-        <section className="panel-card store-schema-panel" data-testid="store-schema-review">
+      <div className="store-lower-grid">
+        {access.canWrite && reviewDraft ? (
+          <section className="panel-card store-schema-panel" data-testid="store-schema-review">
+            <div className="store-panel-label">6. 能力插件审查</div>
           <div className="panel-heading">
             <div>
               <h2>能力插件审查</h2>
@@ -524,7 +597,12 @@ export function StoreSearchPage({
             onRefreshCatalog={onRefreshCatalog}
           />
         </section>
-      ) : null}
+        ) : (
+          <StoreCapabilityPlaceholder access={access} />
+        )}
+
+        <StoreSearchInfoPanel result={result} reviewDraft={reviewDraft} />
+      </div>
     </section>
   );
 }
@@ -838,6 +916,95 @@ function ActionNotice({ state, testId }: { readonly state: ActionState; readonly
       {icon}
       <span>{state.message}</span>
     </div>
+  );
+}
+
+function StoreBoundaryCard({
+  icon,
+  title,
+  text
+}: {
+  readonly icon: ReactNode;
+  readonly title: string;
+  readonly text: string;
+}) {
+  return (
+    <div className="store-boundary-card">
+      {icon}
+      <div>
+        <strong>{title}</strong>
+        <p>{text}</p>
+      </div>
+    </div>
+  );
+}
+
+function StoreCapabilityPlaceholder({ access }: { readonly access: StoreAccessState }) {
+  return (
+    <section className="panel-card store-schema-panel store-schema-empty">
+      <div className="store-panel-label">6. 能力插件审查</div>
+      <div className="panel-heading">
+        <div>
+          <h2>能力插件审查</h2>
+          <p>导入草稿并编译后，这里会显示角色插槽、显式插件、阻断项和发布清单。</p>
+        </div>
+        <span className="status-badge default">等待草稿</span>
+      </div>
+      <div className="schema-empty-grid">
+        <StoreBoundaryCard
+          icon={<ClipboardCheck />}
+          title="Product Schema Bundle"
+          text="阶段、权限、凭证资源和插件来源在这里审查；legacy_inferred 不能直接发布。"
+        />
+        <StoreBoundaryCard
+          icon={<ShieldCheck />}
+          title="Store review 不是链上背书"
+          text="审核通过后仍需 governance admin 请求 Trust Registry attestation。"
+        />
+        <StoreBoundaryCard
+          icon={<Users />}
+          title={access.canWrite ? "可导入草稿" : "只读模式"}
+          text={access.canWrite ? "使用右侧导入面板创建 Store 草稿。" : "只读访问不会显示导入、保存或治理写入口。"}
+        />
+      </div>
+    </section>
+  );
+}
+
+function StoreSearchInfoPanel({
+  result,
+  reviewDraft
+}: {
+  readonly result: StoreZhixuSearchResultDTO;
+  readonly reviewDraft?: StoreZhixuDraftDTO;
+}) {
+  return (
+    <section className="panel-card store-info-panel">
+      <div className="store-panel-label">8. 详情与说明</div>
+      <div className="panel-heading">
+        <div>
+          <h2>边界说明</h2>
+          <p>Store Console 可以组织草稿、审查和投影，但不能替代合约、签名或链事件。</p>
+        </div>
+      </div>
+      <div className="store-info-list">
+        <StoreBoundaryCard
+          icon={<ShieldCheck />}
+          title="链上事实"
+          text={`${result.sourceOfTruth}；订单、背书和 proof 以链事件投影为准。`}
+        />
+        <StoreBoundaryCard
+          icon={<Layers3 />}
+          title="当前目录"
+          text={`${result.summary.totalZhixus} 条秩序，${result.summary.runningOrders} 单运行订单，${result.summary.trustedSuppliers} 个已背书执行方。`}
+        />
+        <StoreBoundaryCard
+          icon={<ClipboardCheck />}
+          title="当前草稿"
+          text={reviewDraft ? `${reviewDraft.title} · ${reviewDraft.status}` : "尚未导入本次工作草稿。"}
+        />
+      </div>
+    </section>
   );
 }
 
