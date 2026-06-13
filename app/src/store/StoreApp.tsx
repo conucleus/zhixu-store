@@ -33,7 +33,7 @@ declare global {
   }
 }
 
-export function StoreApp({ productHref = "/app" }: { readonly productHref?: string }) {
+export function StoreApp({ productHref = "/app" }: { readonly productHref?: string | undefined }) {
   const api = useMemo(() => createStoreApiClient(), []);
   const [access, setAccess] = useState<StoreAccessState>(api.access);
   const [view, setView] = useState<StoreView>("search");
@@ -248,7 +248,7 @@ function StoreStatePanel({
   readonly icon: ReactNode;
   readonly title: string;
   readonly desc: string;
-  readonly tone?: "muted" | "error";
+  readonly tone?: "muted" | "error" | undefined;
 }) {
   return (
     <section className={`state-panel ${tone}`}>

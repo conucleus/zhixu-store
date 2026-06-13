@@ -311,7 +311,7 @@ function StatePanel({
   readonly icon: ReactNode;
   readonly title: string;
   readonly desc: string;
-  readonly tone?: "muted" | "error";
+  readonly tone?: "muted" | "error" | undefined;
 }) {
   return (
     <section className={`state-panel ${tone}`}>
@@ -324,7 +324,7 @@ function StatePanel({
   );
 }
 
-function Fact({ label, value, mono }: { readonly label: string; readonly value: string; readonly mono?: boolean }) {
+function Fact({ label, value, mono }: { readonly label: string; readonly value: string; readonly mono?: boolean | undefined }) {
   return (
     <div className="fact-row">
       <span>{label}</span>

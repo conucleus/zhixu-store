@@ -36,8 +36,8 @@ export type ProductApiSource =
   | {
       readonly kind: "mock";
       readonly reason: string;
-      readonly baseUrl?: string;
-      readonly attemptedPath?: string;
+      readonly baseUrl?: string | undefined;
+      readonly attemptedPath?: string | undefined;
     };
 
 export interface ProductApiResult<TData> {
@@ -50,9 +50,9 @@ export interface ProductWorkbenchData {
   readonly zhixus: readonly ZhixuDetailDTO[];
   readonly orders: readonly ProductOrderDTO[];
   readonly tasks: readonly ProductTaskDTO[];
-  readonly zhixu?: ZhixuDetailDTO;
-  readonly order?: ProductOrderDTO;
-  readonly activeTask?: ProductTaskDTO;
+  readonly zhixu?: ZhixuDetailDTO | undefined;
+  readonly order?: ProductOrderDTO | undefined;
+  readonly activeTask?: ProductTaskDTO | undefined;
   readonly source: ProductApiSource;
   readonly syncState: ProductSyncState;
 }
@@ -62,7 +62,7 @@ export type ProductSyncState = "ready" | "syncing" | "fallback";
 export interface WorkbenchEndpointDiagnostic {
   readonly endpoint: string;
   readonly status: number;
-  readonly errorCode?: string;
+  readonly errorCode?: string | undefined;
   readonly message: string;
 }
 
@@ -168,17 +168,17 @@ export interface CreateInviteInput {
   readonly roleSlotId: string;
   readonly roleLabel: string;
   readonly contact: string;
-  readonly displayName?: string;
-  readonly required?: boolean;
+  readonly displayName?: string | undefined;
+  readonly required?: boolean | undefined;
 }
 
 export type EvidenceStatus = "uploaded" | "bound" | "revoked" | "quarantined";
 
 export interface EvidenceObjectDTO {
   readonly evidenceId: string;
-  readonly orderId?: string;
-  readonly draftId?: string;
-  readonly taskId?: string;
+  readonly orderId?: string | undefined;
+  readonly draftId?: string | undefined;
+  readonly taskId?: string | undefined;
   readonly stageIdentifier: string;
   readonly ownerParticipantId: string;
   readonly fileName: string;
@@ -191,35 +191,35 @@ export interface EvidenceObjectDTO {
   readonly payloadRef: string;
   readonly status: EvidenceStatus;
   readonly createdAt: string;
-  readonly boundSignalTxHash?: string;
+  readonly boundSignalTxHash?: string | undefined;
 }
 
 export interface EvidenceMetadataDTO {
-  readonly evidenceId?: string;
+  readonly evidenceId?: string | undefined;
   readonly businessLabel: string;
-  readonly description?: string;
+  readonly description?: string | undefined;
   readonly documentType: string;
-  readonly issuer?: string;
-  readonly issuedAt?: string;
-  readonly fields?: Readonly<Record<string, string>>;
-  readonly redactionPolicy?: string;
+  readonly issuer?: string | undefined;
+  readonly issuedAt?: string | undefined;
+  readonly fields?: Readonly<Record<string, string>> | undefined;
+  readonly redactionPolicy?: string | undefined;
 }
 
 export interface EvidenceProofDTO {
   readonly payloadHash: string;
   readonly contentHash: string;
   readonly metadataHash: string;
-  readonly boundSignalTxHash?: string;
-  readonly blockNumber?: string;
-  readonly submitter?: string;
+  readonly boundSignalTxHash?: string | undefined;
+  readonly blockNumber?: string | undefined;
+  readonly submitter?: string | undefined;
   readonly verificationStatus: "unbound" | "matched" | "mismatch" | "missing_file";
 }
 
 export interface UploadEvidenceInput {
   readonly file: File;
-  readonly orderId?: string;
-  readonly draftId?: string;
-  readonly taskId?: string;
+  readonly orderId?: string | undefined;
+  readonly draftId?: string | undefined;
+  readonly taskId?: string | undefined;
   readonly stageIdentifier: string;
   readonly documentType: string;
   readonly metadata: EvidenceMetadataDTO;
@@ -262,9 +262,9 @@ export interface ProductSubmissionDTO {
   readonly taskId: string;
   readonly status: ProductSubmissionStatus;
   readonly statusLabel: string;
-  readonly txHash?: string;
-  readonly blockNumber?: string;
-  readonly errorCode?: string;
+  readonly txHash?: string | undefined;
+  readonly blockNumber?: string | undefined;
+  readonly errorCode?: string | undefined;
   readonly retryable: boolean;
   readonly proofRows: readonly ChainProofRowDTO[];
 }
@@ -283,7 +283,7 @@ export interface PreparedOrderTriggerDTO {
   readonly expiresAt: string;
   readonly submitter: string;
   readonly typedData: unknown;
-  readonly summary?: Readonly<Record<string, unknown>>;
+  readonly summary?: Readonly<Record<string, unknown>> | undefined;
 }
 
 export interface TriggerOrderInput {
@@ -293,7 +293,7 @@ export interface TriggerOrderInput {
 }
 
 export interface ProductApiClient {
-  readonly baseUrl?: string;
+  readonly baseUrl?: string | undefined;
   loadWorkbenchData(): Promise<ProductWorkbenchData>;
   createOrderDraft(input: CreateOrderDraftInput): Promise<ProductApiResult<ProductOrderDraftDTO>>;
   updateOrderDraft(draftId: string, input: UpdateOrderDraftInput): Promise<ProductApiResult<ProductOrderDraftDTO>>;
@@ -342,7 +342,7 @@ export async function loadProductWorkbenchData(): Promise<ProductWorkbenchData> 
 }
 
 class BrowserProductApiClient implements ProductApiClient {
-  readonly baseUrl?: string;
+  readonly baseUrl?: string | undefined;
   readonly demoMode: boolean;
 
   constructor(baseUrl: string | undefined, options: { readonly demoMode: boolean }) {
@@ -820,7 +820,7 @@ class ApiMissingConfigError extends Error {
 
 class ApiNetworkError extends Error {
   readonly pathname: string;
-  readonly status?: number;
+  readonly status?: number | undefined;
 
   constructor(pathname: string, message: string, status?: number) {
     super(message);
@@ -1035,6 +1035,18 @@ function mockPrepareOrderTrigger(
   );
   if (!requiredReady) {
     throw new ApiRequestError(`/product/order-drafts/${draftId}/prepare-trigger`, 409, "required_participants_missing");
+  }
+  const authorityRoleSlotId = demoZhixuDetail.createOrderTrigger?.submitterRoleSlotId;
+  const authorityParticipant = authorityRoleSlotId
+    ? participants.find((participant) => participant.roleSlotId === authorityRoleSlotId)
+    : undefined;
+  if (
+    authorityRoleSlotId &&
+    (!authorityParticipant?.walletAddress ||
+      authorityParticipant.status !== "accepted" ||
+      authorityParticipant.walletAddress.toLowerCase() !== input.walletAddress.toLowerCase())
+  ) {
+    throw new ApiRequestError(`/product/order-drafts/${draftId}/prepare-trigger`, 403, "trigger_submitter_not_authorized");
   }
   const prepareId = `prepare-${pseudoHash(`${draftId}:${input.walletAddress}:${Date.now()}`).slice(2, 14)}`;
   const orderId = pseudoHash(`${draftId}:order`);
@@ -1301,7 +1313,7 @@ async function fetchJson<TResponse>(
     response = await fetch(`${baseUrl}${pathname}`, {
       method: init.method ?? "GET",
       headers,
-      body
+      ...(body !== undefined ? { body } : {})
     });
   } catch (error) {
     throw new ApiNetworkError(pathname, error instanceof Error ? error.message : "network_error");

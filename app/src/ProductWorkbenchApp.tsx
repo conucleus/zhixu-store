@@ -457,8 +457,8 @@ function CatalogPage({
   onTask
 }: {
   zhixu: ZhixuDetailDTO;
-  order?: ProductOrderDTO;
-  task?: ProductTaskDTO;
+  order?: ProductOrderDTO | undefined;
+  task?: ProductTaskDTO | undefined;
   onViewDetail: () => void;
   onCreate: () => void;
   onOrder: () => void;
@@ -656,7 +656,7 @@ function CreateOrderPage({
   onNext
 }: {
   zhixu: ZhixuDetailDTO;
-  draft?: ProductOrderDraftDTO;
+  draft?: ProductOrderDraftDTO | undefined;
   createAction: ActionState;
   saveAction: ActionState;
   onBack: () => void;
@@ -721,10 +721,10 @@ function ParticipantsPage({
   onRegister,
   onOrder
 }: {
-  order?: ProductOrderDTO;
-  draft?: ProductOrderDraftDTO;
+  order?: ProductOrderDTO | undefined;
+  draft?: ProductOrderDraftDTO | undefined;
   draftParticipants: readonly DraftParticipantDTO[];
-  inviteActions: Readonly<Record<string, ActionState & { readonly invite?: ProductInviteDTO }>>;
+  inviteActions: Readonly<Record<string, ActionState & { readonly invite?: ProductInviteDTO | undefined }>>;
   registerAction: ActionState;
   onBack: () => void;
   onInvite: (participant: DraftParticipantDTO) => void;
@@ -764,7 +764,8 @@ function ParticipantsPage({
               <span>操作</span>
             </div>
             {draftParticipants.map((item) => {
-              const action = inviteActions[item.participantId] ?? idleAction;
+              const action = inviteActions[item.participantId];
+              const actionState = action ?? idleAction;
               return (
               <div className="participant-row" data-testid="participant-row" data-uvp-participant-required={item.required ? "true" : "false"} data-uvp-participant-status={item.status} key={item.participantId}>
                 <div className="participant-role">
@@ -775,12 +776,12 @@ function ParticipantsPage({
                 <div className="evidence-list"><span><FileText />职责确认</span></div>
                 <StatusText tone={draftParticipantTone(item.status)}>{draftParticipantStatusLabel(item.status)}</StatusText>
                 <div className="row-actions">
-                  <button className={item.status === "missing" ? "primary-mini" : "light-button"} onClick={() => onInvite(item)} disabled={action.phase === "pending"}>
-                    {action.phase === "pending" ? <Loader2 className="spin" /> : null}{draftParticipantActionLabel(item.status)}
+                  <button className={item.status === "missing" ? "primary-mini" : "light-button"} onClick={() => onInvite(item)} disabled={actionState.phase === "pending"}>
+                    {actionState.phase === "pending" ? <Loader2 className="spin" /> : null}{draftParticipantActionLabel(item.status)}
                   </button>
-                  {action.invite?.inviteUrl ? <button className="light-button" onClick={() => void navigator.clipboard?.writeText(action.invite?.inviteUrl ?? "")}><Copy /> 复制链接</button> : <button className="light-button" onClick={() => onInvite(item)}>替换</button>}
+                  {action?.invite?.inviteUrl ? <button className="light-button" onClick={() => void navigator.clipboard?.writeText(action.invite?.inviteUrl ?? "")}><Copy /> 复制链接</button> : <button className="light-button" onClick={() => onInvite(item)}>替换</button>}
                 </div>
-                <ActionNotice state={action} compact />
+                <ActionNotice state={actionState} compact />
               </div>
             );})}
           </div>
@@ -910,8 +911,8 @@ function TaskPage({
   onDispute
 }: {
   task: ProductTaskDTO;
-  evidence?: EvidenceObjectDTO;
-  evidenceProof?: EvidenceProofDTO;
+  evidence?: EvidenceObjectDTO | undefined;
+  evidenceProof?: EvidenceProofDTO | undefined;
   uploadAction: ActionState;
   onBack: () => void;
   onUpload: (file: File) => void;
@@ -996,7 +997,7 @@ function SubmitPage({
   onOrder
 }: {
   task: ProductTaskDTO;
-  evidence?: EvidenceObjectDTO;
+  evidence?: EvidenceObjectDTO | undefined;
   submitMachine: SubmitMachineState;
   allowRejectSimulation: boolean;
   onBack: () => void;
@@ -1186,7 +1187,7 @@ function StatePanel({
   icon: ReactNode;
   title: string;
   desc: string;
-  tone?: "muted" | "info" | "error";
+  tone?: "muted" | "info" | "error" | undefined;
 }) {
   return (
     <section className={`state-panel ${tone}`}>
@@ -1373,11 +1374,11 @@ function Field({
   icon
 }: {
   label: string;
-  value?: string;
-  required?: boolean;
-  suffix?: string;
-  placeholder?: string;
-  icon?: ReactNode;
+  value?: string | undefined;
+  required?: boolean | undefined;
+  suffix?: string | undefined;
+  placeholder?: string | undefined;
+  icon?: ReactNode | undefined;
 }) {
   return (
     <label className="field">
@@ -1391,7 +1392,7 @@ function Field({
   );
 }
 
-function SelectField({ label, value, required }: { label: string; value: string; required?: boolean }) {
+function SelectField({ label, value, required }: { label: string; value: string; required?: boolean | undefined }) {
   return (
     <label className="field">
       <span>{label}{required ? <em>*</em> : null}</span>
@@ -1403,7 +1404,7 @@ function SelectField({ label, value, required }: { label: string; value: string;
   );
 }
 
-function Textarea({ label, value, placeholder, required }: { label: string; value?: string; placeholder?: string; required?: boolean }) {
+function Textarea({ label, value, placeholder, required }: { label: string; value?: string | undefined; placeholder?: string | undefined; required?: boolean | undefined }) {
   return (
     <label className="field span-2">
       <span>{label}{required ? <em>*</em> : null}</span>
@@ -1427,11 +1428,11 @@ function ChoiceGroup({ label, options, active }: { label: string; options: strin
   );
 }
 
-function Panel({ children, tone }: { children: ReactNode; tone?: "success" | "muted" }) {
+function Panel({ children, tone }: { children: ReactNode; tone?: "success" | "muted" | undefined }) {
   return <section className={`panel-card ${tone ? `panel-${tone}` : ""}`}>{children}</section>;
 }
 
-function SidePanel({ title, children, action }: { title: string; children: ReactNode; action?: string }) {
+function SidePanel({ title, children, action }: { title: string; children: ReactNode; action?: string | undefined }) {
   return (
     <section className="side-panel">
       <div className="side-panel-title">
@@ -1443,11 +1444,11 @@ function SidePanel({ title, children, action }: { title: string; children: React
   );
 }
 
-function BackLine({ children, onClick }: { children: ReactNode; onClick?: () => void }) {
+function BackLine({ children, onClick }: { children: ReactNode; onClick?: (() => void) | undefined }) {
   return <button className="back-line" onClick={onClick}><ChevronLeft /> {children}</button>;
 }
 
-function StatusBadge({ children, icon, tone = "default" }: { children: ReactNode; icon?: ReactNode; tone?: "success" | "warning" | "info" | "default" }) {
+function StatusBadge({ children, icon, tone = "default" }: { children: ReactNode; icon?: ReactNode | undefined; tone?: "success" | "warning" | "info" | "default" | undefined }) {
   return <span className={`status-badge ${tone}`}>{icon}{children}</span>;
 }
 
@@ -1485,7 +1486,7 @@ function NoticeCard({ icon, title, tone }: { icon: ReactNode; title: string; ton
   return <div className={`notice-card ${tone}`}>{icon}<strong>{title}</strong></div>;
 }
 
-function SideMetric({ icon, label, value, tone }: { icon?: ReactNode; label: string; value: ReactNode; tone?: "success" }) {
+function SideMetric({ icon, label, value, tone }: { icon?: ReactNode | undefined; label: string; value: ReactNode; tone?: "success" | undefined }) {
   return (
     <div className="side-metric">
       {icon ? <span className={tone ?? ""}>{icon}</span> : null}
@@ -1495,7 +1496,7 @@ function SideMetric({ icon, label, value, tone }: { icon?: ReactNode; label: str
   );
 }
 
-function Kpi({ label, value, icon, tone }: { label: string; value: string; icon?: ReactNode; tone?: "success" }) {
+function Kpi({ label, value, icon, tone }: { label: string; value: string; icon?: ReactNode | undefined; tone?: "success" | undefined }) {
   return (
     <div className="kpi-card">
       <span>{label}</span>
@@ -1504,7 +1505,7 @@ function Kpi({ label, value, icon, tone }: { label: string; value: string; icon?
   );
 }
 
-function SummaryItem({ icon, label, title, tone }: { icon: ReactNode; label?: string; title: string; tone?: "success" }) {
+function SummaryItem({ icon, label, title, tone }: { icon: ReactNode; label?: string | undefined; title: string; tone?: "success" | undefined }) {
   return (
     <div className={`summary-item ${tone ?? ""}`}>
       {icon}

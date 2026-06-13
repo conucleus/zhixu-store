@@ -13,11 +13,11 @@ import { delay, readableError } from "./workbenchSupport";
 
 export function useTaskSubmissionFlow(input: {
   readonly api: ProductApiClient;
-  readonly activeTask?: ProductTaskDTO;
+  readonly activeTask?: ProductTaskDTO | undefined;
   readonly allowMockWallet: boolean;
 }): {
-  readonly evidence?: EvidenceObjectDTO;
-  readonly evidenceProof?: EvidenceProofDTO;
+  readonly evidence?: EvidenceObjectDTO | undefined;
+  readonly evidenceProof?: EvidenceProofDTO | undefined;
   readonly evidenceAction: ActionState;
   readonly submitMachine: SubmitMachineState;
   readonly disputeAction: ActionState;
@@ -70,7 +70,7 @@ export function useTaskSubmissionFlow(input: {
     await handleUploadEvidence(new File(["customs declaration demo"], "出口报关单_20260430.pdf", { type: "application/pdf" }));
   }
 
-  async function handleConfirmSubmit(options: { readonly rejectWallet?: boolean } = {}): Promise<void> {
+  async function handleConfirmSubmit(options: { readonly rejectWallet?: boolean | undefined } = {}): Promise<void> {
     if (!activeTask) {
       setSubmitMachine({ status: "failed", message: "暂无可提交的待办" });
       return;
