@@ -50,7 +50,7 @@ import {
 } from "../shared/frontend";
 
 export interface StoreApiClient {
-  readonly baseUrl?: string;
+  readonly baseUrl?: string | undefined;
   readonly access: StoreAccessState;
   getSession(): Promise<StoreApiResult<StoreSessionDTO>>;
   search(query?: StoreSearchInput): Promise<StoreApiResult<StoreZhixuSearchResultDTO>>;
@@ -99,10 +99,10 @@ const fallbackSource: StoreApiSource = {
 export class StoreApiError extends Error {
   readonly pathname: string;
   readonly status: number;
-  readonly code?: string;
-  readonly details?: unknown;
+  readonly code?: string | undefined;
+  readonly details?: unknown | undefined;
 
-  constructor(pathname: string, status: number, message: string, options: { readonly code?: string; readonly details?: unknown } = {}) {
+  constructor(pathname: string, status: number, message: string, options: { readonly code?: string | undefined; readonly details?: unknown | undefined } = {}) {
     super(message);
     this.name = "StoreApiError";
     this.pathname = pathname;
@@ -184,7 +184,7 @@ export function readableStoreError(error: unknown, fallback: string): string {
 }
 
 class BrowserStoreApiClient implements StoreApiClient {
-  readonly baseUrl?: string;
+  readonly baseUrl?: string | undefined;
   readonly access: StoreAccessState;
   readonly demoMode: boolean;
 
@@ -474,7 +474,7 @@ async function fetchStoreJson<TResponse>(
     response = await fetch(`${baseUrl}${pathname}`, {
       method: init.method,
       headers,
-      body
+      ...(body !== undefined ? { body } : {})
     });
   } catch (error) {
     throw new StoreApiUnavailableError(pathname, error instanceof Error ? error.message : "network_error");

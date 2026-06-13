@@ -32,7 +32,7 @@ export interface WalletConnector {
   signTypedData(
     account: WalletAccount,
     typedData: unknown,
-    options: { readonly allowMock: boolean; readonly reject?: boolean }
+    options: { readonly allowMock: boolean; readonly reject?: boolean | undefined }
   ): Promise<string>;
 }
 
@@ -74,7 +74,7 @@ export async function requestWalletAccount(allowMock: boolean): Promise<WalletAc
 export async function signTypedData(
   account: WalletAccount,
   typedData: unknown,
-  options: { readonly allowMock: boolean; readonly reject?: boolean }
+  options: { readonly allowMock: boolean; readonly reject?: boolean | undefined }
 ): Promise<string> {
   if (options.reject) {
     throw new WalletRejectedError();

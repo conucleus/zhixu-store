@@ -88,7 +88,7 @@ export function StoreSearchPage({
     draftId: string,
     input: StoreZhixuDraftAttestationInput
   ) => Promise<StoreApiResult<StoreZhixuDraftAttestationResultDTO>>;
-  readonly onRefreshCatalog?: () => Promise<StoreZhixuSearchResultDTO>;
+  readonly onRefreshCatalog?: (() => Promise<StoreZhixuSearchResultDTO>) | undefined;
 }) {
   const [keyword, setKeyword] = useState("");
   const [searchType, setSearchType] = useState<StoreSearchType>("all");
@@ -622,7 +622,7 @@ function DraftGovernancePanel({
   readonly draft: StoreZhixuDraftDTO;
   readonly onConfirmationChange: (value: AttestationConfirmationState) => void;
   readonly onRequestAttestation: () => void;
-  readonly onRefreshCatalog?: () => Promise<StoreZhixuSearchResultDTO>;
+  readonly onRefreshCatalog?: (() => Promise<StoreZhixuSearchResultDTO>) | undefined;
 }) {
   const status = governanceStatusCopy(draft.status);
   const canRequestAttestation = access.canAdmin && draft.status === "approved_for_broadcast";
@@ -885,7 +885,7 @@ function SummaryItem({
   readonly icon: ReactNode;
   readonly label: string;
   readonly title: string;
-  readonly tone?: "success" | "warning";
+  readonly tone?: "success" | "warning" | undefined;
 }) {
   return (
     <div className={`summary-item ${tone ?? ""}`}>
@@ -976,7 +976,7 @@ function StoreSearchInfoPanel({
   reviewDraft
 }: {
   readonly result: StoreZhixuSearchResultDTO;
-  readonly reviewDraft?: StoreZhixuDraftDTO;
+  readonly reviewDraft?: StoreZhixuDraftDTO | undefined;
 }) {
   return (
     <section className="panel-card store-info-panel">

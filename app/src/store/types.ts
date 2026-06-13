@@ -55,7 +55,7 @@ export interface StoreAccessState {
 
 export interface StoreSessionDTO {
   readonly authenticated: boolean;
-  readonly principalId?: string;
+  readonly principalId?: string | undefined;
   readonly accessLevel: StoreAccessLevel;
   readonly roles: readonly StoreRole[];
   readonly capabilities: readonly StoreCapability[];
@@ -70,8 +70,8 @@ export type StoreApiSource =
   | {
       readonly kind: "mock";
       readonly reason: string;
-      readonly baseUrl?: string;
-      readonly attemptedPath?: string;
+      readonly baseUrl?: string | undefined;
+      readonly attemptedPath?: string | undefined;
     };
 
 export interface StoreApiResult<TData> {
@@ -192,10 +192,10 @@ export interface StoreSupplierDTO {
   readonly supplierId: string;
   readonly supplierSubjectId: string;
   readonly displayName: string;
-  readonly wallet?: string;
-  readonly notificationProfile?: unknown;
-  readonly notificationProfileHash?: string;
-  readonly notificationUpdatedAt?: string;
+  readonly wallet?: string | undefined;
+  readonly notificationProfile?: unknown | undefined;
+  readonly notificationProfileHash?: string | undefined;
+  readonly notificationUpdatedAt?: string | undefined;
   readonly trustStatus: ChainAttestationStatus;
   readonly trustLabel: string;
   readonly capabilityTags: readonly string[];
@@ -205,7 +205,7 @@ export interface StoreSupplierDTO {
   readonly recentOrderCount: number;
   readonly openTaskCount: number;
   readonly reviewStatus: StoreSupplierReviewStatus;
-  readonly metadataURI?: string;
+  readonly metadataURI?: string | undefined;
   readonly proofRows: readonly ChainProofRowDTO[];
   readonly nextAction: string;
   readonly updatedAt: string;

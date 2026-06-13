@@ -12,15 +12,15 @@ import type { ProductWorkbenchE2EAcceptResult } from "./useProductWorkbenchE2EBr
 
 export function useOrderDraftFlow(input: {
   readonly api: ProductApiClient;
-  readonly selectedZhixu?: ZhixuDetailDTO;
+  readonly selectedZhixu?: ZhixuDetailDTO | undefined;
 }): {
-  readonly draft?: ProductOrderDraftDTO;
+  readonly draft?: ProductOrderDraftDTO | undefined;
   readonly setDraft: Dispatch<SetStateAction<ProductOrderDraftDTO | undefined>>;
   readonly draftParticipants: readonly DraftParticipantDTO[];
   readonly setDraftParticipants: Dispatch<SetStateAction<readonly DraftParticipantDTO[]>>;
   readonly draftAction: ActionState;
   readonly saveDraftAction: ActionState;
-  readonly inviteActions: Record<string, ActionState & { readonly invite?: ProductInviteDTO }>;
+  readonly inviteActions: Record<string, ActionState & { readonly invite?: ProductInviteDTO | undefined }>;
   readonly ensureDraft: () => Promise<ProductOrderDraftDTO | undefined>;
   readonly handleCreateDraft: () => Promise<ProductOrderDraftDTO | undefined>;
   readonly handleSaveDraft: () => Promise<void>;
@@ -32,7 +32,7 @@ export function useOrderDraftFlow(input: {
   const [draftParticipants, setDraftParticipants] = useState<readonly DraftParticipantDTO[]>([]);
   const [draftAction, setDraftAction] = useState<ActionState>(idleAction);
   const [saveDraftAction, setSaveDraftAction] = useState<ActionState>(idleAction);
-  const [inviteActions, setInviteActions] = useState<Record<string, ActionState & { readonly invite?: ProductInviteDTO }>>({});
+  const [inviteActions, setInviteActions] = useState<Record<string, ActionState & { readonly invite?: ProductInviteDTO | undefined }>>({});
 
   async function ensureDraft(): Promise<ProductOrderDraftDTO | undefined> {
     if (draft) {

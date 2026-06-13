@@ -18,7 +18,7 @@ export function StoreDockingPage({
 }: {
   readonly access: StoreAccessState;
   readonly api: StoreApiClient;
-  readonly initialSourceZhixuId?: string;
+  readonly initialSourceZhixuId?: string | undefined;
   readonly zhixus: readonly StoreZhixuConsoleDTO[];
 }) {
   const sourceZhixu = useMemo(
