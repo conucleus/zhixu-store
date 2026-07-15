@@ -33,7 +33,7 @@ export function StoreRuntimePage({ api }: { readonly api: StoreApiClient }) {
       <div className="page-title-row">
         <div>
           <h2>运行态观察</h2>
-          <p>Store 只读观察订单、待办和背书投影；执行提交仍在订单工作台和执行方工具中完成。</p>
+          <p>Store 只读观察订单、待办、Plan 发布和身份投影；执行提交仍在订单工作台和执行方工具中完成。</p>
         </div>
       </div>
 
@@ -53,7 +53,6 @@ export function StoreRuntimePage({ api }: { readonly api: StoreApiClient }) {
               <Metric icon={<Layers3 />} label="可用秩序" value={`${state.summary.activeZhixus} 条`} />
               <Metric icon={<Truck />} label="运行订单" value={`${state.summary.runningOrders} 单`} />
               <Metric icon={<ClipboardCheck />} label="开放待办" value={`${state.summary.openTasks} 个`} />
-              <Metric icon={<Users />} label="已背书执行方" value={`${state.summary.trustedSuppliers} 个`} />
             </div>
             <section className="store-event-table" aria-label="运行态来源">
               <div className="store-table-head store-event-head">
@@ -67,8 +66,8 @@ export function StoreRuntimePage({ api }: { readonly api: StoreApiClient }) {
                 <em>事件投影</em>
               </div>
               <div className="store-event-row">
-                <span>Trust Registry</span>
-                <strong>计划 / 供应商背书</strong>
+                <span>UVPIdentityRegistry</span>
+                <strong>主体 / 钱包映射</strong>
                 <em>事件投影</em>
               </div>
               <div className="store-event-row">
@@ -89,7 +88,7 @@ export function StoreRuntimePage({ api }: { readonly api: StoreApiClient }) {
             </div>
             <div className="store-check-list">
               <span><CheckCircle2 /> 订单和待办从 StateMachine 事件投影</span>
-              <span><CheckCircle2 /> 计划和供应商背书从 Trust Registry 投影</span>
+              <span><CheckCircle2 /> 主体与钱包映射从 Identity Registry 投影</span>
               <span><CheckCircle2 /> 试拼草稿不会创建订单授权或发布新秩序</span>
             </div>
           </aside>

@@ -1,5 +1,5 @@
 import { AlertTriangle, CheckCircle2, ClipboardCheck, FileCheck2, GitBranch, Layers3, Loader2, RefreshCw, Save, Search, ShieldCheck, SlidersHorizontal, Truck, UploadCloud, Users, Wand2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type { StoreProductSchemaDTO, StoreProductSchemaValidationDTO, StoreSearchType } from "@uvp-eth/product-dto";
 import { readableStoreError } from "./api";
@@ -9,8 +9,6 @@ import type {
   StoreImportZhixuDraftInput,
   StoreProductSchemaUpdateResultDTO,
   StoreSearchInput,
-  StoreZhixuDraftAttestationInput,
-  StoreZhixuDraftAttestationResultDTO,
   StoreZhixuDraftDTO,
   StoreZhixuDraftReviewResultDTO,
   StoreZhixuDraftStatus,
@@ -35,12 +33,6 @@ interface ImportDraftFormState {
   readonly content: string;
 }
 
-interface AttestationConfirmationState {
-  readonly draftId: string;
-  readonly planId: string;
-  readonly planHash: string;
-}
-
 const initialImportDraftForm: ImportDraftFormState = {
   sourceKind: "zhixu_yaml",
   title: "",
@@ -62,8 +54,6 @@ export function StoreSearchPage({
   onUpdateDraftProductSchema,
   onValidateDraftProductSchema,
   onSubmitDraftReview,
-  onGetDraft,
-  onRequestDraftAttestation,
   onRefreshCatalog
 }: {
   readonly access: StoreAccessState;
@@ -83,11 +73,6 @@ export function StoreSearchPage({
     productSchema?: StoreProductSchemaDTO
   ) => Promise<StoreApiResult<{ readonly validation: StoreProductSchemaValidationDTO }>>;
   readonly onSubmitDraftReview: (draftId: string) => Promise<StoreApiResult<StoreZhixuDraftReviewResultDTO>>;
-  readonly onGetDraft: (draftId: string) => Promise<StoreApiResult<{ readonly draft: StoreZhixuDraftDTO }>>;
-  readonly onRequestDraftAttestation: (
-    draftId: string,
-    input: StoreZhixuDraftAttestationInput
-  ) => Promise<StoreApiResult<StoreZhixuDraftAttestationResultDTO>>;
   readonly onRefreshCatalog?: (() => Promise<StoreZhixuSearchResultDTO>) | undefined;
 }) {
   const [keyword, setKeyword] = useState("");
@@ -95,42 +80,10 @@ export function StoreSearchPage({
   const [searchAction, setSearchAction] = useState<ActionState>({ phase: "idle" });
   const [importAction, setImportAction] = useState<ActionState>({ phase: "idle" });
   const [schemaAction, setSchemaAction] = useState<ActionState>({ phase: "idle" });
-  const [governanceAction, setGovernanceAction] = useState<ActionState>({ phase: "idle" });
   const [importForm, setImportForm] = useState<ImportDraftFormState>(initialImportDraftForm);
   const [reviewDraft, setReviewDraft] = useState<StoreZhixuDraftDTO | undefined>();
   const [productSchema, setProductSchema] = useState<StoreProductSchemaDTO | undefined>();
   const [schemaText, setSchemaText] = useState("");
-  const [attestationConfirmation, setAttestationConfirmation] = useState<AttestationConfirmationState>({
-    draftId: "",
-    planId: "",
-    planHash: ""
-  });
-
-  useEffect(() => {
-    if (!reviewDraft || !isGovernancePollingStatus(reviewDraft.status)) {
-      return;
-    }
-    let cancelled = false;
-    const draftId = reviewDraft.draftId;
-    const interval = window.setInterval(() => {
-      void onGetDraft(draftId).then((result) => {
-        if (cancelled) {
-          return;
-        }
-        setReviewDraft(result.data.draft);
-        setProductSchema(result.data.draft.productSchema ?? productSchema);
-        setGovernanceAction(governanceActionForDraft(result.data.draft, "已刷新治理状态"));
-      }).catch((error) => {
-        if (!cancelled) {
-          setGovernanceAction({ phase: "error", message: readableStoreError(error, "刷新治理状态失败") });
-        }
-      });
-    }, 900);
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, [onGetDraft, productSchema, reviewDraft]);
 
   const schemaLocked = reviewDraft ? isSchemaLockedStatus(reviewDraft.status) : false;
 
@@ -197,7 +150,7 @@ export function StoreSearchPage({
       const schema = compiled.data.draft.productSchema ?? (await onGetDraftProductSchema(reviewDraft.draftId)).data;
       setProductSchema(schema);
       setSchemaText(prettySchema(schema));
-      setSchemaAction({ phase: "success", message: "已进入 capability-review；legacy_inferred 插件仍会阻断发布" });
+      setSchemaAction({ phase: "success", message: "已进入 capability-review；inferred 插件仍会阻断发布" });
     } catch (error) {
       setSchemaAction({ phase: "error", message: readableStoreError(error, "编译失败") });
     }
@@ -279,40 +232,9 @@ export function StoreSearchPage({
     try {
       const result = await onSubmitDraftReview(reviewDraft.draftId);
       setReviewDraft(result.data.draft);
-      setSchemaAction({ phase: "success", message: "审核已通过为 approved_for_broadcast；这不是链上背书，仍需 governance admin 请求 attestation" });
+      setSchemaAction({ phase: "success", message: "Store 审核已通过，可以进入 StateMachine 发布流程。" });
     } catch (error) {
       setSchemaAction({ phase: "error", message: readableStoreError(error, "提交审核失败") });
-    }
-  }
-
-  async function handleRequestAttestation(): Promise<void> {
-    if (!reviewDraft) {
-      return;
-    }
-    const expectedPlanId = reviewDraft.compilePreview?.planId;
-    const expectedPlanHash = reviewDraft.compilePreview?.planHash;
-    if (
-      attestationConfirmation.draftId.trim() !== reviewDraft.draftId ||
-      (expectedPlanId && attestationConfirmation.planId.trim() !== expectedPlanId) ||
-      (expectedPlanHash && attestationConfirmation.planHash.trim() !== expectedPlanHash)
-    ) {
-      setGovernanceAction({ phase: "error", message: "请逐字确认 Draft ID、Plan ID、Plan Hash 后再请求链上背书" });
-      return;
-    }
-    setGovernanceAction({ phase: "pending", message: "正在调用 request-attestation；Store metadata 不会创建 trust" });
-    try {
-      const result = await onRequestDraftAttestation(reviewDraft.draftId, {
-        confirmation: {
-          draftId: reviewDraft.draftId,
-          ...(expectedPlanId ? { planId: expectedPlanId } : {}),
-          ...(expectedPlanHash ? { planHash: expectedPlanHash } : {})
-        }
-      });
-      setReviewDraft(result.data.draft);
-      setProductSchema(result.data.draft.productSchema ?? productSchema);
-      setGovernanceAction(governanceActionForDraft(result.data.draft, "已请求链上背书"));
-    } catch (error) {
-      setGovernanceAction({ phase: "error", message: readableStoreError(error, "请求链上背书失败") });
     }
   }
 
@@ -325,7 +247,7 @@ export function StoreSearchPage({
             <div className="panel-heading compact">
               <div>
                 <h2 id="store-summary-title">Store 投影摘要</h2>
-                <p>摘要来自可重建投影；Store 目录和 metadata 不替代链上事实。</p>
+                <p>摘要来自可重建投影与 Store 目录资料。</p>
               </div>
               <span className="status-badge success"><ShieldCheck /> {result.sourceOfTruth}</span>
             </div>
@@ -334,7 +256,7 @@ export function StoreSearchPage({
               <SummaryItem icon={<ShieldCheck />} label="可用" title={`${result.summary.activeZhixus} 条`} tone="success" />
               <SummaryItem icon={<ClipboardCheck />} label="待处理" title={`${result.summary.needsReview} 条`} tone={result.summary.needsReview > 0 ? "warning" : undefined} />
               <SummaryItem icon={<Truck />} label="运行订单" title={`${result.summary.runningOrders} 单`} />
-              <SummaryItem icon={<Users />} label="已背书执行方" title={`${result.summary.trustedSuppliers} 个`} />
+              <SummaryItem icon={<Users />} label="已登记执行方" title={`${result.summary.registeredSuppliers} 个`} />
             </div>
           </section>
 
@@ -479,7 +401,7 @@ export function StoreSearchPage({
               </div>
               <div className="store-access-note compact">
                 <ShieldCheck />
-                <span>导入内容只作为 Store 元数据草稿，不能代表审核或链上背书。</span>
+                <span>导入内容只作为 Store 元数据草稿，不会发布 Plan 或创建身份绑定。</span>
               </div>
               <div className="store-inline-actions store-import-actions">
                 <button className="secondary-button" disabled type="button">
@@ -588,12 +510,7 @@ export function StoreSearchPage({
           )}
           <ActionNotice state={schemaAction} testId="store-schema-action-notice" />
           <DraftGovernancePanel
-            access={access}
-            action={governanceAction}
             draft={reviewDraft}
-            confirmation={attestationConfirmation}
-            onConfirmationChange={setAttestationConfirmation}
-            onRequestAttestation={() => void handleRequestAttestation()}
             onRefreshCatalog={onRefreshCatalog}
           />
         </section>
@@ -608,130 +525,44 @@ export function StoreSearchPage({
 }
 
 function DraftGovernancePanel({
-  access,
-  action,
-  confirmation,
   draft,
-  onConfirmationChange,
-  onRequestAttestation,
   onRefreshCatalog
 }: {
-  readonly access: StoreAccessState;
-  readonly action: ActionState;
-  readonly confirmation: AttestationConfirmationState;
   readonly draft: StoreZhixuDraftDTO;
-  readonly onConfirmationChange: (value: AttestationConfirmationState) => void;
-  readonly onRequestAttestation: () => void;
   readonly onRefreshCatalog?: (() => Promise<StoreZhixuSearchResultDTO>) | undefined;
 }) {
-  const status = governanceStatusCopy(draft.status);
-  const canRequestAttestation = access.canAdmin && draft.status === "approved_for_broadcast";
-  const expectedPlanId = draft.compilePreview?.planId ?? "";
-  const expectedPlanHash = draft.compilePreview?.planHash ?? "";
-  const confirmationReady = confirmation.draftId.trim() === draft.draftId &&
-    (!expectedPlanId || confirmation.planId.trim() === expectedPlanId) &&
-    (!expectedPlanHash || confirmation.planHash.trim() === expectedPlanHash);
-  const projection = trustProjectionCopy(draft);
-  const orderGate = orderCreatableGateCopy(draft);
+  const active = isDraftOrderCreatable(draft);
   return (
     <section className="governance-publish-card" data-testid="store-governance-publishing">
       <div className="governance-publish-head">
         <div>
-          <h3>治理发布</h3>
-          <p data-testid="store-governance-heading">Review approved != chain attested；只有 Trust Registry 的 PlanAttested 被投影后，Store 才能把版本视为可创建订单。</p>
+          <h3>发布状态</h3>
+          <p data-testid="store-governance-heading">Store 审核完成后，由发布工具把 Plan 注册到 UVPStateMachine。</p>
         </div>
-        <span className={`status-badge ${status.tone}`} data-testid="store-governance-status">{status.label}</span>
+        <span className={`status-badge ${active ? "success" : "info"}`} data-testid="store-governance-status">
+          {draftStatusLabel(draft.status)}
+        </span>
       </div>
 
-      <div className={`governance-state-note ${status.tone}`} data-testid="store-governance-state-note" data-state={draft.status}>
-        {status.icon}
+      <div className={`governance-state-note ${active ? "success" : "info"}`} data-testid="store-governance-state-note" data-state={draft.status}>
+        {active ? <CheckCircle2 /> : <ClipboardCheck />}
         <div>
-          <strong>{status.title}</strong>
-          <p data-testid="store-governance-description">{status.description}</p>
-          {draft.governanceTxLogId ? <small>Governance tx log: {draft.governanceTxLogId}</small> : null}
+          <strong>{active ? "Plan 已注册" : "等待发布"}</strong>
+          <p data-testid="store-governance-description">
+            {active
+              ? "索引器已确认 UVPStateMachine 的 PlanRegistered 事件，可以创建订单。"
+              : "当前草稿仍处于 Store 工作流中；发布工具负责链上注册。"}
+          </p>
         </div>
       </div>
 
-      <div className="governance-projection-grid">
-        <div className={`governance-projection-card ${projection.tone}`} data-testid="store-trust-projection-state" data-projection-status={projectionKey(draft)}>
-          {projection.icon}
-          <div>
-            <strong>{projection.title}</strong>
-            <p>{projection.description}</p>
-            {projection.meta ? <small>{projection.meta}</small> : null}
-          </div>
-        </div>
-        <div className={`governance-projection-card ${orderGate.tone}`} data-testid="store-order-creatable-state" data-order-creatable={isDraftOrderCreatable(draft) ? "yes" : "blocked"}>
-          {orderGate.icon}
-          <div>
-            <strong>{orderGate.title}</strong>
-            <p>{orderGate.description}</p>
-          </div>
-        </div>
-      </div>
-
-      {draft.status === "approved_for_broadcast" && !access.canAdmin ? (
-        <div className="store-access-note compact" data-testid="store-governance-admin-wait" data-state="admin_wait">
-          <ShieldCheck />
-          <span>等待 governance admin 请求 request-attestation；普通 Store operator 不能广播 registry 背书。</span>
-        </div>
-      ) : null}
-
-      {canRequestAttestation ? (
-        <div className="governance-request-row">
-          <label className="field">
-            <span>Confirm Draft ID</span>
-            <input
-              aria-label="Confirm Draft ID"
-              data-testid="store-confirm-draft-id-input"
-              onChange={(event) => onConfirmationChange({ ...confirmation, draftId: event.target.value })}
-              value={confirmation.draftId}
-            />
-          </label>
-          <label className="field">
-            <span>Confirm Plan ID</span>
-            <input
-              aria-label="Confirm Plan ID"
-              data-testid="store-confirm-plan-id-input"
-              onChange={(event) => onConfirmationChange({ ...confirmation, planId: event.target.value })}
-              value={confirmation.planId}
-            />
-          </label>
-          <label className="field">
-            <span>Confirm Plan Hash</span>
-            <input
-              aria-label="Confirm Plan Hash"
-              data-testid="store-confirm-plan-hash-input"
-              onChange={(event) => onConfirmationChange({ ...confirmation, planHash: event.target.value })}
-              value={confirmation.planHash}
-            />
-          </label>
-          <button
-            className="primary-button"
-            data-testid="store-request-attestation-button"
-            disabled={action.phase === "pending" || !confirmationReady}
-            onClick={onRequestAttestation}
-          >
-            {action.phase === "pending" ? <Loader2 className="spin" /> : <ShieldCheck />}
-            请求链上背书
-          </button>
-        </div>
-      ) : null}
-
-      {isGovernancePollingStatus(draft.status) ? (
-        <div className="store-access-note compact" data-testid="store-governance-polling" data-state="polling">
-          <RefreshCw />
-          <span>正在轮询 draft 状态；broadcasting/indexing 仍不可创建订单。</span>
-        </div>
-      ) : null}
-
-      {isDraftOrderCreatable(draft) ? (
+      {active ? (
         <div className="governance-publish-complete" data-testid="store-publishing-complete" data-state="container-ready">
           <div className="governance-publish-complete-head">
             <CheckCircle2 />
             <div>
               <strong>标准信号容器已就绪</strong>
-              <p>PlanAttested 已由 Trust Registry 事件投影确认，该版本可作为标准信号容器创建订单。</p>
+              <p>PlanRegistered 已被索引，该版本可作为标准信号容器创建订单。</p>
             </div>
           </div>
           {onRefreshCatalog ? (
@@ -750,7 +581,6 @@ function DraftGovernancePanel({
         </div>
       ) : null}
 
-      <ActionNotice state={action} testId="store-governance-action-notice" />
     </section>
   );
 }
@@ -768,7 +598,7 @@ function PublishingChecklist({
       <div className="store-publishing-checklist-head">
         <div>
           <h3>发布清单</h3>
-          <p>草稿、编译、资源清单、供应商能力护照和治理投影分开检查；metadata 只作说明，不作 trust。</p>
+          <p>依次检查草稿、编译、资源清单、履约标签、Store 审核与 StateMachine 发布。</p>
         </div>
         <span className={`status-badge ${isDraftOrderCreatable(draft) ? "success" : "info"}`} data-testid="store-publishing-checklist-summary">
           {isDraftOrderCreatable(draft) ? "order-creatable" : "order-blocked"}
@@ -807,7 +637,7 @@ function ZhixuCatalogTable({
         <div className="store-table-head" role="row">
           <span>秩序</span>
           <span>生命周期</span>
-          <span>背书</span>
+          <span>发布</span>
           <span>运行</span>
           <span>动作</span>
         </div>
@@ -819,7 +649,7 @@ function ZhixuCatalogTable({
               <small>{zhixu.maintainer} · {zhixu.versionLabel}</small>
             </div>
             <StatusBadge tone={statusTone(zhixu.lifecycleStatus)}>{zhixu.lifecycleLabel}</StatusBadge>
-            <span>{zhixu.chainAttestation.label}</span>
+            <span>{zhixu.planPublication.label}</span>
             <span>{zhixu.orderCount} 单 / {zhixu.openTaskCount} 待办</span>
             <button className="secondary-button" data-testid="store-open-zhixu-button" onClick={() => onOpenZhixu(zhixu.zhixuId)}>查看</button>
           </article>
@@ -954,12 +784,12 @@ function StoreCapabilityPlaceholder({ access }: { readonly access: StoreAccessSt
         <StoreBoundaryCard
           icon={<ClipboardCheck />}
           title="Product Schema Bundle"
-          text="阶段、权限、凭证资源和插件来源在这里审查；legacy_inferred 不能直接发布。"
+          text="阶段、权限、凭证资源和插件来源在这里审查；inferred 不能直接发布。"
         />
         <StoreBoundaryCard
           icon={<ShieldCheck />}
-          title="Store review 不是链上背书"
-          text="审核通过后仍需 governance admin 请求 Trust Registry attestation。"
+          title="StateMachine 发布"
+          text="审核通过后，由发布工具注册 Plan；索引确认后状态转为 active。"
         />
         <StoreBoundaryCard
           icon={<Users />}
@@ -984,19 +814,19 @@ function StoreSearchInfoPanel({
       <div className="panel-heading">
         <div>
           <h2>边界说明</h2>
-          <p>Store Console 可以组织草稿、审查和投影，但不能替代合约、签名或链事件。</p>
+          <p>Store Console 组织草稿、审查、目录资料和链事件投影。</p>
         </div>
       </div>
       <div className="store-info-list">
         <StoreBoundaryCard
           icon={<ShieldCheck />}
           title="链上事实"
-          text={`${result.sourceOfTruth}；订单、背书和 proof 以链事件投影为准。`}
+          text={`${result.sourceOfTruth}；订单与 proof 以链事件投影为准。`}
         />
         <StoreBoundaryCard
           icon={<Layers3 />}
           title="当前目录"
-          text={`${result.summary.totalZhixus} 条秩序，${result.summary.runningOrders} 单运行订单，${result.summary.trustedSuppliers} 个已背书执行方。`}
+          text={`${result.summary.totalZhixus} 条秩序，${result.summary.runningOrders} 单运行订单，${result.summary.registeredSuppliers} 个已登记执行方。`}
         />
         <StoreBoundaryCard
           icon={<ClipboardCheck />}
@@ -1009,13 +839,13 @@ function StoreSearchInfoPanel({
 }
 
 function statusTone(status: string): "success" | "warning" | "info" | "default" {
-  if (status === "active" || status === "attested") {
+  if (status === "active" || status === "published") {
     return "success";
   }
-  if (status === "revoked" || status === "rejected" || status === "failed" || status === "stale" || status === "compile_failed") {
+  if (status === "revoked" || status === "rejected" || status === "compile_failed") {
     return "warning";
   }
-  if (status === "approved_for_broadcast" || status === "submitted_for_review" || status === "compiled" || status === "broadcasting" || status === "indexing") {
+  if (status === "approved_for_broadcast" || status === "submitted_for_review" || status === "compiled") {
     return "info";
   }
   return "default";
@@ -1038,10 +868,6 @@ function publishingChecklistItems(
   const resourceReady = isResourceManifestReviewed(productSchema);
   const supplierPassportReady = isSupplierCapabilityPassportReviewed(productSchema);
   const reviewApproved = isStoreReviewApprovedStatus(draft.status);
-  const governanceRequested = isGovernanceRequestedStatus(draft.status);
-  const projectionTerminal = draft.status === "active" || draft.status === "revoked" || draft.status === "stale";
-  const projectionReady = isDraftOrderCreatable(draft);
-  const projectionBlocked = draft.status === "active" || draft.status === "revoked" || draft.status === "stale" || draft.status === "failed";
   return [
     {
       id: "draft",
@@ -1081,33 +907,17 @@ function publishingChecklistItems(
       id: "store-review",
       label: "Store review approved",
       detail: reviewApproved
-        ? "Store review 已批准进入 broadcast path；review 仍不是 chain attestation。"
+        ? "Store 审核已批准该版本进入发布流程。"
         : "等待 Store operator 提交审核。",
       state: reviewApproved ? "done" : "current",
       tone: reviewApproved ? "success" : "info"
     },
     {
-      id: "governance-request",
-      label: "governance broadcast requested",
-      detail: governanceRequested
-        ? draft.governanceTxLogId ? `request-attestation 已创建 tx log ${draft.governanceTxLogId}` : "request-attestation 已提交。"
-        : "等待 governance admin 请求 registry attestation。",
-      state: governanceRequested ? "done" : reviewApproved ? "current" : "pending",
-      tone: governanceRequested ? "success" : reviewApproved ? "info" : "default"
-    },
-    {
-      id: "projection",
-      label: "Trust Registry projection",
-      detail: projectionTerminal
-        ? trustProjectionCopy(draft).description
-        : "等待 indexed PlanAttested；broadcasting/indexing 期间不可创建订单。",
-      state: projectionReady ? "done" : projectionBlocked ? "blocked" : governanceRequested ? "current" : "pending",
-      tone: projectionReady ? "success" : projectionBlocked ? "warning" : governanceRequested ? "info" : "default"
-    },
-    {
       id: "order-creatable",
-      label: "order-creatable",
-      detail: orderCreatableGateCopy(draft).description,
+      label: "StateMachine publication",
+      detail: isDraftOrderCreatable(draft)
+        ? "PlanRegistered 已被索引，可以创建订单。"
+        : "等待发布工具注册 Plan 并由索引器确认。",
       state: isDraftOrderCreatable(draft) ? "done" : "blocked",
       tone: isDraftOrderCreatable(draft) ? "success" : "warning"
     }
@@ -1150,385 +960,22 @@ function isSupplierCapabilityPassportReviewed(productSchema: StoreProductSchemaD
 }
 
 function isStoreReviewApprovedStatus(status: StoreZhixuDraftStatus): boolean {
-  return status === "approved_for_broadcast" ||
-    status === "broadcasting" ||
-    status === "indexing" ||
-    status === "active" ||
-    status === "stale" ||
-    status === "revoked" ||
-    status === "failed";
-}
-
-function isGovernanceRequestedStatus(status: StoreZhixuDraftStatus): boolean {
-  return status === "broadcasting" ||
-    status === "indexing" ||
-    status === "active" ||
-    status === "stale" ||
-    status === "revoked" ||
-    status === "failed";
+  return status === "approved_for_broadcast" || status === "active";
 }
 
 function isDraftOrderCreatable(draft: StoreZhixuDraftDTO): boolean {
-  if (draft.status !== "active") {
-    return false;
-  }
-  return hasIndexedPlanAttestedProjection(draft);
-}
-
-function hasIndexedPlanAttestedProjection(draft: StoreZhixuDraftDTO): boolean {
-  const projection = draft.projection;
-  return projection?.sourceOfTruth === "trust-registry-events" &&
-    projection.indexStatus === "indexed" &&
-    projection.eventName === "PlanAttested" &&
-    projection.metadataMatches !== false;
-}
-
-function governanceActionForDraft(draft: StoreZhixuDraftDTO, prefix: string): ActionState {
-  if (isDraftOrderCreatable(draft)) {
-    return {
-      phase: "success",
-      message: `${prefix}：PlanAttested 已由链上事件投影，当前版本可创建订单`
-    };
-  }
-  if (draft.status === "revoked") {
-    return {
-      phase: "error",
-      message: `${prefix}：PlanRevoked 已由链上事件投影，当前版本不可创建订单`
-    };
-  }
-  if (draft.status === "stale") {
-    return {
-      phase: "error",
-      message: `${prefix}：metadata 与投影不匹配，当前版本不可创建订单`
-    };
-  }
-  if (draft.status === "failed") {
-    return {
-      phase: "error",
-      message: `${prefix}：治理广播或索引失败，当前版本不可创建订单`
-    };
-  }
-  if (draft.status === "active") {
-    return {
-      phase: "error",
-      message: `${prefix}：active 缺少 PlanAttested 投影明细，当前版本不可创建订单`
-    };
-  }
-  return {
-    phase: "pending",
-    message: `${prefix}：等待 PlanAttested 投影；当前状态 ${draftStatusLabel(draft.status)}`
-  };
-}
-
-function trustProjectionCopy(draft: StoreZhixuDraftDTO): {
-  readonly tone: "success" | "warning" | "info" | "default";
-  readonly title: string;
-  readonly description: string;
-  readonly meta?: string;
-  readonly icon: ReactNode;
-} {
-  const projection = draft.projection;
-  if (projection) {
-    const meta = [
-      projection.txHash ? `tx ${shortHash(projection.txHash, { prefixLength: 8, suffixLength: 8 })}` : undefined,
-      projection.blockNumber ? `block ${projection.blockNumber}` : undefined,
-      projection.indexedAt ? `indexed ${projection.indexedAt}` : undefined
-    ].filter((item): item is string => Boolean(item)).join(" · ");
-    if (projection.eventName === "PlanAttested" && projection.indexStatus === "indexed" && projection.metadataMatches !== false) {
-      return {
-        tone: "success",
-        title: "Projection: PlanAttested indexed",
-        description: "PlanAttested 已由 Trust Registry 事件投影，planId/planHash/artifactHash 匹配。",
-        ...(meta ? { meta } : {}),
-        icon: <CheckCircle2 />
-      };
-    }
-    if (projection.eventName === "PlanRevoked" || projection.indexStatus === "revoked") {
-      return {
-        tone: "warning",
-        title: "Projection: PlanRevoked indexed",
-        description: "PlanRevoked 已由 Trust Registry 事件投影；撤销版本不可创建订单。",
-        ...(meta ? { meta } : {}),
-        icon: <AlertTriangle />
-      };
-    }
-    if (projection.eventName === "MetadataMismatch" || projection.indexStatus === "stale" || projection.metadataMatches === false) {
-      return {
-        tone: "warning",
-        title: "Projection: metadata mismatch",
-        description: projection.message ?? "metadata no longer matches projection；Store 不会把该版本视为 active。",
-        ...(meta ? { meta } : {}),
-        icon: <AlertTriangle />
-      };
-    }
-    if (projection.indexStatus === "broadcasting" || projection.indexStatus === "indexing") {
-      return {
-        tone: "info",
-        title: `Projection: ${projection.indexStatus}`,
-        description: "治理交易已请求，仍在等待 Trust Registry 投影确认。",
-        ...(meta ? { meta } : {}),
-        icon: <RefreshCw />
-      };
-    }
-    if (projection.indexStatus === "failed") {
-      return {
-        tone: "warning",
-        title: "Projection: failed",
-        description: projection.message ?? "治理广播或索引失败，当前没有可依赖的 PlanAttested 投影。",
-        ...(meta ? { meta } : {}),
-        icon: <AlertTriangle />
-      };
-    }
-  }
-
-  if (draft.status === "active") {
-    return {
-      tone: "warning",
-      title: "Projection: detail missing",
-      description: "Store 收到 active 状态但缺少 PlanAttested 投影明细；metadata/status alone cannot create trust。",
-      icon: <AlertTriangle />
-    };
-  }
-  if (draft.status === "revoked") {
-    return {
-      tone: "warning",
-      title: "Projection: PlanRevoked indexed",
-      description: "撤销状态已由投影返回；当前版本不可创建订单。",
-      icon: <AlertTriangle />
-    };
-  }
-  if (draft.status === "stale") {
-    return {
-      tone: "warning",
-      title: "Projection: metadata mismatch",
-      description: "metadata no longer matches projection；当前版本不可创建订单。",
-      icon: <AlertTriangle />
-    };
-  }
-  if (draft.status === "broadcasting" || draft.status === "indexing") {
-    return {
-      tone: "info",
-      title: `Projection: ${draft.status}`,
-      description: "等待 Trust Registry 的 PlanAttested 投影。",
-      icon: <RefreshCw />
-    };
-  }
-  return {
-    tone: "default",
-    title: "Projection: not indexed",
-    description: "尚未看到 PlanAttested 投影；metadata/review 不能替代 trust。",
-    icon: <ClipboardCheck />
-  };
-}
-
-function orderCreatableGateCopy(draft: StoreZhixuDraftDTO): {
-  readonly tone: "success" | "warning" | "info" | "default";
-  readonly title: string;
-  readonly description: string;
-  readonly icon: ReactNode;
-} {
-  if (isDraftOrderCreatable(draft)) {
-    return {
-      tone: "success",
-      title: "order-creatable: yes",
-      description: "active + PlanAttested indexed + non-revoked；可以展示为可创建订单版本。",
-      icon: <CheckCircle2 />
-    };
-  }
-  if (draft.status === "revoked") {
-    return {
-      tone: "warning",
-      title: "order-creatable: blocked",
-      description: "PlanRevoked 已投影或撤销状态已返回；禁止新订单。",
-      icon: <AlertTriangle />
-    };
-  }
-  if (draft.status === "stale") {
-    return {
-      tone: "warning",
-      title: "order-creatable: blocked",
-      description: "metadata no longer matches projection；等待索引恢复或重新发布。",
-      icon: <AlertTriangle />
-    };
-  }
-  if (draft.status === "approved_for_broadcast") {
-    return {
-      tone: "warning",
-      title: "order-creatable: blocked",
-      description: "Store review approved != chain attested；必须先请求并索引 PlanAttested。",
-      icon: <ShieldCheck />
-    };
-  }
-  if (draft.status === "broadcasting" || draft.status === "indexing") {
-    return {
-      tone: "info",
-      title: "order-creatable: blocked",
-      description: "治理交易或索引仍在进行；等待 PlanAttested 投影。",
-      icon: <RefreshCw />
-    };
-  }
-  return {
-    tone: "default",
-    title: "order-creatable: blocked",
-    description: "尚未完成编译、Store review 和链上投影闭环。",
-    icon: <ClipboardCheck />
-  };
-}
-
-function isGovernancePollingStatus(status: StoreZhixuDraftStatus): boolean {
-  return status === "broadcasting" || status === "indexing";
-}
-
-function projectionKey(draft: StoreZhixuDraftDTO): string {
-  const projection = draft.projection;
-  if (!projection) {
-    return "not_requested";
-  }
-  if (projection.eventName === "PlanAttested" && projection.indexStatus === "indexed" && projection.metadataMatches !== false) {
-    return "plan_attested_indexed";
-  }
-  if (projection.eventName === "PlanRevoked" || projection.indexStatus === "revoked") {
-    return "plan_revoked";
-  }
-  if (projection.eventName === "MetadataMismatch" || projection.indexStatus === "stale" || projection.metadataMatches === false) {
-    return "metadata_mismatch";
-  }
-  if (projection.indexStatus === "broadcasting") {
-    return "broadcasting";
-  }
-  if (projection.indexStatus === "indexing") {
-    return "indexing";
-  }
-  if (projection.indexStatus === "failed") {
-    return "failed";
-  }
-  return "unknown";
+  return draft.status === "active";
 }
 
 function isSchemaLockedStatus(status: StoreZhixuDraftStatus): boolean {
   return status === "approved_for_broadcast" ||
-    status === "broadcasting" ||
-    status === "indexing" ||
     status === "active" ||
     status === "rejected" ||
-    status === "revoked" ||
-    status === "failed" ||
-    status === "stale";
+    status === "revoked";
 }
 
 function draftStatusLabel(status: StoreZhixuDraftStatus): string {
-  switch (status) {
-    case "imported":
-      return "imported";
-    case "compile_failed":
-      return "compile_failed";
-    case "compiled":
-      return "compiled";
-    case "submitted_for_review":
-      return "submitted_for_review";
-    case "approved_for_broadcast":
-      return "approved_for_broadcast";
-    case "broadcasting":
-      return "broadcasting";
-    case "indexing":
-      return "indexing";
-    case "active":
-      return "active";
-    case "failed":
-      return "failed";
-    case "stale":
-      return "stale";
-    case "rejected":
-      return "rejected";
-    case "revoked":
-      return "revoked";
-  }
-}
-
-function governanceStatusCopy(status: StoreZhixuDraftStatus): {
-  readonly label: string;
-  readonly tone: "success" | "warning" | "info" | "default";
-  readonly title: string;
-  readonly description: string;
-  readonly icon: ReactNode;
-} {
-  switch (status) {
-    case "imported":
-    case "compile_failed":
-    case "compiled":
-    case "submitted_for_review":
-      return {
-        label: draftStatusLabel(status),
-        tone: statusTone(status),
-        title: "尚未进入链上背书请求",
-        description: "先完成编译、Product Schema 显式校验和 Store 审核；这些 Store 草稿状态不会创建 trust。",
-        icon: status === "compile_failed" ? <AlertTriangle /> : <ClipboardCheck />
-      };
-    case "approved_for_broadcast":
-      return {
-        label: "approved_for_broadcast",
-        tone: "info",
-        title: "审核已批准，等待 governance admin",
-        description: "该状态只表示 Store/governance review 允许广播；review approved 仍不等于 chain attested，不能创建订单。",
-        icon: <ShieldCheck />
-      };
-    case "broadcasting":
-      return {
-        label: "broadcasting",
-        tone: "info",
-        title: "正在广播治理交易",
-        description: "治理服务正在提交或等待交易；尚未看到 PlanAttested 投影前，Store 不能把版本设为可创建订单。",
-        icon: <Loader2 className="spin" />
-      };
-    case "indexing":
-      return {
-        label: "indexing",
-        tone: "info",
-        title: "等待 Trust Registry 投影",
-        description: "交易已进入等待索引阶段；只有索引到匹配的 PlanAttested 后才会转为 active。",
-        icon: <RefreshCw />
-      };
-    case "active":
-      return {
-        label: "active",
-        tone: "success",
-        title: "PlanAttested 已投影",
-        description: "链上 Trust Registry 投影已匹配 planId、planHash 和 artifactHash，该版本现在可创建订单。",
-        icon: <CheckCircle2 />
-      };
-    case "failed":
-      return {
-        label: "failed",
-        tone: "warning",
-        title: "治理广播或索引失败",
-        description: "没有可依赖的 PlanAttested 投影，不能创建订单；需要治理管理员排查 tx log 后重新处理。",
-        icon: <AlertTriangle />
-      };
-    case "stale":
-      return {
-        label: "stale",
-        tone: "warning",
-        title: "投影状态可能滞后",
-        description: "Store 投影可能没有追上链上事件，暂时不能激活；等待索引恢复或重建完成。",
-        icon: <AlertTriangle />
-      };
-    case "rejected":
-      return {
-        label: "rejected",
-        tone: "warning",
-        title: "治理审核拒绝",
-        description: "该草稿不能请求官方背书；修复风险项后重新导入、编译和审核。",
-        icon: <AlertTriangle />
-      };
-    case "revoked":
-      return {
-        label: "revoked",
-        tone: "warning",
-        title: "链上或治理状态已撤销",
-        description: "撤销后的版本不可创建订单；如正在撤销，需等待 PlanRevoked 投影后以链上事件为准。",
-        icon: <AlertTriangle />
-      };
-  }
+  return status;
 }
 
 function resultTypeLabel(type: string): string {

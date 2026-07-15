@@ -80,13 +80,13 @@ export function StoreDockingPage({
             <div className="kpi-card">
               <span>来源秩序</span>
               <strong>{sourceZhixu?.title ?? "暂无"}</strong>
-              <small>{sourceZhixu?.versionLabel ?? "无版本"} · {sourceZhixu?.chainAttestation.label ?? "无背书状态"}</small>
+              <small>{sourceZhixu?.versionLabel ?? "无版本"} · {sourceZhixu?.planPublication.label ?? "无发布状态"}</small>
             </div>
             <div className="store-docking-arrow" aria-hidden="true">→</div>
             <div className="kpi-card">
               <span>目标秩序</span>
               <strong>{targetZhixu?.title ?? "暂无"}</strong>
-              <small>{targetZhixu?.versionLabel ?? "无版本"} · {targetZhixu?.chainAttestation.label ?? "无背书状态"}</small>
+              <small>{targetZhixu?.versionLabel ?? "无版本"} · {targetZhixu?.planPublication.label ?? "无发布状态"}</small>
             </div>
           </div>
           <div className="store-access-note compact">

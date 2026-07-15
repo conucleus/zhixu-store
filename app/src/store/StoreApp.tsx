@@ -183,8 +183,6 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
           onUpdateDraftProductSchema={(draftId, productSchema) => api.updateDraftProductSchema(draftId, productSchema)}
           onValidateDraftProductSchema={(draftId, productSchema) => api.validateDraftProductSchema(draftId, productSchema)}
           onSubmitDraftReview={(draftId) => api.submitZhixuDraftReview(draftId)}
-          onGetDraft={(draftId) => api.getZhixuDraft(draftId)}
-          onRequestDraftAttestation={(draftId, input) => api.requestZhixuDraftAttestation(draftId, input)}
           onRefreshCatalog={async () => {
             const result = await api.search();
             setLoadState({ status: "ready", data: result.data, source: result.source });
