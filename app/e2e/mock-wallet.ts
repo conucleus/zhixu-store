@@ -105,7 +105,7 @@ export const test = base.extend<Fixtures>({
 
     await use();
 
-    const runRoot = process.env.UVP_PRODUCT_BROWSER_E2E_RUN_ROOT;
+    const runRoot = process.env.UVP_STORE_E2E_RUN_ROOT;
     if (!runRoot) {
       return;
     }
@@ -335,7 +335,7 @@ function normalizeTypedData(typedData: unknown) {
 }
 
 export async function writeRunScreenshot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
-  const runRoot = process.env.UVP_PRODUCT_BROWSER_E2E_RUN_ROOT;
+  const runRoot = process.env.UVP_STORE_E2E_RUN_ROOT;
   const safeName = safeArtifactName(name);
   const path = runRoot ? `${runRoot}/screenshots/${safeName}.png` : undefined;
   if (runRoot) {

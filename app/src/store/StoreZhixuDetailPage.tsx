@@ -92,7 +92,7 @@ export function StoreZhixuDetailPage({
           <section className="store-lifecycle-card" aria-label="生命周期事实">
             <div className="store-mini-heading">
               <h3>生命周期事实</h3>
-              <span>链上背书状态：{zhixu.chainAttestation.label}</span>
+              <span>链上发布状态：{zhixu.planPublication.label}</span>
             </div>
             <div className="store-lifecycle-list">
               {zhixu.versionHistory.slice(0, 4).map((version) => (
@@ -100,7 +100,7 @@ export function StoreZhixuDetailPage({
                   <CheckCircle2 />
                   <div>
                     <strong>{version.versionLabel}</strong>
-                    <span>{version.status} · {version.attestationStatus}</span>
+                    <span>{version.status} · {version.publicationStatus}</span>
                   </div>
                 </div>
               ))}
@@ -126,7 +126,7 @@ export function StoreZhixuDetailPage({
           </div>
 
           <div className="store-ops-row">
-            <Metric icon={<ShieldCheck />} label="背书" value={zhixu.chainAttestation.label} />
+            <Metric icon={<ShieldCheck />} label="发布" value={zhixu.planPublication.label} />
             <Metric icon={<Truck />} label="订单" value={`${zhixu.orderCount} 单`} />
             <Metric icon={<Users />} label="供应商" value={`${zhixu.supplierCount} 个`} />
           </div>
@@ -164,7 +164,7 @@ export function StoreZhixuDetailPage({
             </div>
             <div className="quick-order-card">
               <strong>{zhixu.nextAction}</strong>
-              <span>链上事实来自 Trust Registry 和 StateMachine 投影。</span>
+              <span>链上运行事实来自 UVPStateMachine 投影。</span>
             </div>
             {access.canWrite ? (
               <button className="primary-button block" onClick={onOpenDocking}><GitBranch /> 试拼对接</button>
@@ -185,10 +185,10 @@ export function StoreZhixuDetailPage({
               <div>
                 <strong>{zhixu.lifecycleReason}</strong>
                 <p>{zhixu.usageGuidance}</p>
-                {zhixu.lifecycleStatus === "active" && zhixu.chainAttestation.status === "attested" ? (
-                  <p>当前版本为标准信号容器——已完成 PlanAttested 投影对接，可创建订单。Store 目录的"可创建订单"标签表示该版本已通过 docking 闭环。</p>
+                {zhixu.lifecycleStatus === "active" && zhixu.planPublication.status === "published" ? (
+                  <p>当前版本的 PlanRegistered 事件已被索引，可创建订单。Store 目录的“可创建订单”标签表示该信号容器已发布。</p>
                 ) : (
-                  <p>未链上背书或已撤销版本不可 activate；撤销状态需要等待 Trust Registry 的 PlanRevoked 事件投影后，以链上事件为准。</p>
+                  <p>未发布的版本不可激活；请先完成 StateMachine Plan 注册并等待索引。</p>
                 )}
               </div>
             </div>
@@ -197,7 +197,7 @@ export function StoreZhixuDetailPage({
                 <div className="store-version-mini-row" key={`${version.zhixuId}:${version.versionId}`}>
                   <span>{version.versionLabel}</span>
                   <strong>{version.status}</strong>
-                  <small>{version.attestationStatus}</small>
+                  <small>{version.publicationStatus}</small>
                 </div>
               ))}
             </div>
@@ -211,8 +211,8 @@ export function StoreZhixuDetailPage({
               <div className="plain-help-box">
                 <ShieldCheck />
                 <div>
-                  <strong>背书/撤销仍走 Admin Governance</strong>
-                  <p>Store 只显示入口边界，不在这里绕过既有治理 admin API。</p>
+                  <strong>身份登记与撤销走 Admin Governance</strong>
+                  <p>Store 的目录资料不能代替 Identity Registry 的主体—账户绑定。</p>
                 </div>
               </div>
             </section>
@@ -279,7 +279,7 @@ export function StoreZhixuDetailPage({
       <section className="proof-panel store-proof-panel">
         <button className="proof-toggle" onClick={() => setProofOpen((open) => !open)}>
           <span><ShieldCheck /> 高级链上证明</span>
-          <small>{zhixu.chainAttestation.label}</small>
+          <small>{zhixu.planPublication.label}</small>
           <ChevronDown className={proofOpen ? "rotate" : ""} />
         </button>
         {proofOpen ? (
@@ -363,7 +363,7 @@ function TagList({
 }
 
 function statusTone(status: string): "success" | "warning" | "info" | "default" {
-  if (status === "active" || status === "attested") {
+  if (status === "active" || status === "published") {
     return "success";
   }
   if (status === "revoked" || status === "rejected") {
@@ -426,7 +426,7 @@ function capabilitySourceLabel(source: CapabilityPluginSource): string {
   switch (source) {
     case "explicit":
       return "显式配置";
-    case "legacy_inferred":
+    case "inferred":
       return "旧版本推断";
     case "missing":
       return "缺失";

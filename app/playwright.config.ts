@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 const host = "127.0.0.1";
 const port = process.env.UVP_PRODUCT_BROWSER_E2E_PORT ?? "4173";
-const runRoot = process.env.UVP_PRODUCT_BROWSER_E2E_RUN_ROOT;
+const runRoot = process.env.UVP_STORE_E2E_RUN_ROOT;
 const mode = process.env.UVP_PRODUCT_BROWSER_E2E_MODE ?? "fixture";
 const chainBackedMode = mode === "full" || mode === "base-sepolia" || mode === "testnet";
 const fixtureDevEnv = chainBackedMode

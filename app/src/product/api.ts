@@ -331,7 +331,7 @@ let evidenceSequence = 1;
 let submissionSequence = 1;
 
 export function createProductApiClient(): ProductApiClient {
-  const envBaseUrl = resolveFrontendApiBaseUrl(import.meta.env, ["VITE_PRODUCT_API_BASE_URL"]);
+  const envBaseUrl = resolveFrontendApiBaseUrl(import.meta.env);
   const e2eBaseUrl = isProductE2EEnabled() ? readE2EApiBaseUrl() : undefined;
   const baseUrl = normalizeBaseUrl(e2eBaseUrl ?? envBaseUrl);
   return new BrowserProductApiClient(baseUrl, { demoMode: isExplicitProductDemoMode() });
@@ -412,7 +412,7 @@ class BrowserProductApiClient implements ProductApiClient {
       }
       const orders = sortLatestProjectionFirst(ordersResponse.orders);
       const tasks = sortLatestProjectionFirst(tasksResponse.tasks);
-      const order = orders.find((item) => item.status === "active") ?? orders.find((item) => item.orderId === DEMO_ORDER_ID) ?? orders[0];
+      const order = orders.find((item) => item.status === "registered") ?? orders.find((item) => item.orderId === DEMO_ORDER_ID) ?? orders[0];
       const activeTask = tasks.find((task) => task.orderId === order?.orderId && task.status === "open") ??
         tasks.find((task) => task.status === "open") ??
         tasks.find((task) => task.taskId === DEMO_TASK_ID) ??
@@ -1425,8 +1425,6 @@ function readE2EApiBaseUrl(): string | undefined {
 
 function isExplicitProductDemoMode(): boolean {
   return isExplicitFrontendDemoMode(import.meta.env, {
-    demoEnabledAliases: ["VITE_UVP_PRODUCT_DEMO_MODE"],
-    demoSelectedAliases: ["VITE_UVP_PRODUCT_DEMO_SELECTED"],
     queryKeys: ["demo"],
     storageKey: PRODUCT_DEMO_MODE_STORAGE_KEY
   });

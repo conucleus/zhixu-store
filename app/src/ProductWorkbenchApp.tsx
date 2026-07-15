@@ -35,6 +35,7 @@ import type {
   ChainProofRowDTO,
   DockableModuleStatus,
   DockableZhixuModuleDTO,
+  FulfillmentPluginKind,
   ParticipantDTO,
   ParticipantStatus,
   ProductOrderDTO,
@@ -400,7 +401,7 @@ function ParticipantAppPage({
                       <StatusBadge tone={task.status === "open" ? "info" : task.status === "blocked" ? "warning" : "success"}>{participantTaskStatusLabel(task.status)}</StatusBadge>
                     </div>
                     <div className="catalog-facts">
-                      <FactRow icon={<Layers3 />} label="任务插件" value={fulfillmentKindLabel(task.fulfillmentKind)} />
+                      <FactRow icon={<Layers3 />} label="任务插件" value={pluginKindLabel(task.capabilityPlugin?.pluginKind)} />
                       <FactRow icon={<FileCheck2 />} label="需要凭证" value={task.requiredEvidence.join("、")} />
                       <FactRow icon={<HandCoins />} label="付款影响" value={task.fundingImpact} />
                     </div>
@@ -626,7 +627,7 @@ function ZhixuDetailPage({
             open={proofOpen}
             proofRows={zhixu.proofRows}
             onToggle={() => setProofOpen(!proofOpen)}
-            compactText={zhixu.chainAttestation.label}
+            compactText={zhixu.planPublication.label}
           />
         </div>
 
@@ -1465,7 +1466,7 @@ function participantTaskStatusLabel(status: ProductTaskDTO["status"]): string {
   }
 }
 
-function fulfillmentKindLabel(kind: ProductTaskDTO["fulfillmentKind"]): string {
+function pluginKindLabel(kind: FulfillmentPluginKind | undefined): string {
   switch (kind) {
     case "payment_placeholder":
       return "稳定币/外部资金占位";

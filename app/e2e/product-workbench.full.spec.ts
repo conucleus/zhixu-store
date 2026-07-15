@@ -198,41 +198,6 @@ test.describe("Product Workbench full browser Product E2E @full", () => {
     }
   });
 
-  test("negative: revoked plan disables order creation", async ({ page }) => {
-    skipUnlessFullBackend();
-    await page.goto("/app");
-    await expectWorkbenchSource(page, "real");
-    if (isBaseSepoliaRehearsal()) {
-      await expect(page.getByRole("heading", { name: "推荐秩序" })).toBeVisible({ timeout: 20_000 });
-      await expectProductE2EControlsDisabled(page);
-      const apiBaseUrl = requireString((await productState(page)).apiBaseUrl, "apiBaseUrl");
-      const fallbackProbe = await page.evaluate(async (baseUrl) => {
-        const response = await fetch(`${baseUrl}/product/zhixus?fallback=demo`);
-        return { status: response.status, text: await response.text() };
-      }, apiBaseUrl);
-      expect(fallbackProbe.status).toBe(403);
-      expect(fallbackProbe.text).toContain("demo_mode_disabled");
-      return;
-    }
-    await callProductE2EControl(page, "POST", "/product/e2e/fixtures/revoked-zhixu");
-    try {
-      await page.reload();
-      await expectWorkbenchSource(page, "real");
-      await expect(page.getByText("E2E 已撤销测试秩序")).toBeVisible();
-      await expect(page.getByTestId("catalog-create-order-button")).toBeDisabled();
-      await page.getByRole("button", { name: /^秩序库$/ }).click();
-      await expect(page.getByTestId("catalog-page")).toBeVisible();
-      await expect(page.getByTestId("catalog-card-create-order-button")).toBeDisabled();
-      await page.getByTestId("catalog-detail-button").click();
-      await expect(page.getByRole("heading", { name: "E2E 已撤销测试秩序" })).toBeVisible();
-      await expect(page.getByText("链上背书已撤销").first()).toBeVisible();
-      await expect(page.getByText("该秩序已撤销，不能创建新订单。")).toBeVisible();
-      await expect(page.getByTestId("zhixu-create-order-button")).toBeDisabled();
-    } finally {
-      await callProductE2EControl(page, "DELETE", "/product/e2e/fixtures/revoked-zhixu");
-    }
-  });
-
   test("negative: missing participant blocks registration", async ({ page }) => {
     skipUnlessFullBackend();
     await openParticipantsWithoutAccepting(page);
@@ -496,9 +461,9 @@ async function writeFullFlowSummary(summary: ProductWorkbenchE2EState & {
   readonly failedStage?: string;
   readonly error?: string;
 }, testInfo: TestInfo): Promise<void> {
-  const runRoot = process.env.UVP_PRODUCT_BROWSER_E2E_RUN_ROOT;
+  const runRoot = process.env.UVP_STORE_E2E_RUN_ROOT;
   const body = Buffer.from(JSON.stringify({
-    schemaVersion: "uvp-eth.product-browser-e2e.full-flow.v1",
+    schemaVersion: "uvp-eth.store-product-workbench.full-flow.v1",
     testTitle: testInfo.title,
     generatedAt: new Date().toISOString(),
     ...summary

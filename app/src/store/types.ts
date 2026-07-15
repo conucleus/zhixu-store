@@ -1,5 +1,5 @@
 import type {
-  ChainAttestationStatus,
+  PlanPublicationStatus,
   ChainProofRowDTO,
   StoreConsoleSummaryDTO,
   StoreProductSchemaDTO,
@@ -8,10 +8,14 @@ import type {
   StoreSearchType,
   StoreSupplierReviewStatus,
   StoreZhixuConsoleDTO,
-  StoreZhixuLifecycleStatus
+  StoreZhixuLifecycleStatus,
 } from "@uvp-eth/product-dto";
 
-export type StoreAccessLevel = "anonymous_read" | "store_read" | "store_operator" | "store_admin";
+export type StoreAccessLevel =
+  | "anonymous_read"
+  | "store_read"
+  | "store_operator"
+  | "store_admin";
 export type StoreAuthMode =
   | "anonymous"
   | "dev_store_headers"
@@ -28,15 +32,13 @@ export type StoreCapability =
   | "store.draft.compile"
   | "store.draft.schema.save"
   | "store.draft.review"
-  | "store.draft.attestation.request"
   | "store.version.activate"
   | "store.version.deprecate"
-  | "store.version.revocation.request"
   | "store.supplier.create"
   | "store.supplier.review"
   | "store.supplier.tags.update"
-  | "store.supplier.attestation.request"
-  | "store.supplier.revocation.request"
+  | "store.supplier.identity.register"
+  | "store.supplier.identity.revoke"
   | "store.docking.create"
   | "store.docking.validate"
   | "store.docking.save";
@@ -86,7 +88,9 @@ export interface StoreZhixuSearchResultDTO {
   readonly search?: StoreSearchResponseDTO;
 }
 
-export type StoreZhixuDraftSourceKind = "zhixu_yaml" | "onchain_hook_plan_manifest";
+export type StoreZhixuDraftSourceKind =
+  | "zhixu_yaml"
+  | "onchain_hook_plan_manifest";
 
 export interface StoreImportZhixuDraftInput {
   readonly sourceKind: StoreZhixuDraftSourceKind;
@@ -103,11 +107,7 @@ export type StoreZhixuDraftStatus =
   | "compiled"
   | "submitted_for_review"
   | "approved_for_broadcast"
-  | "broadcasting"
-  | "indexing"
   | "active"
-  | "failed"
-  | "stale"
   | "rejected"
   | "revoked";
 
@@ -122,23 +122,6 @@ export interface StoreCompilePreviewDTO {
   readonly canonicalArtifactHash: string;
 }
 
-export type StoreTrustProjectionEventName = "PlanAttested" | "PlanRevoked" | "MetadataMismatch";
-export type StoreTrustProjectionIndexStatus = "not_requested" | "broadcasting" | "indexing" | "indexed" | "stale" | "revoked" | "failed";
-
-export interface StoreZhixuDraftProjectionDTO {
-  readonly sourceOfTruth: "trust-registry-events";
-  readonly indexStatus: StoreTrustProjectionIndexStatus;
-  readonly eventName?: StoreTrustProjectionEventName;
-  readonly planId?: string;
-  readonly planHash?: string;
-  readonly artifactHash?: string;
-  readonly metadataMatches?: boolean;
-  readonly txHash?: string;
-  readonly blockNumber?: string;
-  readonly indexedAt?: string;
-  readonly message?: string;
-}
-
 export interface StoreZhixuDraftDTO {
   readonly draftId: string;
   readonly status: StoreZhixuDraftStatus;
@@ -148,9 +131,11 @@ export interface StoreZhixuDraftDTO {
   readonly compilePreview?: StoreCompilePreviewDTO;
   readonly productSchema?: StoreProductSchemaDTO;
   readonly reviewId?: string;
-  readonly governanceTxLogId?: string;
-  readonly projection?: StoreZhixuDraftProjectionDTO;
-  readonly errors: readonly { readonly code: string; readonly message: string; readonly path?: string }[];
+  readonly errors: readonly {
+    readonly code: string;
+    readonly message: string;
+    readonly path?: string;
+  }[];
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -164,22 +149,6 @@ export interface StoreProductSchemaUpdateResultDTO {
 export interface StoreZhixuDraftReviewResultDTO {
   readonly draft: StoreZhixuDraftDTO;
   readonly review?: unknown;
-}
-
-export interface StoreZhixuDraftAttestationInput {
-  readonly metadataURI?: string;
-  readonly metadata?: unknown;
-  readonly policy?: unknown;
-  readonly confirmation?: {
-    readonly draftId?: string;
-    readonly planId?: string;
-    readonly planHash?: string;
-  };
-}
-
-export interface StoreZhixuDraftAttestationResultDTO {
-  readonly draft: StoreZhixuDraftDTO;
-  readonly attestation?: unknown;
 }
 
 export interface StoreSearchInput {
@@ -196,8 +165,8 @@ export interface StoreSupplierDTO {
   readonly notificationProfile?: unknown | undefined;
   readonly notificationProfileHash?: string | undefined;
   readonly notificationUpdatedAt?: string | undefined;
-  readonly trustStatus: ChainAttestationStatus;
-  readonly trustLabel: string;
+  readonly identityStatus: "active" | "revoked" | "not_found";
+  readonly identityLabel: string;
   readonly capabilityTags: readonly string[];
   readonly supportedRoleSlotIds: readonly string[];
   readonly supportedStageIds: readonly string[];
@@ -227,7 +196,6 @@ export interface StoreRuntimeSummaryDTO {
   readonly activeZhixus: number;
   readonly runningOrders: number;
   readonly openTasks: number;
-  readonly trustedSuppliers: number;
   readonly sourceOfTruth: "contracts-and-chain-events";
 }
 
@@ -246,7 +214,7 @@ export interface StoreDockingZhixuRefDTO {
   readonly versionId?: string;
   readonly versionLabel: string;
   readonly lifecycleStatus: StoreZhixuLifecycleStatus;
-  readonly attestationStatus: ChainAttestationStatus;
+  readonly publicationStatus: PlanPublicationStatus;
   readonly planId: string;
   readonly planHash: string;
 }
@@ -283,8 +251,8 @@ export type StoreDockingValidationErrorCode =
   | "target_input_not_found"
   | "incompatible_payload_hash"
   | "target_role_slot_mismatch"
-  | "source_version_not_attested"
-  | "target_version_not_attested"
+  | "source_version_not_published"
+  | "target_version_not_published"
   | "source_version_revoked"
   | "target_version_revoked"
   | "empty_signal_map";

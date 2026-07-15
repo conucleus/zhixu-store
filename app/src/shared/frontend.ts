@@ -10,8 +10,6 @@ export interface FrontendRuntimeEnv {
 }
 
 export interface FrontendDemoModeOptions {
-  readonly demoEnabledAliases?: readonly string[];
-  readonly demoSelectedAliases?: readonly string[];
   readonly queryKeys?: readonly string[];
   readonly storageKey?: string;
 }
@@ -47,13 +45,7 @@ export function readLocalStorage(key: string): string | undefined {
 }
 
 export function resolveFrontendRuntimeEnv(env: FrontendRuntimeEnv): string | undefined {
-  return normalizeRuntimeEnv(
-    envValue(env, "VITE_UVP_RUNTIME_ENV") ??
-      deprecatedEnvAliasValue(env, "VITE_UVP_RUNTIME_ENV", [
-        "VITE_UVP_CHAIN_SERVICES_ENV",
-        "VITE_CHAIN_SERVICES_ENV"
-      ])
-  );
+  return normalizeRuntimeEnv(envValue(env, "VITE_UVP_RUNTIME_ENV"));
 }
 
 export function isProductionLikeFrontendRuntime(env: FrontendRuntimeEnv): boolean {
@@ -65,13 +57,9 @@ export function isProductionLikeFrontendRuntime(env: FrontendRuntimeEnv): boolea
 }
 
 export function resolveFrontendApiBaseUrl(
-  env: FrontendRuntimeEnv,
-  legacyAliases: readonly string[] = []
+  env: FrontendRuntimeEnv
 ): string | undefined {
-  return normalizeBaseUrl(
-    envValue(env, "VITE_UVP_CHAIN_SERVICES_URL") ??
-      deprecatedEnvAliasValue(env, "VITE_UVP_CHAIN_SERVICES_URL", legacyAliases)
-  );
+  return normalizeBaseUrl(envValue(env, "VITE_UVP_CHAIN_SERVICES_URL"));
 }
 
 export function isExplicitFrontendDemoMode(
@@ -81,8 +69,7 @@ export function isExplicitFrontendDemoMode(
   if (isProductionLikeFrontendRuntime(env)) {
     return false;
   }
-  const enabled = envValue(env, "VITE_UVP_DEMO_MODE") === "1" ||
-    deprecatedEnvAliasValue(env, "VITE_UVP_DEMO_MODE", options.demoEnabledAliases ?? []) === "1";
+  const enabled = envValue(env, "VITE_UVP_DEMO_MODE") === "1";
   return enabled && isFrontendDemoSourceSelected(env, options);
 }
 
@@ -91,8 +78,7 @@ function isFrontendDemoSourceSelected(
   options: FrontendDemoModeOptions
 ): boolean {
   if (
-    envValue(env, "VITE_UVP_DEMO_SELECTED") === "1" ||
-    deprecatedEnvAliasValue(env, "VITE_UVP_DEMO_SELECTED", options.demoSelectedAliases ?? []) === "1"
+    envValue(env, "VITE_UVP_DEMO_SELECTED") === "1"
   ) {
     return true;
   }
@@ -130,33 +116,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-const warnedDeprecatedEnvAliases = new Set<string>();
-
 function envValue(env: FrontendRuntimeEnv, name: string): string | undefined {
   const value = env[name];
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-function deprecatedEnvAliasValue(
-  env: FrontendRuntimeEnv,
-  canonicalName: string,
-  aliases: readonly string[]
-): string | undefined {
-  for (const alias of aliases) {
-    const value = envValue(env, alias);
-    if (value !== undefined) {
-      warnDeprecatedEnvAlias(alias, canonicalName);
-      return value;
-    }
-  }
-  return undefined;
-}
-
-function warnDeprecatedEnvAlias(alias: string, canonicalName: string): void {
-  const key = `${alias}->${canonicalName}`;
-  if (warnedDeprecatedEnvAliases.has(key)) {
-    return;
-  }
-  warnedDeprecatedEnvAliases.add(key);
-  console.warn(`${alias} is deprecated; use ${canonicalName} instead.`);
 }
