@@ -20,6 +20,6 @@ local workspace.
 The Store consumes Product API projections. It must not treat local metadata,
 frontend fallback data, or cached API responses as chain authority.
 
-Before the five public repositories are created, Store follows PRD109 as the
-single convergence contract for Product Schema v1 authoring, selector bindings,
-resource requirements, docking drafts, versioning, and review state.
+Store keeps Product Schema v1 authoring, selector bindings, resource
+requirements, docking drafts, versioning, and review state aligned with the
+frozen `@uvp-eth/product-dto` convergence surfaces.

@@ -1060,7 +1060,7 @@ function mockPrepareOrderTrigger(
     typedData: {
       domain: {
         name: "UVPStateMachine",
-        version: "0.7",
+        version: "0.8",
         chainId: 31337,
         verifyingContract: "0x0000000000000000000000000000000000000001"
       },
