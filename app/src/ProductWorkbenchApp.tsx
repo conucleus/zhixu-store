@@ -13,7 +13,6 @@ import {
   Copy,
   FileCheck2,
   FileText,
-  Fingerprint,
   HandCoins,
   HelpCircle,
   Layers3,
@@ -52,18 +51,18 @@ import {
   type DraftParticipantDTO,
   type EvidenceObjectDTO,
   type EvidenceProofDTO,
-  type ProductApiSource,
   type ProductInviteDTO,
   type ProductOrderDraftDTO,
   type ProductWorkbenchData
 } from "./product/api";
-import { useOrderDraftFlow } from "./product/hooks/useOrderDraftFlow";
+import {
+  emptyOrderDraftFormValues,
+  orderDraftFormValuesFromDraft,
+  useOrderDraftFlow,
+  type OrderDraftFormValues
+} from "./product/hooks/useOrderDraftFlow";
 import { useOrderRegistrationFlow } from "./product/hooks/useOrderRegistrationFlow";
 import { useProductWorkbenchData } from "./product/hooks/useProductWorkbenchData";
-import {
-  useProductWorkbenchE2EBridge,
-  type ProductWorkbenchE2EState
-} from "./product/hooks/useProductWorkbenchE2EBridge";
 import { useTaskSubmissionFlow } from "./product/hooks/useTaskSubmissionFlow";
 import { idleAction, type ActionState, type ProductView, type SubmitMachineState, type SubmitMachineStatus } from "./product/hooks/workbenchTypes";
 import { shortHash } from "./shared/frontend";
@@ -91,7 +90,6 @@ export function ProductWorkbenchApp() {
   const selectedZhixu = data?.zhixu;
   const selectedOrder = data?.order;
   const activeTask = data?.activeTask;
-  const allowMockWallet = data?.source.kind === "mock";
   const draftFlow = useOrderDraftFlow({ api, selectedZhixu });
   const {
     draft,
@@ -106,7 +104,6 @@ export function ProductWorkbenchApp() {
   } = draftFlow;
   const { registerDraftAction, handleRegisterDraft } = useOrderRegistrationFlow({
     api,
-    allowMockWallet,
     ensureDraft,
     onRegistered: (nextDraft) => {
       draftFlow.setDraft(nextDraft);
@@ -120,10 +117,9 @@ export function ProductWorkbenchApp() {
     submitMachine,
     disputeAction,
     handleUploadEvidence,
-    handleUploadDemoEvidence,
     handleConfirmSubmit,
     handleDisputeSave
-  } = useTaskSubmissionFlow({ api, activeTask, allowMockWallet });
+  } = useTaskSubmissionFlow({ api, activeTask });
 
   async function handleNextParticipants(): Promise<void> {
     const currentDraft = await ensureDraft();
@@ -132,12 +128,11 @@ export function ProductWorkbenchApp() {
     }
   }
 
-  const e2eState: ProductWorkbenchE2EState = {
+  const workbenchState = {
     mode: import.meta.env.MODE,
     view,
-    loadStatus: loadState.status,
     sourceKind: data?.source.kind ?? null,
-    apiBaseUrl: apiBaseUrlFromSource(data?.source),
+    apiBaseUrl: data?.source.baseUrl ?? null,
     syncState: data?.syncState ?? null,
     zhixuId: selectedZhixu?.zhixuId ?? null,
     draftId: draft?.draftId ?? null,
@@ -149,13 +144,8 @@ export function ProductWorkbenchApp() {
     signalTxHash: submitMachine.submission?.txHash ?? evidence?.boundSignalTxHash ?? null
   };
 
-  useProductWorkbenchE2EBridge({
-    state: e2eState,
-    acceptRequiredParticipants: draftFlow.acceptRequiredParticipants
-  });
-
   if (loadState.status === "loading") {
-    const loadingSource = api.baseUrl ? "real" : "mock";
+    const loadingSource = api.baseUrl ? "real" : "unconfigured";
     return (
       <div
         className="product-app"
@@ -198,13 +188,13 @@ export function ProductWorkbenchApp() {
       >
         <TopNav active={activeNav} onGo={setView} />
         <main className="product-main">
-          <RuntimeBanner source={loadState.source} syncing={false} />
+          <RuntimeBanner syncing={false} />
           <section className="page-shell" data-testid="workbench-diagnostic-panel">
             <div className="state-panel error">
               <span><AlertTriangle /></span>
               <div>
                 <h2>订单工作台无法加载</h2>
-                <p>部分后端接口返回异常，以下是各接口状态。当前未使用开发样例数据。</p>
+                <p>部分后端接口返回异常，以下是各接口状态。</p>
               </div>
             </div>
             <div className="panel-card" data-testid="workbench-diagnostic-table">
@@ -262,32 +252,32 @@ export function ProductWorkbenchApp() {
     <div
       className="product-app"
       data-testid="product-workbench"
-      data-uvp-api-base-url={e2eState.apiBaseUrl ?? ""}
-      data-uvp-draft-id={e2eState.draftId ?? ""}
-      data-uvp-evidence-id={e2eState.evidenceId ?? ""}
-      data-uvp-mode={e2eState.mode}
-      data-uvp-order-id={e2eState.orderId ?? ""}
-      data-uvp-trigger-tx-hash={e2eState.triggerTxHash ?? ""}
-      data-uvp-signal-tx-hash={e2eState.signalTxHash ?? ""}
-      data-uvp-source={e2eState.sourceKind ?? ""}
-      data-uvp-submission-id={e2eState.submissionId ?? ""}
-      data-uvp-sync-state={e2eState.syncState ?? ""}
-      data-uvp-task-id={e2eState.taskId ?? ""}
-      data-uvp-view={e2eState.view}
-      data-uvp-zhixu-id={e2eState.zhixuId ?? ""}
+      data-uvp-api-base-url={workbenchState.apiBaseUrl ?? ""}
+      data-uvp-draft-id={workbenchState.draftId ?? ""}
+      data-uvp-evidence-id={workbenchState.evidenceId ?? ""}
+      data-uvp-mode={workbenchState.mode}
+      data-uvp-order-id={workbenchState.orderId ?? ""}
+      data-uvp-trigger-tx-hash={workbenchState.triggerTxHash ?? ""}
+      data-uvp-signal-tx-hash={workbenchState.signalTxHash ?? ""}
+      data-uvp-source={workbenchState.sourceKind ?? ""}
+      data-uvp-submission-id={workbenchState.submissionId ?? ""}
+      data-uvp-sync-state={workbenchState.syncState ?? ""}
+      data-uvp-task-id={workbenchState.taskId ?? ""}
+      data-uvp-view={workbenchState.view}
+      data-uvp-zhixu-id={workbenchState.zhixuId ?? ""}
     >
-      <TopNav active={activeNav} onGo={setView} />
+      <TopNav active={activeNav} onGo={setView} participantName={data?.participant?.displayName} openTaskCount={data ? data.tasks.filter((task) => task.status === "open").length : undefined} />
       <main className="product-main">
-        <RuntimeBanner source={data.source} syncing={data.syncState === "syncing"} />
+        <RuntimeBanner syncing={data.syncState === "syncing"} />
         {loadState.status === "empty" ? <EmptyCatalogPage /> : null}
         {loadState.status === "ready" && view === "app" ? <ParticipantAppPage data={data} onCatalog={() => setView("home")} onViewDetail={() => setView("zhixu")} onCreate={() => setView("create")} onOrder={() => setView("order")} onTask={() => setView("task")} /> : null}
         {loadState.status === "ready" && view === "home" && selectedZhixu ? <CatalogPage zhixu={selectedZhixu} order={selectedOrder} task={activeTask} onViewDetail={() => setView("zhixu")} onCreate={() => setView("create")} onOrder={() => setView("order")} onTask={() => setView("task")} /> : null}
         {loadState.status === "ready" && view === "zhixu" && selectedZhixu ? <ZhixuDetailPage zhixu={selectedZhixu} onBack={() => setView("home")} onCreate={() => setView("create")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : null}
-        {loadState.status === "ready" && view === "create" && selectedZhixu ? <CreateOrderPage zhixu={selectedZhixu} draft={draft} createAction={draftAction} saveAction={saveDraftAction} onBack={() => setView("zhixu")} onCreate={handleCreateDraft} onSave={handleSaveDraft} onNext={handleNextParticipants} /> : null}
+        {loadState.status === "ready" && view === "create" && selectedZhixu ? <CreateOrderPage zhixu={selectedZhixu} draft={draft} createAction={draftAction} saveAction={saveDraftAction} onBack={() => setView("zhixu")} onCreate={(values) => void handleCreateDraft(values)} onSave={(values) => void handleSaveDraft(values)} onNext={handleNextParticipants} /> : null}
         {loadState.status === "ready" && view === "participants" ? <ParticipantsPage order={selectedOrder} draft={draft} draftParticipants={draftParticipants} inviteActions={inviteActions} registerAction={registerDraftAction} onBack={() => setView("create")} onInvite={handleSendInvite} onRegister={handleRegisterDraft} onOrder={() => setView("order")} /> : null}
         {loadState.status === "ready" && view === "order" ? selectedOrder ? <OrderOverviewPage order={selectedOrder} syncing={data.syncState === "syncing" || registerDraftAction.phase === "success"} onBack={() => setView("home")} onTask={() => setView("task")} onDispute={() => setView("dispute")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : <EmptyState title="暂无进行中订单" desc="创建并启动订单后，这里会展示订单总览、当前待办和最近事件。" /> : null}
-        {loadState.status === "ready" && view === "task" ? activeTask ? <TaskPage task={activeTask} evidence={evidence} evidenceProof={evidenceProof} uploadAction={evidenceAction} onBack={() => setView("order")} onUpload={handleUploadEvidence} onUploadDemo={handleUploadDemoEvidence} onSubmit={() => setView("submit")} onDispute={() => setView("dispute")} /> : <EmptyState title="暂无待办" desc="当前没有需要你处理的任务。" /> : null}
-        {loadState.status === "ready" && view === "submit" ? activeTask ? <SubmitPage task={activeTask} evidence={evidence} submitMachine={submitMachine} allowRejectSimulation={allowMockWallet} onBack={() => setView("task")} onSubmit={() => void handleConfirmSubmit()} onReject={() => void handleConfirmSubmit({ rejectWallet: true })} onOrder={() => setView("order")} /> : <EmptyState title="暂无可提交的待办" desc="待办完成凭证上传后，可在这里确认提交。" /> : null}
+        {loadState.status === "ready" && view === "task" ? activeTask ? <TaskPage task={activeTask} evidence={evidence} evidenceProof={evidenceProof} uploadAction={evidenceAction} onBack={() => setView("order")} onUpload={(file) => void handleUploadEvidence(file)} onSubmit={() => setView("submit")} onDispute={() => setView("dispute")} /> : <EmptyState title="暂无待办" desc="当前没有需要你处理的任务。" /> : null}
+        {loadState.status === "ready" && view === "submit" ? activeTask ? <SubmitPage task={activeTask} evidence={evidence} submitMachine={submitMachine} onBack={() => setView("task")} onSubmit={() => void handleConfirmSubmit()} onOrder={() => setView("order")} /> : <EmptyState title="暂无可提交的待办" desc="待办完成凭证上传后，可在这里确认提交。" /> : null}
         {loadState.status === "ready" && view === "dispute" ? activeTask ? <DisputePage task={activeTask} action={disputeAction} onBack={() => setView("order")} onSave={handleDisputeSave} /> : <EmptyState title="暂无可争议事项" desc="订单出现可处理待办后，可以补充争议材料。" /> : null}
       </main>
     </div>
@@ -296,16 +286,20 @@ export function ProductWorkbenchApp() {
 
 function TopNav({
   active,
-  onGo
+  onGo,
+  participantName,
+  openTaskCount
 }: {
   active: string;
   onGo: (view: ProductView) => void;
+  participantName?: string | undefined;
+  openTaskCount?: number | undefined;
 }) {
   const items: Array<{ label: string; view: ProductView; badge?: string }> = [
     { label: "订单工作台", view: "app" },
     { label: "秩序库", view: "home" },
     { label: "订单", view: "order" },
-    { label: "待办", view: "task", badge: "6" },
+    ...(openTaskCount === undefined ? [{ label: "待办", view: "task" as const }] : [{ label: "待办", view: "task" as const, badge: String(openTaskCount) }]),
     { label: "执行方", view: "participants" },
     { label: "帮助", view: "home" }
   ];
@@ -330,8 +324,12 @@ function TopNav({
       </nav>
       <div className="product-userbar">
         <button className="icon-button" aria-label="通知"><Bell /></button>
-        <span className="avatar">张</span>
-        <span className="user-name">张经理</span>
+        {participantName ? (
+          <>
+            <span className="avatar">{participantName.slice(0, 1)}</span>
+            <span className="user-name">{participantName}</span>
+          </>
+        ) : null}
         <ChevronDown className="chevron" />
       </div>
     </header>
@@ -373,7 +371,7 @@ function ParticipantAppPage({
           </div>
         </div>
         <div className="hero-side">
-          <SideMetric icon={<UserCheck />} label="当前身份" value={data.participant.displayName} />
+          <SideMetric icon={<UserCheck />} label="当前身份" value={data.participant?.displayName ?? "身份未确认"} />
           <SideMetric icon={<ClipboardCheck />} label="待处理" value={`${openTasks.length} 个待办`} />
           <SideMetric icon={<Clock3 />} label="阻塞中" value={`${blockedTasks.length} 个`} />
         </div>
@@ -385,7 +383,7 @@ function ParticipantAppPage({
             <div className="panel-heading">
               <div>
                 <h2>待办队列</h2>
-                <p>{data.participant.roleLabels.length > 0 ? `当前角色：${data.participant.roleLabels.join("、")}` : "连接钱包或接受邀请后，只展示你能处理的任务。"}</p>
+                <p>{data.participant && data.participant.roleLabels.length > 0 ? `当前角色：${data.participant.roleLabels.join("、")}` : "身份未确认：连接钱包或接受邀请后，只展示你能处理的任务。"}</p>
               </div>
               <button className="secondary-button" onClick={onCatalog}>查看秩序库</button>
             </div>
@@ -646,6 +644,8 @@ function ZhixuDetailPage({
   );
 }
 
+const BUSINESS_TYPE_OPTIONS = ["车辆", "工业设备", "其他高价值货物"] as const;
+
 function CreateOrderPage({
   zhixu,
   draft,
@@ -661,11 +661,43 @@ function CreateOrderPage({
   createAction: ActionState;
   saveAction: ActionState;
   onBack: () => void;
-  onCreate: () => void;
-  onSave: () => void;
+  onCreate: (values: OrderDraftFormValues) => void;
+  onSave: (values: OrderDraftFormValues) => void;
   onNext: () => void;
 }) {
   const canCreate = zhixu.reviewStatus === "approved";
+  const initialValues = useMemo(
+    () => (draft ? orderDraftFormValuesFromDraft(draft) : emptyOrderDraftFormValues),
+    [draft]
+  );
+  const [title, setTitle] = useState(initialValues.title);
+  const [businessType, setBusinessType] = useState(initialValues.businessType);
+  const [brandModel, setBrandModel] = useState(initialValues.brandModel);
+  const [quantity, setQuantity] = useState(initialValues.quantity);
+  const [vin, setVin] = useState(initialValues.vin);
+  const [totalAmount, setTotalAmount] = useState(initialValues.totalAmount);
+  const [currency, setCurrency] = useState(initialValues.currency);
+  const [exportRegion, setExportRegion] = useState(initialValues.exportRegion);
+  const [destinationRegion, setDestinationRegion] = useState(initialValues.destinationRegion);
+  const [expectedCompletionDate, setExpectedCompletionDate] = useState(initialValues.expectedCompletionDate);
+  const [notes, setNotes] = useState(initialValues.notes);
+
+  function currentValues(): OrderDraftFormValues {
+    return {
+      title,
+      businessType,
+      brandModel,
+      quantity,
+      vin,
+      totalAmount,
+      currency,
+      exportRegion,
+      destinationRegion,
+      expectedCompletionDate,
+      notes
+    };
+  }
+
   return (
     <section className="page-shell" data-testid="create-order-page">
       <BackLine onClick={onBack}>返回秩序详情</BackLine>
@@ -676,17 +708,22 @@ function CreateOrderPage({
         <Panel>
           <h2>订单信息</h2>
           <div className="form-grid">
-            <Field label="订单名称" required value="A 公司采购 10 台车辆" />
-            <ChoiceGroup label="标的物类型" options={["车辆", "工业设备", "其他高价值货物"]} active="车辆" />
-            <Field label="VIN" required value="JTDBE40K903012345" />
-            <Field label="品牌型号" required value="Toyota Land Cruiser 300 VX-R" />
-            <Field label="数量" required value="10" suffix="台" />
-            <Field label="总金额" required value="10,000" />
-            <SelectField label="币种" required value="USDC" />
-            <SelectField label="出口国家/地区" required value="日本" />
-            <SelectField label="目的国家/地区" required value="阿联酋" />
-            <Field label="预计完成日期" required value="2026-07-31" icon={<CalendarDays />} />
-            <Textarea label="备注" value="请按合同约定的分阶段交付计划执行。" />
+            <Field label="订单名称" required value={title} onChange={setTitle} placeholder="请输入订单名称" />
+            <ChoiceGroup
+              label="标的物类型"
+              options={[...BUSINESS_TYPE_OPTIONS]}
+              active={businessType}
+              onSelect={setBusinessType}
+            />
+            <Field label="VIN" value={vin} onChange={setVin} placeholder="请输入 VIN（选填）" />
+            <Field label="品牌型号" required value={brandModel} onChange={setBrandModel} placeholder="请输入品牌型号" />
+            <Field label="数量" value={quantity} onChange={setQuantity} suffix="台" placeholder="请输入数量" />
+            <Field label="总金额" required value={totalAmount} onChange={setTotalAmount} placeholder="请输入总金额" />
+            <SelectField label="币种" required value={currency} onChange={setCurrency} options={[...new Set([currency.trim(), ...zhixu.supportedPaymentMethods].filter((item) => item.length > 0))]} />
+            <Field label="出口国家/地区" required value={exportRegion} onChange={setExportRegion} placeholder="请输入出口国家/地区" />
+            <Field label="目的国家/地区" required value={destinationRegion} onChange={setDestinationRegion} placeholder="请输入目的国家/地区" />
+            <Field label="预计完成日期" required type="date" value={expectedCompletionDate} onChange={setExpectedCompletionDate} icon={<CalendarDays />} />
+            <Textarea label="备注" value={notes} onChange={setNotes} placeholder="请输入备注（如有特殊说明可在此填写）" />
           </div>
         </Panel>
         <aside className="side-card">
@@ -703,8 +740,8 @@ function CreateOrderPage({
       </div>
       <BottomActions>
         <button className="secondary-button" onClick={onBack}>上一步</button>
-        <button className="secondary-button" data-testid="save-draft-button" onClick={onSave} disabled={!canCreate || saveAction.phase === "pending"}>{saveAction.phase === "pending" ? <Loader2 className="spin" /> : null}保存草稿</button>
-        <button className="secondary-button" data-testid="create-draft-button" onClick={onCreate} disabled={!canCreate || createAction.phase === "pending"}>{createAction.phase === "pending" ? <Loader2 className="spin" /> : null}{draft ? "重新创建草稿" : "创建订单"}</button>
+        <button className="secondary-button" data-testid="save-draft-button" onClick={() => onSave(currentValues())} disabled={!canCreate || !draft || saveAction.phase === "pending"}>{saveAction.phase === "pending" ? <Loader2 className="spin" /> : null}保存草稿</button>
+        <button className="secondary-button" data-testid="create-draft-button" onClick={() => onCreate(currentValues())} disabled={!canCreate || createAction.phase === "pending"}>{createAction.phase === "pending" ? <Loader2 className="spin" /> : null}{draft ? "重新创建草稿" : "创建订单"}</button>
         <button className="primary-button" data-testid="next-participants-button" onClick={onNext} disabled={!canCreate || createAction.phase === "pending"}>下一步</button>
       </BottomActions>
     </section>
@@ -857,8 +894,6 @@ function OrderOverviewPage({
               <h2>{order.currentTaskTitle}</h2>
               <dl className="task-facts">
                 <div><dt>负责人</dt><dd>{currentAssignee(order)}</dd></div>
-                <div><dt>截止时间</dt><dd>2026-05-03 18:00 <strong>剩余 2 天 6 小时</strong></dd></div>
-                <div><dt>需要凭证</dt><dd>报关单 PDF、报关单号、出口港口、完成时间</dd></div>
                 <div><dt>订单影响</dt><dd>{order.currentTaskSummary}</dd></div>
               </dl>
               <div className="button-row">
@@ -882,18 +917,12 @@ function OrderOverviewPage({
           </SidePanel>
           <SidePanel title="付款条件">
             <MoneyRow label="订单金额" value={order.totalAmount.display} />
-            <MoneyRow label="已满足条件" value="5,000 USDC（50%）" />
-            <MoneyRow label="待满足条件" value="5,000 USDC（50%）" />
             <MoneyRow label="保障确认" value={order.fundingStatus} success />
             <span className="text-button as-label">付款条件来自订单状态</span>
           </SidePanel>
           <SidePanel title="最近事件" action="查看全部">
             {order.recentEvents.map((event) => <EventLine key={event.eventId} text={event.text} time={event.time} />)}
           </SidePanel>
-          <div className="warning-box">
-            <AlertTriangle />
-            <p>距离报关完成截止时间不足 3 天，请及时跟进，避免影响后续付款条件。</p>
-          </div>
         </aside>
       </div>
     </section>
@@ -907,7 +936,6 @@ function TaskPage({
   uploadAction,
   onBack,
   onUpload,
-  onUploadDemo,
   onSubmit,
   onDispute
 }: {
@@ -917,7 +945,6 @@ function TaskPage({
   uploadAction: ActionState;
   onBack: () => void;
   onUpload: (file: File) => void;
-  onUploadDemo: () => void;
   onSubmit: () => void;
   onDispute: () => void;
 }) {
@@ -949,7 +976,6 @@ function TaskPage({
             <span>仅支持 PDF 格式，单个文件不超过 50MB</span>
             <input className="sr-only" type="file" accept=".pdf,.jpg,.jpeg,.png,.json,application/pdf,image/*,application/json" onChange={handleFileChange} />
           </label>
-          <button className="secondary-button" data-testid="upload-demo-evidence-button" onClick={onUploadDemo} disabled={uploadAction.phase === "pending"}>{uploadAction.phase === "pending" ? <Loader2 className="spin" /> : <UploadCloud />} 上传开发样例凭证</button>
           <ActionNotice state={uploadAction} />
           {evidence ? (
             <div className="uploaded-file">
@@ -991,19 +1017,15 @@ function SubmitPage({
   task,
   evidence,
   submitMachine,
-  allowRejectSimulation,
   onBack,
   onSubmit,
-  onReject,
   onOrder
 }: {
   task: ProductTaskDTO;
   evidence?: EvidenceObjectDTO | undefined;
   submitMachine: SubmitMachineState;
-  allowRejectSimulation: boolean;
   onBack: () => void;
   onSubmit: () => void;
-  onReject: () => void;
   onOrder: () => void;
 }) {
   const [proofOpen, setProofOpen] = useState(false);
@@ -1047,7 +1069,6 @@ function SubmitPage({
           <button className="primary-button block" data-testid="submit-confirm-button" onClick={onSubmit} disabled={!evidence || pending}>
             {pending ? <Loader2 className="spin" /> : <WalletCards />} 确认并提交
           </button>
-          {allowRejectSimulation ? <button className="secondary-button block" onClick={onReject} disabled={!evidence || pending}>模拟钱包拒绝</button> : null}
         </Panel>
         <Panel tone={confirmed ? "success" : "muted"}>
           <StatusBadge tone={confirmed ? "success" : failed ? "warning" : "info"}>{submitStatusLabel(submitMachine.status)}</StatusBadge>
@@ -1114,15 +1135,7 @@ function DisputePage({
         </Panel>
         <Panel>
           <h2>相关事实</h2>
-          <FactRow icon={<Clock3 />} label="报关行提交时间" value="2026-05-16 14:32:08" />
-          <FactRow icon={<FileText />} label="已提交凭证" value="报关单.pdf、出口发票.pdf、营业执照副本.pdf" />
-          <FactRow icon={<Fingerprint />} label="凭证指纹" value="a4b7c3d9e1f2a0b8c6d4e7f1a3b9c2d5" />
-          <FactRow icon={<User />} label="负责人" value="上海捷通报关有限公司｜李建国" />
-          <FactRow icon={<HandCoins />} label="付款影响" value="争议期间第 2 阶段付款条件暂停" danger />
-          <div className="warning-box">
-            <AlertTriangle />
-            <p>在争议处理完成前，该阶段付款条件将处于暂停状态。</p>
-          </div>
+          <InlineEmpty text="暂无可核对的事实数据：争议提交未接入后端，未产生任何记录。" />
         </Panel>
       </div>
       <Panel>
@@ -1141,26 +1154,19 @@ function DisputePage({
   );
 }
 
-function RuntimeBanner({ source, syncing }: { source: ProductApiSource; syncing: boolean }) {
-  if (source.kind === "real" && !syncing) {
+function RuntimeBanner({ syncing }: { syncing: boolean }) {
+  if (!syncing) {
     return null;
   }
   return (
-    <div className={`runtime-banner ${source.kind === "mock" ? "is-mock" : "is-syncing"}`}>
-      {source.kind === "mock" ? <AlertTriangle /> : <RefreshCw className="spin" />}
+    <div className="runtime-banner is-syncing">
+      <RefreshCw className="spin" />
       <div>
-        <strong>{source.kind === "mock" ? "开发样例模式" : "订单状态同步中"}</strong>
-        <p>{source.kind === "mock" ? source.reason : "后端正在同步最新确认结果，页面会展示当前可用状态。"}</p>
+        <strong>订单状态同步中</strong>
+        <p>后端正在同步最新确认结果，页面会展示当前可用状态。</p>
       </div>
     </div>
   );
-}
-
-function apiBaseUrlFromSource(source: ProductApiSource | undefined): string | null {
-  if (!source) {
-    return null;
-  }
-  return source.kind === "real" ? source.baseUrl : source.baseUrl ?? null;
 }
 
 function EmptyCatalogPage() {
@@ -1214,7 +1220,6 @@ function ActionNotice({ state, compact }: { state: ActionState; compact?: boolea
     <div className={`action-notice ${state.phase} ${compact ? "compact" : ""}`}>
       {icon}
       <span>{state.message}</span>
-      {state.source?.kind === "mock" ? <small>开发样例</small> : null}
     </div>
   );
 }
@@ -1369,23 +1374,32 @@ function StepBar({ steps, current }: { steps: string[]; current: number }) {
 function Field({
   label,
   value,
+  onChange,
   required,
   suffix,
   placeholder,
+  type,
   icon
 }: {
   label: string;
   value?: string | undefined;
+  onChange?: ((value: string) => void) | undefined;
   required?: boolean | undefined;
   suffix?: string | undefined;
   placeholder?: string | undefined;
+  type?: "text" | "date" | undefined;
   icon?: ReactNode | undefined;
 }) {
+  const controlled = Boolean(onChange);
   return (
     <label className="field">
       <span>{label}{required ? <em>*</em> : null}</span>
       <div className="input-wrap">
-        <input defaultValue={value} placeholder={placeholder} />
+        <input
+          type={type}
+          {...(controlled ? { value: value ?? "", onChange: (event) => onChange?.(event.currentTarget.value) } : { defaultValue: value })}
+          placeholder={placeholder}
+        />
         {suffix ? <b>{suffix}</b> : null}
         {icon ? <i>{icon}</i> : null}
       </div>
@@ -1393,34 +1407,61 @@ function Field({
   );
 }
 
-function SelectField({ label, value, required }: { label: string; value: string; required?: boolean | undefined }) {
+function SelectField({ label, value, onChange, options, required }: {
+  label: string;
+  value: string;
+  onChange?: ((value: string) => void) | undefined;
+  options?: readonly string[] | undefined;
+  required?: boolean | undefined;
+}) {
+  const choices = options && options.length > 0 ? options : [value];
   return (
     <label className="field">
       <span>{label}{required ? <em>*</em> : null}</span>
       <div className="input-wrap">
-        <input defaultValue={value} />
+        <select
+          value={value}
+          disabled={!onChange}
+          onChange={onChange ? (event) => onChange(event.currentTarget.value) : undefined}
+        >
+          {choices.map((option) => <option key={option} value={option}>{option || "请选择"}</option>)}
+        </select>
         <i><ChevronDown /></i>
       </div>
     </label>
   );
 }
 
-function Textarea({ label, value, placeholder, required }: { label: string; value?: string | undefined; placeholder?: string | undefined; required?: boolean | undefined }) {
+function Textarea({ label, value, onChange, placeholder, required }: {
+  label: string;
+  value?: string | undefined;
+  onChange?: ((value: string) => void) | undefined;
+  placeholder?: string | undefined;
+  required?: boolean | undefined;
+}) {
+  const controlled = Boolean(onChange);
   return (
     <label className="field span-2">
       <span>{label}{required ? <em>*</em> : null}</span>
-      <textarea defaultValue={value} placeholder={placeholder} />
+      <textarea
+        {...(controlled ? { value: value ?? "", onChange: (event) => onChange?.(event.currentTarget.value) } : { defaultValue: value })}
+        placeholder={placeholder}
+      />
     </label>
   );
 }
 
-function ChoiceGroup({ label, options, active }: { label: string; options: string[]; active: string }) {
+function ChoiceGroup({ label, options, active, onSelect }: { label: string; options: readonly string[]; active: string; onSelect?: ((value: string) => void) | undefined }) {
   return (
     <div className="field span-2">
       <span>{label}<em>*</em></span>
       <div className="choice-row">
         {options.map((option) => (
-          <button className={`choice-button ${option === active ? "is-active" : ""}`} key={option}>
+          <button
+            className={`choice-button ${option === active ? "is-active" : ""}`}
+            key={option}
+            onClick={onSelect ? () => onSelect(option) : undefined}
+          >
             <Circle /> {option}
           </button>
         ))}

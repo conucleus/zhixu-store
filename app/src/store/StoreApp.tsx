@@ -158,10 +158,6 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
         </div>
       </header>
 
-      {loadState.status === "ready" && loadState.source.kind === "mock" ? (
-        <StoreRuntimeBanner source={loadState.source} />
-      ) : null}
-
       {loadState.status === "loading" ? (
         <StoreStatePanel icon={<Loader2 className="spin" />} title="正在加载秩序商店" desc="读取 Store 目录和链上投影摘要。" />
       ) : null}
@@ -222,19 +218,7 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
 }
 
 function isStoreE2EBridgeEnabled(): boolean {
-  return import.meta.env.VITE_UVP_PRODUCT_E2E === "1" || !import.meta.env.PROD;
-}
-
-function StoreRuntimeBanner({ source }: { readonly source: Extract<StoreApiSource, { readonly kind: "mock" }> }) {
-  return (
-    <div className="runtime-banner is-mock">
-      <AlertTriangle />
-      <div>
-        <strong>Store 开发样例模式</strong>
-        <p>{source.reason}</p>
-      </div>
-    </div>
-  );
+  return import.meta.env.VITE_UVP_PRODUCT_E2E === "1";
 }
 
 function StoreStatePanel({

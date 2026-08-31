@@ -1,4 +1,5 @@
-import { expect, test } from "./mock-wallet";
+import { expect, test } from "@playwright/test";
+import { installWorkbenchRoutes, STUB_API_BASE } from "./workbench-stubs";
 
 interface StoreConsoleE2EBridge {
   attemptImportDraft(): Promise<{ readonly ok: boolean; readonly status: number; readonly message: string }>;
@@ -11,18 +12,16 @@ declare global {
 }
 
 test.describe("Store and participant entry split", () => {
-  test("/ defaults to /app unless Store operator mode is explicit", async ({ page }) => {
-    await page.goto("/?demo=1");
-    await expect(page).toHaveURL(/\/app\?demo=1$/);
+  test("/ defaults to /app", async ({ page }) => {
+    await installWorkbenchRoutes(page);
+    await page.goto("/");
+    await expect(page).toHaveURL(/\/app$/);
     await expect(page.getByTestId("participant-app-page")).toBeVisible();
-
-    await page.goto("/?storeDemo=1&storeAccess=operator");
-    await expect(page).toHaveURL(/\/store\?storeDemo=1&storeAccess=operator$/);
-    await expect(page.getByTestId("store-app")).toBeVisible();
   });
 
   test("/app loads the participant shell without Store Console controls", async ({ page }) => {
-    await page.goto("/app?demo=1");
+    await installWorkbenchRoutes(page);
+    await page.goto("/app");
 
     await expect(page.getByTestId("participant-app-page")).toBeVisible();
     await expect(page.getByRole("heading", { name: "我的待办" })).toBeVisible();
@@ -32,28 +31,21 @@ test.describe("Store and participant entry split", () => {
   });
 
   test("/store loads the Store Console without participant task submission controls", async ({ page }) => {
-    await page.goto("/store?storeDemo=1");
+    await stubStoreRoutes(page);
+    await page.goto("/store");
 
     await expect(page.getByTestId("store-app")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Store Console" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "订单工作台" })).toHaveAttribute("href", /\/app$/);
+    await expect(page.getByRole("link", { name: "订单工作台" })).toHaveAttribute("href", "/app");
     await expect(page.getByTestId("participant-app-page")).toHaveCount(0);
     await expect(page.getByTestId("task-confirm-button")).toHaveCount(0);
     await expect(page.getByTestId("submit-confirm-button")).toHaveCount(0);
   });
 
-  test("explicit demo banners stay under their selected entry", async ({ page }) => {
-    await page.goto("/store?storeDemo=1");
-    await expect(page.getByText("Store 开发样例模式", { exact: true })).toBeVisible();
-    await expect(page.getByText("开发样例模式", { exact: true })).toHaveCount(0);
-
-    await page.goto("/app?demo=1");
-    await expect(page.getByText("开发样例模式", { exact: true })).toBeVisible();
-    await expect(page.getByText("Store 开发样例模式", { exact: true })).toHaveCount(0);
-  });
-
-  test("unauthorized Store write attempt reports 403", async ({ page }) => {
-    await page.goto("/store?storeDemo=1&storeAccess=anonymous");
+  test("unauthorized Store write attempt reports 403 without any session", async ({ page }) => {
+    // 访问级别只认登录会话/环境配置；默认无配置即 anonymous_read。
+    await stubStoreRoutes(page);
+    await page.goto("/store");
     await expect(page.getByTestId("store-app")).toHaveAttribute("data-store-access", "anonymous_read");
 
     const result = await page.evaluate(async () => {
@@ -69,3 +61,59 @@ test.describe("Store and participant entry split", () => {
     expect(result.message).toContain("403");
   });
 });
+
+async function stubStoreRoutes(page: import("@playwright/test").Page): Promise<void> {
+  await installWorkbenchRoutes(page);
+  // glob 锚定到桩 API origin，避免误拦 Vite 自身的模块请求
+  await page.route(`${STUB_API_BASE}/store/**`, async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname === "/store/session") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          session: {
+            authenticated: false,
+            accessLevel: "anonymous_read",
+            roles: ["anonymous_read"],
+            capabilities: ["store.read"],
+            authMode: "anonymous"
+          }
+        })
+      });
+      return;
+    }
+    if (pathname === "/store/zhixus") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          sourceOfTruth: "contracts-and-chain-events",
+          summary: {
+            totalZhixus: 0,
+            activeZhixus: 0,
+            needsReview: 0,
+            runningOrders: 0,
+            openTasks: 0,
+            registeredSuppliers: 0
+          },
+          zhixus: []
+        })
+      });
+      return;
+    }
+    if (pathname === "/store/runtime/summary") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ activeZhixuCount: 0, runningOrderCount: 0, openTaskCount: 0 })
+      });
+      return;
+    }
+    if (pathname === "/store/suppliers") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ suppliers: [] }) });
+      return;
+    }
+    await route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: "not_found" }) });
+  });
+}

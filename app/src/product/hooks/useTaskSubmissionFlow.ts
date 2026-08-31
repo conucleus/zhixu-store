@@ -14,7 +14,6 @@ import { delay, readableError } from "./workbenchSupport";
 export function useTaskSubmissionFlow(input: {
   readonly api: ProductApiClient;
   readonly activeTask?: ProductTaskDTO | undefined;
-  readonly allowMockWallet: boolean;
 }): {
   readonly evidence?: EvidenceObjectDTO | undefined;
   readonly evidenceProof?: EvidenceProofDTO | undefined;
@@ -22,11 +21,10 @@ export function useTaskSubmissionFlow(input: {
   readonly submitMachine: SubmitMachineState;
   readonly disputeAction: ActionState;
   readonly handleUploadEvidence: (file: File) => Promise<void>;
-  readonly handleUploadDemoEvidence: () => Promise<void>;
-  readonly handleConfirmSubmit: (options?: { readonly rejectWallet?: boolean }) => Promise<void>;
+  readonly handleConfirmSubmit: () => Promise<void>;
   readonly handleDisputeSave: () => Promise<void>;
 } {
-  const { api, activeTask, allowMockWallet } = input;
+  const { api, activeTask } = input;
   const [evidence, setEvidence] = useState<EvidenceObjectDTO | undefined>();
   const [evidenceProof, setEvidenceProof] = useState<EvidenceProofDTO | undefined>();
   const [evidenceAction, setEvidenceAction] = useState<ActionState>(idleAction);
@@ -66,11 +64,7 @@ export function useTaskSubmissionFlow(input: {
     }
   }
 
-  async function handleUploadDemoEvidence(): Promise<void> {
-    await handleUploadEvidence(new File(["customs declaration demo"], "出口报关单_20260430.pdf", { type: "application/pdf" }));
-  }
-
-  async function handleConfirmSubmit(options: { readonly rejectWallet?: boolean | undefined } = {}): Promise<void> {
+  async function handleConfirmSubmit(): Promise<void> {
     if (!activeTask) {
       setSubmitMachine({ status: "failed", message: "暂无可提交的待办" });
       return;
@@ -81,7 +75,7 @@ export function useTaskSubmissionFlow(input: {
     }
     try {
       setSubmitMachine({ status: "preparing", message: "正在准备签名前摘要" });
-      const account = await requestWalletAccount(allowMockWallet);
+      const account = await requestWalletAccount();
       const preparedResult = await api.prepareTaskSubmit(activeTask.taskId, {
         evidenceIds: [evidence.evidenceId],
         walletAddress: account.address,
@@ -93,10 +87,7 @@ export function useTaskSubmissionFlow(input: {
         prepared: preparedResult.data,
         source: preparedResult.source
       });
-      const signature = await signTypedData(account, preparedResult.data.typedData, {
-        allowMock: allowMockWallet,
-        reject: options.rejectWallet
-      });
+      const signature = await signTypedData(account, preparedResult.data.typedData);
       const submissionResult = await api.submitTask(activeTask.taskId, {
         prepareId: preparedResult.data.prepareId,
         signature,
@@ -155,12 +146,19 @@ export function useTaskSubmissionFlow(input: {
         source
       });
     }
+    setSubmitMachine({
+      status: "failed",
+      message: `链上确认超时，请凭提交编号 ${submissionId} 人工核对`,
+      prepared,
+      source
+    });
   }
 
   async function handleDisputeSave(): Promise<void> {
-    setDisputeAction({ phase: "pending", message: "正在保存争议材料" });
-    await delay(600);
-    setDisputeAction({ phase: "success", message: "争议材料已保存，平台将继续处理" });
+    setDisputeAction({
+      phase: "error",
+      message: "争议提交未接入后端，未产生任何记录"
+    });
   }
 
   return {
@@ -170,7 +168,6 @@ export function useTaskSubmissionFlow(input: {
     submitMachine,
     disputeAction,
     handleUploadEvidence,
-    handleUploadDemoEvidence,
     handleConfirmSubmit,
     handleDisputeSave
   };

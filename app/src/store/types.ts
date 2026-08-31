@@ -64,17 +64,10 @@ export interface StoreSessionDTO {
   readonly authMode: StoreAuthMode;
 }
 
-export type StoreApiSource =
-  | {
-      readonly kind: "real";
-      readonly baseUrl: string;
-    }
-  | {
-      readonly kind: "mock";
-      readonly reason: string;
-      readonly baseUrl?: string | undefined;
-      readonly attemptedPath?: string | undefined;
-    };
+export type StoreApiSource = {
+  readonly kind: "real";
+  readonly baseUrl: string;
+};
 
 export interface StoreApiResult<TData> {
   readonly data: TData;

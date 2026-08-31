@@ -1,21 +1,13 @@
 import {
-  storeConsoleSummary,
-  summarizeZhixu,
-  toStoreZhixuConsoleDTO,
-  toStoreZhixuDetailDTO,
   type StoreSearchResponseDTO,
-  type StoreSearchResultDTO,
   type StoreProductSchemaDTO,
   type StoreProductSchemaValidationDTO,
-  type StoreZhixuConsoleDTO,
   type StoreZhixuDetailDTO,
 } from "@uvp-eth/product-dto";
-import { demoZhixuDetail } from "@uvp-eth/product-dto/fixtures";
 import type {
   StoreAccessLevel,
   StoreAccessState,
   StoreApiResult,
-  StoreApiSource,
   StoreAuthMode,
   StoreCapability,
   StoreDockingSessionCreateDTO,
@@ -36,12 +28,7 @@ import type {
   StoreZhixuSearchResultDTO,
 } from "./types";
 import {
-  isExplicitFrontendDemoMode,
-  isProductionLikeFrontendRuntime,
   isRecord,
-  normalizeBaseUrl,
-  readLocalStorage,
-  readQueryValue,
   resolveFrontendApiBaseUrl,
   shortValue,
   stringValue,
@@ -102,15 +89,6 @@ export interface StoreApiClient {
   ): Promise<StoreApiResult<StoreDockingSessionDTO>>;
 }
 
-const STORE_DEMO_MODE_STORAGE_KEY = "uvp.store.demoMode";
-const STORE_ACCESS_STORAGE_KEY = "uvp.store.accessLevel";
-const STORE_USER_ID_STORAGE_KEY = "uvp.store.userId";
-
-const fallbackSource: StoreApiSource = {
-  kind: "mock",
-  reason: "Store 开发样例模式已显式开启，使用本地样例数据",
-};
-
 export class StoreApiError extends Error {
   readonly pathname: string;
   readonly status: number;
@@ -148,26 +126,29 @@ class StoreApiUnavailableError extends Error {
 export function createStoreApiClient(
   access: StoreAccessState = resolveStoreAccess(),
 ): StoreApiClient {
-  const baseUrl = normalizeBaseUrl(resolveStoreApiBaseUrl());
-  return new BrowserStoreApiClient(baseUrl, {
+  return new BrowserStoreApiClient(resolveStoreApiBaseUrl(), {
     access,
-    demoMode: isExplicitStoreDemoMode(),
   });
 }
 
+/** 访问级别只认显式环境配置；运行时 query/localStorage 注入链已删除。 */
+export function configuredStoreAccessLevel(): StoreAccessLevel | undefined {
+  const value = import.meta.env.VITE_UVP_STORE_ACCESS_LEVEL;
+  return normalizeStoreAccessLevel(
+    typeof value === "string" ? value : undefined,
+  );
+}
+
+function configuredStoreUserId(): string | undefined {
+  const value = import.meta.env.VITE_UVP_STORE_USER_ID;
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
+}
+
 export function resolveStoreAccess(): StoreAccessState {
-  const level =
-    normalizeStoreAccessLevel(
-      import.meta.env.VITE_UVP_STORE_ACCESS_LEVEL ??
-        readQueryValue("storeAccess") ??
-        readQueryValue("storeRole") ??
-        readLocalStorage(STORE_ACCESS_STORAGE_KEY),
-    ) ?? "anonymous_read";
-  const userId =
-    readQueryValue("storeUser") ??
-    import.meta.env.VITE_UVP_STORE_USER_ID ??
-    readLocalStorage(STORE_USER_ID_STORAGE_KEY) ??
-    (level === "anonymous_read" ? undefined : "store-dev-session");
+  const level = configuredStoreAccessLevel() ?? "anonymous_read";
+  const userId = configuredStoreUserId();
 
   return {
     level,
@@ -216,27 +197,17 @@ export function readableStoreError(error: unknown, fallback: string): string {
 class BrowserStoreApiClient implements StoreApiClient {
   readonly baseUrl?: string | undefined;
   readonly access: StoreAccessState;
-  readonly demoMode: boolean;
 
   constructor(
     baseUrl: string | undefined,
-    options: { readonly access: StoreAccessState; readonly demoMode: boolean },
+    options: { readonly access: StoreAccessState },
   ) {
     this.baseUrl = baseUrl;
     this.access = options.access;
-    this.demoMode = options.demoMode;
   }
 
   async getSession(): Promise<StoreApiResult<StoreSessionDTO>> {
     const pathname = "/store/session";
-    if (!this.baseUrl) {
-      return {
-        data: sessionFromAccess(this.access),
-        source: this.demoMode
-          ? fallbackSource
-          : { kind: "mock", reason: "Store API base URL is not configured" },
-      };
-    }
     return await this.realRead<StoreSessionDTO>("GET", pathname, (response) =>
       sessionFromResponse(response, this.access),
     );
@@ -249,40 +220,33 @@ class BrowserStoreApiClient implements StoreApiClient {
     const pathname = keyword
       ? `/store/search?${storeSearchParams({ ...query, keyword })}`
       : "/store/zhixus";
-    return await this.withReadOrDemo(
-      pathname,
-      async () => {
-        if (!keyword) {
-          return await this.requestJson<StoreZhixuSearchResultDTO>(
-            "GET",
-            "/store/zhixus",
-          );
-        }
-        const [catalog, search] = await Promise.all([
-          this.requestJson<StoreZhixuSearchResultDTO>("GET", "/store/zhixus"),
-          this.requestJson<StoreSearchResponseDTO>("GET", pathname),
-        ]);
-        return {
-          ...catalog,
-          search,
-        };
-      },
-      () => mockStoreSearchResult(keyword),
-    );
+    return await this.withRead(pathname, async () => {
+      if (!keyword) {
+        return await this.requestJson<StoreZhixuSearchResultDTO>(
+          "GET",
+          "/store/zhixus",
+        );
+      }
+      const [catalog, search] = await Promise.all([
+        this.requestJson<StoreZhixuSearchResultDTO>("GET", "/store/zhixus"),
+        this.requestJson<StoreSearchResponseDTO>("GET", pathname),
+      ]);
+      return {
+        ...catalog,
+        search,
+      };
+    });
   }
 
   async getZhixuDetail(
     zhixuId: string,
   ): Promise<StoreApiResult<StoreZhixuDetailDTO>> {
     const pathname = `/store/zhixus/${encodeURIComponent(zhixuId)}`;
-    return await this.withReadOrDemo(
-      pathname,
-      async () =>
-        await this.requestJson<{ readonly zhixu: StoreZhixuDetailDTO }>(
-          "GET",
-          pathname,
-        ).then((response) => response.zhixu),
-      () => mockStoreZhixu(zhixuId),
+    return await this.withRead(pathname, async () =>
+      await this.requestJson<{ readonly zhixu: StoreZhixuDetailDTO }>(
+        "GET",
+        pathname,
+      ).then((response) => response.zhixu),
     );
   }
 
@@ -385,16 +349,15 @@ class BrowserStoreApiClient implements StoreApiClient {
 
   async listSuppliers(): Promise<StoreApiResult<readonly StoreSupplierDTO[]>> {
     const pathname = "/store/suppliers";
-    return await this.withReadOrDemo(
-      pathname,
-      async () =>
-        await this.requestJson<{ readonly suppliers: readonly unknown[] }>(
-          "GET",
-          pathname,
-        ).then((response) =>
-          response.suppliers.map(storeSupplierFromResponse),
+    return await this.withRead(pathname, async () =>
+      await this.requestJson<{ readonly suppliers: readonly unknown[] }>(
+        "GET",
+        pathname,
+      ).then((response) =>
+        response.suppliers.map((item) =>
+          storeSupplierFromResponse(item, pathname),
         ),
-      () => mockSuppliers(),
+      ),
     );
   }
 
@@ -420,13 +383,10 @@ class BrowserStoreApiClient implements StoreApiClient {
 
   async getRuntimeSummary(): Promise<StoreApiResult<StoreRuntimeSummaryDTO>> {
     const pathname = "/store/runtime/summary";
-    return await this.withReadOrDemo(
-      pathname,
-      async () =>
-        await this.requestJson<unknown>("GET", pathname).then(
-          runtimeSummaryFromResponse,
-        ),
-      () => mockRuntimeSummary(),
+    return await this.withRead(pathname, async () =>
+      await this.requestJson<unknown>("GET", pathname).then(
+        runtimeSummaryFromResponse,
+      ),
     );
   }
 
@@ -478,30 +438,14 @@ class BrowserStoreApiClient implements StoreApiClient {
     );
   }
 
-  private async withReadOrDemo<TData>(
+  private async withRead<TData>(
     pathname: string,
     request: () => Promise<TData>,
-    fallback: () => TData,
   ): Promise<StoreApiResult<TData>> {
-    if (!this.baseUrl) {
-      if (this.demoMode) {
-        return { data: fallback(), source: fallbackSource };
-      }
-      throw new StoreApiError(
-        pathname,
-        0,
-        "Store API base URL is not configured",
-      );
-    }
-
-    try {
-      return {
-        data: await request(),
-        source: { kind: "real", baseUrl: this.baseUrl },
-      };
-    } catch (error) {
-      throw error;
-    }
+    return {
+      data: await request(),
+      source: { kind: "real", baseUrl: this.requireBaseUrl(pathname) },
+    };
   }
 
   private async realRead<TData = unknown>(
@@ -659,87 +603,6 @@ function dockingSessionFromResponse(response: unknown): StoreDockingSessionDTO {
   return session as unknown as StoreDockingSessionDTO;
 }
 
-function mockStoreSearchResult(keyword?: string): StoreZhixuSearchResultDTO {
-  const zhixus = [
-    toStoreZhixuConsoleDTO(summarizeZhixu(demoZhixuDetail), {
-      orderCount: 1,
-      openTaskCount: 1,
-      supplierCount: 1,
-    }),
-  ];
-  return {
-    sourceOfTruth: "contracts-and-chain-events",
-    summary: storeConsoleSummary(zhixus),
-    zhixus,
-    ...(keyword ? { search: mockTypedStoreSearch(keyword, zhixus) } : {}),
-  };
-}
-
-function mockTypedStoreSearch(
-  keyword: string,
-  zhixus: readonly StoreZhixuConsoleDTO[],
-): StoreSearchResponseDTO {
-  const normalizedQuery = keyword.trim().toLowerCase();
-  const zhixuResults: StoreSearchResultDTO[] = zhixus
-    .filter((zhixu) =>
-      [
-        zhixu.zhixuId,
-        zhixu.title,
-        zhixu.subtitle,
-        zhixu.maintainer,
-        zhixu.lifecycleLabel,
-      ].some((value) => value.toLowerCase().includes(normalizedQuery)),
-    )
-    .map((zhixu) => ({
-      resultType: "zhixu",
-      id: zhixu.zhixuId,
-      title: zhixu.title,
-      subtitle: zhixu.subtitle,
-      badgeLabel: zhixu.lifecycleLabel,
-      statusLabel: zhixu.planPublication.label,
-      matchedFields: ["title"],
-      primaryHref: `/store/zhixus/${encodeURIComponent(zhixu.zhixuId)}`,
-      sourceOfTruth:
-        zhixu.planPublication.status === "published"
-          ? "chain"
-          : "chain-and-store-metadata",
-      proofHint: shortValue(zhixu.planHash),
-      updatedAt: zhixu.updatedAt,
-    }));
-  return {
-    sourceOfTruth: "contracts-and-chain-events",
-    query: keyword,
-    normalizedQuery,
-    resultCount: zhixuResults.length,
-    results: zhixuResults,
-  };
-}
-
-function mockStoreZhixu(zhixuId: string): StoreZhixuDetailDTO {
-  const row = mockStoreSearchResult().zhixus.find(
-    (item) => item.zhixuId === zhixuId,
-  );
-  if (!row) {
-    throw new StoreApiError(
-      `/store/zhixus/${zhixuId}`,
-      404,
-      "store_zhixu_not_found",
-      { code: "store_zhixu_not_found" },
-    );
-  }
-  return toStoreZhixuDetailDTO(row, demoZhixuDetail);
-}
-
-function mockRuntimeSummary(): StoreRuntimeSummaryDTO {
-  const search = mockStoreSearchResult();
-  return {
-    activeZhixus: search.summary.activeZhixus,
-    runningOrders: search.summary.runningOrders,
-    openTasks: search.summary.openTasks,
-    sourceOfTruth: search.sourceOfTruth,
-  };
-}
-
 function storeSearchParams(query: StoreSearchInput): string {
   const params = new URLSearchParams();
   if (query.keyword?.trim()) {
@@ -780,38 +643,7 @@ function runtimeSummaryFromResponse(response: unknown): StoreRuntimeSummaryDTO {
   };
 }
 
-function mockSuppliers(): readonly StoreSupplierDTO[] {
-  return [
-    {
-      supplierId: "demo-customs-broker",
-      supplierSubjectId:
-        "0x0000000000000000000000000000000000000000000000000000000000003001",
-      displayName: "演示报关执行方",
-      wallet: "0x4444444444444444444444444444444444444444",
-      identityStatus: "active",
-      identityLabel: "身份映射有效",
-      capabilityTags: ["customs", "document-verification"],
-      supportedRoleSlotIds: ["customs-broker"],
-      supportedStageIds: ["export.customs"],
-      registryAddresses: ["0x2222222222222222222222222222222222222222"],
-      recentOrderCount: 1,
-      openTaskCount: 1,
-      reviewStatus: "approved_for_broadcast",
-      proofRows: [
-        { label: "链上事件", value: "IdentityBindingRegistered" },
-        {
-          label: "Supplier Subject",
-          value:
-            "0x0000000000000000000000000000000000000000000000000000000000003001",
-        },
-      ],
-      nextAction: "可显示线下主体名称；匹配标签仅由 Store 维护",
-      updatedAt: "demo",
-    },
-  ];
-}
-
-function storeSupplierFromResponse(value: unknown): StoreSupplierDTO {
+function storeSupplierFromResponse(value: unknown, pathname: string): StoreSupplierDTO {
   const record = isRecord(value) ? value : {};
   const supplierId =
     stringValue(record.supplierId) ??
@@ -823,8 +655,10 @@ function storeSupplierFromResponse(value: unknown): StoreSupplierDTO {
     stringValue(record.subjectId) ??
     supplierId;
   const wallet = stringValue(record.wallet);
-  const identityStatus = stringValue(record.identityStatus);
-  const revoked = Boolean(record.revoked) || identityStatus === "revoked";
+  const identityStatus = supplierIdentityStatusValue(
+    record.identityStatus,
+    pathname,
+  );
   const capabilityTags = Array.isArray(record.capabilityTags)
     ? record.capabilityTags.filter(
         (item): item is string => typeof item === "string",
@@ -834,7 +668,8 @@ function storeSupplierFromResponse(value: unknown): StoreSupplierDTO {
   const supportedStageIds = arrayOfStrings(record.supportedStageIds);
   const registryAddresses = arrayOfStrings(record.registryAddresses);
   const reviewStatus = supplierReviewStatusValue(
-    stringValue(record.reviewStatus),
+    record.reviewStatus,
+    pathname,
   );
   return {
     supplierId,
@@ -853,14 +688,10 @@ function storeSupplierFromResponse(value: unknown): StoreSupplierDTO {
     ...(stringValue(record.notificationUpdatedAt)
       ? { notificationUpdatedAt: stringValue(record.notificationUpdatedAt) }
       : {}),
-    identityStatus: revoked
-      ? "revoked"
-      : identityStatus === "not_found"
-        ? "not_found"
-        : "active",
+    identityStatus,
     identityLabel:
       stringValue(record.identityLabel) ??
-      (revoked
+      (identityStatus === "revoked"
         ? "身份映射已撤销"
         : identityStatus === "not_found"
           ? "未发现身份映射"
@@ -892,7 +723,7 @@ function supplierMutationResultFromResponse(
     throw new StoreApiError(pathname, 0, "store_supplier_response_invalid");
   }
   return {
-    supplier: storeSupplierFromResponse(record.supplier),
+    supplier: storeSupplierFromResponse(record.supplier, pathname),
     ...(record.governance !== undefined
       ? { governance: record.governance }
       : {}),
@@ -936,7 +767,8 @@ function proofRowsFromResponse(value: unknown): StoreSupplierDTO["proofRows"] {
 }
 
 function supplierReviewStatusValue(
-  value: string | undefined,
+  value: unknown,
+  pathname: string,
 ): StoreSupplierDTO["reviewStatus"] {
   switch (value) {
     case "draft":
@@ -946,8 +778,25 @@ function supplierReviewStatusValue(
     case "revoked":
       return value;
     default:
-      return "draft";
+      throw new StoreApiError(
+        pathname,
+        0,
+        "store_supplier_response_invalid",
+        { code: "store_supplier_response_invalid" },
+      );
   }
+}
+
+function supplierIdentityStatusValue(
+  value: unknown,
+  pathname: string,
+): StoreSupplierDTO["identityStatus"] {
+  if (value === "active" || value === "revoked" || value === "not_found") {
+    return value;
+  }
+  throw new StoreApiError(pathname, 0, "store_supplier_response_invalid", {
+    code: "store_supplier_response_invalid",
+  });
 }
 
 function accessHeaders(
@@ -1058,16 +907,6 @@ function hasWriteCapability(capabilities: readonly StoreCapability[]): boolean {
   );
 }
 
-function sessionFromAccess(access: StoreAccessState): StoreSessionDTO {
-  return {
-    authenticated: access.level !== "anonymous_read",
-    accessLevel: access.level,
-    roles: access.roles,
-    capabilities: access.capabilities,
-    authMode: access.authMode,
-  };
-}
-
 function sessionFromResponse(
   response: unknown,
   fallback: StoreAccessState,
@@ -1088,11 +927,8 @@ function sessionFromResponse(
     authenticated: Boolean(session.authenticated) || Boolean(principalId),
     ...(principalId ? { principalId } : {}),
     accessLevel,
-    roles: roles.length > 0 ? roles : rolesForAccessLevel(accessLevel),
-    capabilities:
-      capabilities.length > 0
-        ? capabilities
-        : capabilitiesForAccessLevel(accessLevel),
+    roles,
+    capabilities,
     authMode,
   };
 }
@@ -1159,24 +995,8 @@ function normalizeStoreAccessLevel(
   return undefined;
 }
 
-function isExplicitStoreDemoMode(): boolean {
-  return isExplicitFrontendDemoMode(import.meta.env, {
-    queryKeys: ["demo", "storeDemo"],
-    storageKey: STORE_DEMO_MODE_STORAGE_KEY,
-  });
-}
-
 function resolveStoreApiBaseUrl(): string | undefined {
-  const configured = resolveFrontendApiBaseUrl(import.meta.env);
-  if (configured) {
-    return configured;
-  }
-  if (isProductionLikeFrontendRuntime(import.meta.env)) {
-    return undefined;
-  }
-  return (
-    readQueryValue("storeApiBase") ?? readLocalStorage("uvp.store.apiBaseUrl")
-  );
+  return resolveFrontendApiBaseUrl(import.meta.env);
 }
 
 function numberValue(value: unknown): number | undefined {

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { ProductWorkbenchApp } from "./ProductWorkbenchApp";
-import { readLocalStorage, readQueryValue } from "./shared/frontend";
+import { configuredStoreAccessLevel } from "./store/api";
 import { StoreApp } from "./store/StoreApp";
 
 type FrontendEntry = "participant" | "store";
@@ -47,6 +47,7 @@ function selectEntry(): FrontendEntry {
   return "participant";
 }
 
+/** 入口默认值与 resolveStoreAccess 同源：只认显式环境配置的访问级别。 */
 function defaultEntry(): FrontendEntry {
   const configured = (import.meta.env.VITE_UVP_FRONTEND_ENTRY ?? import.meta.env.VITE_UVP_APP_ENTRY ?? "")
     .trim()
@@ -57,24 +58,11 @@ function defaultEntry(): FrontendEntry {
   if (configured === "participant" || configured === "app" || configured === "orders") {
     return "participant";
   }
-  return isStoreOperatorModeSelected() ? "store" : "participant";
+  const level = configuredStoreAccessLevel();
+  return level === "store_operator" || level === "store_admin" ? "store" : "participant";
 }
 
 function normalizePathname(pathname: string): string {
   const normalized = pathname.replace(/\/+$/, "");
   return normalized || "/";
-}
-
-function isStoreOperatorModeSelected(): boolean {
-  const accessLevel = (
-    import.meta.env.VITE_UVP_STORE_ACCESS_LEVEL ??
-      readQueryValue("storeAccess") ??
-      readQueryValue("storeRole") ??
-      readLocalStorage("uvp.store.accessLevel") ??
-      ""
-  ).trim().toLowerCase();
-  return accessLevel === "store_operator" ||
-    accessLevel === "operator" ||
-    accessLevel === "store_admin" ||
-    accessLevel === "admin";
 }

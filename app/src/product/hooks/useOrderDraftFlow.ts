@@ -8,7 +8,108 @@ import type {
 } from "../api";
 import { idleAction, type ActionState } from "./workbenchTypes";
 import { readableError } from "./workbenchSupport";
-import type { ProductWorkbenchE2EAcceptResult } from "./useProductWorkbenchE2EBridge";
+
+export interface OrderDraftFormValues {
+  readonly title: string;
+  readonly businessType: string;
+  readonly brandModel: string;
+  readonly quantity: string;
+  readonly vin: string;
+  readonly totalAmount: string;
+  readonly currency: string;
+  readonly exportRegion: string;
+  readonly destinationRegion: string;
+  readonly expectedCompletionDate: string;
+  readonly notes: string;
+}
+
+export const emptyOrderDraftFormValues: OrderDraftFormValues = {
+  title: "",
+  businessType: "",
+  brandModel: "",
+  quantity: "",
+  vin: "",
+  totalAmount: "",
+  currency: "",
+  exportRegion: "",
+  destinationRegion: "",
+  expectedCompletionDate: "",
+  notes: ""
+};
+
+const CREATE_REQUIRED_FIELD_LABELS = ["订单名称", "标的物类型", "品牌型号", "总金额", "币种"] as const;
+const SAVE_EXTRA_REQUIRED_FIELD_LABELS = ["出口国家/地区", "目的国家/地区", "预计完成日期"] as const;
+
+export function orderDraftFormValuesFromDraft(draft: ProductOrderDraftDTO): OrderDraftFormValues {
+  return {
+    title: draft.title,
+    businessType: draft.businessType,
+    brandModel: draft.goods?.find((item) => item.startsWith("品牌型号："))?.slice("品牌型号：".length) ?? "",
+    quantity: draft.goods?.find((item) => item.startsWith("数量："))?.slice("数量：".length) ?? "",
+    vin: draft.goods?.find((item) => item.startsWith("VIN："))?.slice("VIN：".length) ?? "",
+    totalAmount: draft.totalAmount,
+    currency: draft.currency,
+    exportRegion: draft.exportRegion ?? "",
+    destinationRegion: draft.destinationRegion ?? "",
+    expectedCompletionDate: draft.expectedCompletionDate ?? "",
+    notes: draft.notes ?? ""
+  };
+}
+
+function goodsFromValues(values: OrderDraftFormValues): readonly string[] {
+  const goods: string[] = [];
+  if (values.brandModel.trim()) {
+    goods.push(`品牌型号：${values.brandModel.trim()}`);
+  }
+  if (values.quantity.trim()) {
+    goods.push(`数量：${values.quantity.trim()}`);
+  }
+  if (values.vin.trim()) {
+    goods.push(`VIN：${values.vin.trim()}`);
+  }
+  return goods;
+}
+
+function missingRequiredLabels(values: OrderDraftFormValues): readonly string[] {
+  const missing: string[] = [];
+  if (!values.title.trim()) {
+    missing.push("订单名称");
+  }
+  if (!values.businessType.trim()) {
+    missing.push("标的物类型");
+  }
+  if (!values.brandModel.trim()) {
+    missing.push("品牌型号");
+  }
+  if (!values.totalAmount.trim()) {
+    missing.push("总金额");
+  }
+  if (!values.currency.trim()) {
+    missing.push("币种");
+  }
+  return missing;
+}
+
+function missingSaveOnlyLabels(values: OrderDraftFormValues): readonly string[] {
+  const missing: string[] = [];
+  if (!values.exportRegion.trim()) {
+    missing.push("出口国家/地区");
+  }
+  if (!values.destinationRegion.trim()) {
+    missing.push("目的国家/地区");
+  }
+  if (!values.expectedCompletionDate.trim()) {
+    missing.push("预计完成日期");
+  }
+  return missing;
+}
+
+function requiredFieldError(missingLabels: readonly string[]): ActionState {
+  return {
+    phase: "error",
+    message: `请填写必填字段：${missingLabels.join("、")}`
+  };
+}
 
 export function useOrderDraftFlow(input: {
   readonly api: ProductApiClient;
@@ -22,10 +123,9 @@ export function useOrderDraftFlow(input: {
   readonly saveDraftAction: ActionState;
   readonly inviteActions: Record<string, ActionState & { readonly invite?: ProductInviteDTO | undefined }>;
   readonly ensureDraft: () => Promise<ProductOrderDraftDTO | undefined>;
-  readonly handleCreateDraft: () => Promise<ProductOrderDraftDTO | undefined>;
-  readonly handleSaveDraft: () => Promise<void>;
+  readonly handleCreateDraft: (values: OrderDraftFormValues) => Promise<ProductOrderDraftDTO | undefined>;
+  readonly handleSaveDraft: (values: OrderDraftFormValues) => Promise<void>;
   readonly handleSendInvite: (participant: DraftParticipantDTO) => Promise<void>;
-  readonly acceptRequiredParticipants: (walletAddresses: string | readonly string[]) => Promise<ProductWorkbenchE2EAcceptResult>;
 } {
   const { api, selectedZhixu } = input;
   const [draft, setDraft] = useState<ProductOrderDraftDTO | undefined>();
@@ -38,14 +138,11 @@ export function useOrderDraftFlow(input: {
     if (draft) {
       return draft;
     }
-    if (!selectedZhixu) {
-      setDraftAction({ phase: "error", message: "暂无可创建订单的秩序" });
-      return undefined;
-    }
-    return await handleCreateDraft();
+    setDraftAction({ phase: "error", message: "请先在「订单信息」页填写并创建订单草稿" });
+    return undefined;
   }
 
-  async function handleCreateDraft(): Promise<ProductOrderDraftDTO | undefined> {
+  async function handleCreateDraft(values: OrderDraftFormValues): Promise<ProductOrderDraftDTO | undefined> {
     if (!selectedZhixu) {
       setDraftAction({ phase: "error", message: "暂无可创建订单的秩序" });
       return undefined;
@@ -54,14 +151,19 @@ export function useOrderDraftFlow(input: {
       setDraftAction({ phase: "error", message: "该秩序当前不可创建新订单" });
       return undefined;
     }
+    const missing = missingRequiredLabels(values);
+    if (missing.length > 0) {
+      setDraftAction(requiredFieldError(missing));
+      return undefined;
+    }
     setDraftAction({ phase: "pending", message: "正在创建订单草稿" });
     try {
       const result = await api.createOrderDraft({
         zhixuId: selectedZhixu.zhixuId,
-        title: "A 公司采购 10 台车辆",
-        businessType: "车辆",
-        totalAmount: "10000",
-        currency: "USDC"
+        title: values.title.trim(),
+        businessType: values.businessType.trim(),
+        totalAmount: values.totalAmount.trim(),
+        currency: values.currency.trim()
       });
       setDraft(result.data);
       setDraftAction({ phase: "success", message: "订单草稿已创建", source: result.source });
@@ -74,20 +176,28 @@ export function useOrderDraftFlow(input: {
     }
   }
 
-  async function handleSaveDraft(): Promise<void> {
+  async function handleSaveDraft(values: OrderDraftFormValues): Promise<void> {
     const currentDraft = await ensureDraft();
     if (!currentDraft) {
+      return;
+    }
+    const missing = [...missingRequiredLabels(values), ...missingSaveOnlyLabels(values)];
+    if (missing.length > 0) {
+      setSaveDraftAction(requiredFieldError(missing));
       return;
     }
     setSaveDraftAction({ phase: "pending", message: "正在保存草稿" });
     try {
       const result = await api.updateOrderDraft(currentDraft.draftId, {
-        title: currentDraft.title,
-        goods: ["Toyota Land Cruiser 300 VX-R"],
-        exportRegion: "日本",
-        destinationRegion: "阿联酋",
-        expectedCompletionDate: "2026-07-31",
-        notes: "请按合同约定的分阶段交付计划执行。"
+        title: values.title.trim(),
+        businessType: values.businessType.trim(),
+        goods: goodsFromValues(values),
+        totalAmount: values.totalAmount.trim(),
+        currency: values.currency.trim(),
+        exportRegion: values.exportRegion.trim(),
+        destinationRegion: values.destinationRegion.trim(),
+        expectedCompletionDate: values.expectedCompletionDate.trim(),
+        notes: values.notes.trim()
       });
       setDraft(result.data);
       setSaveDraftAction({ phase: "success", message: "草稿已保存", source: result.source });
@@ -133,55 +243,6 @@ export function useOrderDraftFlow(input: {
     }
   }
 
-  async function acceptRequiredParticipants(walletAddresses: string | readonly string[]): Promise<ProductWorkbenchE2EAcceptResult> {
-    const currentDraft = await ensureDraft();
-    if (!currentDraft) {
-      return { acceptedCount: 0, missingRequired: 0 };
-    }
-
-    const wallets = Array.isArray(walletAddresses) ? walletAddresses : [walletAddresses];
-    if (wallets.length === 0) {
-      throw new Error("product_workbench_e2e_wallets_required");
-    }
-
-    const participantsResult = await api.listParticipants(currentDraft.draftId);
-    let acceptedCount = 0;
-    for (const participant of participantsResult.data) {
-      if (!participant.required || participant.status === "accepted") {
-        continue;
-      }
-      const contact = participant.contact || `${participant.roleSlotId}@example.com`;
-      const inviteResult = await api.createInvite(currentDraft.draftId, {
-        participantId: participant.participantId,
-        roleSlotId: participant.roleSlotId,
-        roleLabel: participant.roleLabel,
-        contact,
-        displayName: participant.displayName || participant.roleLabel,
-        required: participant.required
-      });
-      await api.acceptInvite(inviteResult.data.inviteId, {
-        displayName: participant.displayName || participant.roleLabel,
-        walletAddress: wallets[acceptedCount % wallets.length],
-        contact
-      });
-      acceptedCount += 1;
-    }
-
-    const refreshedParticipants = await api.listParticipants(currentDraft.draftId);
-    setDraftParticipants(refreshedParticipants.data);
-    const refreshedDraft = await api.getOrderDraft(currentDraft.draftId);
-    setDraft(refreshedDraft.data);
-    const missingRequired = refreshedParticipants.data.filter((participant) =>
-      participant.required && participant.status !== "accepted"
-    ).length;
-    return {
-      acceptedCount,
-      missingRequired,
-      draftId: refreshedDraft.data.draftId,
-      draftStatus: refreshedDraft.data.status
-    };
-  }
-
   return {
     draft,
     setDraft,
@@ -193,7 +254,6 @@ export function useOrderDraftFlow(input: {
     ensureDraft,
     handleCreateDraft,
     handleSaveDraft,
-    handleSendInvite,
-    acceptRequiredParticipants
+    handleSendInvite
   };
 }

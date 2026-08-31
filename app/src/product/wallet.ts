@@ -1,6 +1,5 @@
 export interface WalletAccount {
   readonly address: string;
-  readonly source: "browser" | "mock";
 }
 
 export type WalletTarget = "evm" | "solana";
@@ -28,12 +27,8 @@ export class UnsupportedWalletTargetError extends Error {
 
 export interface WalletConnector {
   readonly target: WalletTarget;
-  requestAccount(allowMock: boolean): Promise<WalletAccount>;
-  signTypedData(
-    account: WalletAccount,
-    typedData: unknown,
-    options: { readonly allowMock: boolean; readonly reject?: boolean | undefined }
-  ): Promise<string>;
+  requestAccount(): Promise<WalletAccount>;
+  signTypedData(account: WalletAccount, typedData: unknown): Promise<string>;
 }
 
 interface BrowserEthereum {
@@ -44,15 +39,9 @@ type WindowWithEthereum = Window & {
   readonly ethereum?: BrowserEthereum;
 };
 
-const mockWalletAddress = "0x1111111111111111111111111111111111111111";
-
-export async function requestWalletAccount(allowMock: boolean): Promise<WalletAccount> {
+export async function requestWalletAccount(): Promise<WalletAccount> {
   const ethereum = (window as WindowWithEthereum).ethereum;
   if (!ethereum) {
-    if (allowMock) {
-      await delay(300);
-      return { address: mockWalletAddress, source: "mock" };
-    }
     throw new WalletNotConnectedError();
   }
 
@@ -62,7 +51,7 @@ export async function requestWalletAccount(allowMock: boolean): Promise<WalletAc
     if (!address) {
       throw new WalletNotConnectedError();
     }
-    return { address, source: "browser" };
+    return { address };
   } catch (error) {
     if (isRejected(error)) {
       throw new WalletRejectedError();
@@ -71,22 +60,7 @@ export async function requestWalletAccount(allowMock: boolean): Promise<WalletAc
   }
 }
 
-export async function signTypedData(
-  account: WalletAccount,
-  typedData: unknown,
-  options: { readonly allowMock: boolean; readonly reject?: boolean | undefined }
-): Promise<string> {
-  if (options.reject) {
-    throw new WalletRejectedError();
-  }
-  if (account.source === "mock") {
-    if (!options.allowMock) {
-      throw new WalletNotConnectedError();
-    }
-    await delay(500);
-    return `0xmock${stableToken(JSON.stringify(typedData)).padEnd(124, "0")}`;
-  }
-
+export async function signTypedData(account: WalletAccount, typedData: unknown): Promise<string> {
   const ethereum = (window as WindowWithEthereum).ethereum;
   if (!ethereum) {
     throw new WalletNotConnectedError();
@@ -130,16 +104,4 @@ function isRejected(error: unknown): boolean {
   const maybeError = error as { readonly code?: unknown; readonly message?: unknown };
   return maybeError.code === 4001 ||
     (typeof maybeError.message === "string" && maybeError.message.toLowerCase().includes("reject"));
-}
-
-function stableToken(seed: string): string {
-  let state = 5381;
-  for (let index = 0; index < seed.length; index += 1) {
-    state = Math.imul(state, 33) ^ seed.charCodeAt(index);
-  }
-  return (state >>> 0).toString(16);
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }

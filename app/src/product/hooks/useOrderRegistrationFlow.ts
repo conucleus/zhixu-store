@@ -6,14 +6,13 @@ import { readableError } from "./workbenchSupport";
 
 export function useOrderRegistrationFlow(input: {
   readonly api: ProductApiClient;
-  readonly allowMockWallet: boolean;
   readonly ensureDraft: () => Promise<ProductOrderDraftDTO | undefined>;
   readonly onRegistered: (draft: ProductOrderDraftDTO) => void;
 }): {
   readonly registerDraftAction: ActionState;
   readonly handleRegisterDraft: () => Promise<void>;
 } {
-  const { api, allowMockWallet, ensureDraft, onRegistered } = input;
+  const { api, ensureDraft, onRegistered } = input;
   const [registerDraftAction, setRegisterDraftAction] = useState<ActionState>(idleAction);
 
   async function handleRegisterDraft(): Promise<void> {
@@ -23,10 +22,10 @@ export function useOrderRegistrationFlow(input: {
     }
     try {
       setRegisterDraftAction({ phase: "pending", message: "正在准备订单启动签名" });
-      const account = await requestWalletAccount(allowMockWallet);
+      const account = await requestWalletAccount();
       const prepared = await api.prepareOrderTrigger(currentDraft.draftId, { walletAddress: account.address });
       setRegisterDraftAction({ phase: "pending", message: "等待钱包授权", source: prepared.source });
-      const signature = await signTypedData(account, prepared.data.typedData, { allowMock: allowMockWallet });
+      const signature = await signTypedData(account, prepared.data.typedData);
       const result = await api.triggerOrder(currentDraft.draftId, {
         prepareId: prepared.data.prepareId,
         signature,
