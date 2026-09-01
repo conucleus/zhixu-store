@@ -65,8 +65,12 @@ import { useProductWorkbenchData } from "./product/hooks/useProductWorkbenchData
 import { useTaskSubmissionFlow } from "./product/hooks/useTaskSubmissionFlow";
 import { idleAction, type ActionState, type ProductView, type SubmitMachineState, type SubmitMachineStatus } from "./product/hooks/workbenchTypes";
 import {
+  acceptAttribute,
+  acceptHint,
   emptyTaskEvidenceFieldValues,
-  type TaskEvidenceFieldValues
+  type TaskEvidenceFieldValues,
+  type TaskEvidencePlan,
+  type TaskEvidenceSlot
 } from "./product/hooks/workbenchSupport";
 import { shortHash } from "./shared/frontend";
 
@@ -118,8 +122,9 @@ export function ProductWorkbenchApp() {
     }
   });
   const {
-    evidence,
-    evidenceProof,
+    evidencePlan,
+    evidenceBySlot,
+    evidenceProofsBySlot,
     evidenceAction,
     submitMachine,
     disputeAction,
@@ -127,6 +132,13 @@ export function ProductWorkbenchApp() {
     handleConfirmSubmit,
     handleDisputeSave
   } = useTaskSubmissionFlow({ api, activeTask });
+  const firstEvidence = Object.values(evidenceBySlot)[0];
+  const firstEvidenceProof = firstEvidence ? evidenceProofsBySlot[firstEvidence.evidenceId] : undefined;
+  // 所有必填文件槽位已上传且至少有一份凭证时才允许进入提交确认。
+  const requiredFileSlotsUploaded = evidencePlan.slots
+    .filter((slot) => slot.inputKind === "file" && slot.required)
+    .every((slot) => Boolean(evidenceBySlot[slot.key]));
+  const canConfirmSubmit = Object.keys(evidenceBySlot).length > 0 && requiredFileSlotsUploaded;
 
   async function handleNextParticipants(): Promise<void> {
     const currentDraft = await ensureDraft();
@@ -145,10 +157,10 @@ export function ProductWorkbenchApp() {
     draftId: draft?.draftId ?? null,
     orderId: draft?.triggeredOrderId ?? selectedOrder?.orderId ?? null,
     taskId: activeTask?.taskId ?? null,
-    evidenceId: evidence?.evidenceId ?? null,
+    evidenceId: firstEvidence?.evidenceId ?? null,
     submissionId: submitMachine.submission?.submissionId ?? null,
     triggerTxHash: draft?.triggerTxHash ?? null,
-    signalTxHash: submitMachine.submission?.txHash ?? evidence?.boundSignalTxHash ?? null
+    signalTxHash: submitMachine.submission?.txHash ?? firstEvidence?.boundSignalTxHash ?? null
   };
 
   if (loadState.status === "loading") {
@@ -283,8 +295,8 @@ export function ProductWorkbenchApp() {
         {loadState.status === "ready" && view === "create" && selectedZhixu ? <CreateOrderPage zhixu={selectedZhixu} draft={draft} createAction={draftAction} saveAction={saveDraftAction} values={draftFormValues} onValuesChange={(patch) => setDraftFormValues((current) => ({ ...current, ...patch }))} onBack={() => setView("zhixu")} onCreate={(values) => void handleCreateDraft(values)} onSave={(values) => void handleSaveDraft(values)} onNext={handleNextParticipants} /> : null}
         {loadState.status === "ready" && view === "participants" ? <ParticipantsPage order={selectedOrder} draft={draft} draftParticipants={draftParticipants} inviteActions={inviteActions} registerAction={registerDraftAction} onBack={() => setView("create")} onInvite={handleSendInvite} onRegister={handleRegisterDraft} onOrder={() => setView("order")} /> : null}
         {loadState.status === "ready" && view === "order" ? selectedOrder ? <OrderOverviewPage order={selectedOrder} syncing={data.syncState === "syncing" || registerDraftAction.phase === "success"} onBack={() => setView("home")} onTask={() => setView("task")} onDispute={() => setView("dispute")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : <EmptyState title="暂无进行中订单" desc="创建并启动订单后，这里会展示订单总览、当前待办和最近事件。" /> : null}
-        {loadState.status === "ready" && view === "task" ? activeTask ? <TaskPage task={activeTask} evidence={evidence} evidenceProof={evidenceProof} uploadAction={evidenceAction} fieldValues={taskEvidenceFields} onFieldValuesChange={(patch) => setTaskEvidenceFields((current) => ({ ...current, ...patch }))} onBack={() => setView("order")} onUpload={(file) => void handleUploadEvidence(file, taskEvidenceFields)} onSubmit={() => setView("submit")} onDispute={() => setView("dispute")} /> : <EmptyState title="暂无待办" desc="当前没有需要你处理的任务。" /> : null}
-        {loadState.status === "ready" && view === "submit" ? activeTask ? <SubmitPage task={activeTask} evidence={evidence} submitMachine={submitMachine} onBack={() => setView("task")} onSubmit={() => void handleConfirmSubmit()} onOrder={() => setView("order")} /> : <EmptyState title="暂无可提交的待办" desc="待办完成凭证上传后，可在这里确认提交。" /> : null}
+        {loadState.status === "ready" && view === "task" ? activeTask ? <TaskPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} evidenceProofsBySlot={evidenceProofsBySlot} uploadAction={evidenceAction} canConfirm={canConfirmSubmit} fieldValues={taskEvidenceFields} onFieldValuesChange={(patch) => setTaskEvidenceFields((current) => ({ ...current, ...patch }))} onBack={() => setView("order")} onUpload={(slotKey, file) => void handleUploadEvidence(slotKey, file, taskEvidenceFields)} onSubmit={() => setView("submit")} onDispute={() => setView("dispute")} /> : <EmptyState title="暂无待办" desc="当前没有需要你处理的任务。" /> : null}
+        {loadState.status === "ready" && view === "submit" ? activeTask ? <SubmitPage task={activeTask} evidencePlan={evidencePlan} evidence={firstEvidence} submitMachine={submitMachine} onBack={() => setView("task")} onSubmit={() => void handleConfirmSubmit()} onOrder={() => setView("order")} /> : <EmptyState title="暂无可提交的待办" desc="待办完成凭证上传后，可在这里确认提交。" /> : null}
         {loadState.status === "ready" && view === "dispute" ? activeTask ? <DisputePage task={activeTask} action={disputeAction} onBack={() => setView("order")} onSave={handleDisputeSave} /> : <EmptyState title="暂无可争议事项" desc="订单出现可处理待办后，可以补充争议材料。" /> : null}
       </main>
     </div>
@@ -371,7 +383,7 @@ function ParticipantAppPage({
         <div className="hero-copy">
           <span className="eyebrow">普通履约者 App</span>
           <h1>我的待办</h1>
-          <p>买家、卖家、报关、物流和检验方都在这里处理自己被分配的任务。不同角色看到不同任务插件，但提交后都会留下可核对证明。</p>
+          <p>所有参与方都在这里处理自己被分配的任务。不同角色看到不同任务插件，但提交后都会留下可核对证明。</p>
           <div className="hero-actions">
             {primaryTask ? <button className="primary-button" data-testid="participant-primary-task-button" onClick={onTask}><ClipboardCheck /> 处理当前待办</button> : null}
             {data.order ? <button className="secondary-button" data-testid="participant-order-room-button" onClick={onOrder}><FileText /> 打开订单房间</button> : null}
@@ -493,10 +505,10 @@ function CatalogPage({
       <div className="catalog-toolbar">
         <label className="catalog-search">
           <Search />
-          <input placeholder="搜索业务、角色或凭证，例如：车辆、报关、验收" />
+          <input placeholder="搜索业务、角色或凭证" />
         </label>
         <div className="catalog-filter-row">
-          {["全部", "平行出口车", "工业设备", "高价值货物"].map((item, index) => (
+          {["全部", "工业设备", "高价值货物"].map((item, index) => (
             <button className={`filter-chip ${index === 0 ? "is-active" : ""}`} key={item}>{item}</button>
           ))}
         </div>
@@ -711,7 +723,7 @@ function CreateOrderPage({
           <SideMetric label="使用秩序" value={zhixu.title} />
           <SideMetric label="审核状态" value={<StatusBadge icon={<ShieldCheck />} tone={zhixu.reviewStatus === "approved" ? "success" : "warning"}>{zhixu.reviewLabel}</StatusBadge>} />
           <SideMetric label="阶段数" value={String(zhixu.stageCount)} />
-          <SideMetric label="当前还需要" value="邀请买家、卖家、报关行、物流、检验方" />
+          <SideMetric label="当前还需要" value="邀请所有关键参与方确认职责" />
           <SideMetric label="草稿状态" value={draft ? draftStatusLabel(draft.status) : "尚未创建"} />
           <NoticeCard icon={<ShieldCheck />} tone="success" title={`适用业务：${zhixu.applicableBusiness.join("、")}`} />
           <ActionNotice state={createAction} />
@@ -892,7 +904,7 @@ function OrderOverviewPage({
         <aside className="right-stack">
           <SidePanel title="参与方状态">
             {order.participants.map((item) => (
-              <ParticipantStatus key={item.participantId} active={item.participantId === "customs"} text={`${item.role} ${participantStatusLabel(item.status)}`} />
+              <ParticipantStatus key={item.participantId} active={item.participantId === firstJoinedParticipantId(order)} text={`${item.role} ${participantStatusLabel(item.status)}`} />
             ))}
           </SidePanel>
           <SidePanel title="付款条件">
@@ -911,9 +923,11 @@ function OrderOverviewPage({
 
 function TaskPage({
   task,
-  evidence,
-  evidenceProof,
+  evidencePlan,
+  evidenceBySlot,
+  evidenceProofsBySlot,
   uploadAction,
+  canConfirm,
   fieldValues,
   onFieldValuesChange,
   onBack,
@@ -922,20 +936,28 @@ function TaskPage({
   onDispute
 }: {
   task: ProductTaskDTO;
-  evidence?: EvidenceObjectDTO | undefined;
-  evidenceProof?: EvidenceProofDTO | undefined;
+  evidencePlan: TaskEvidencePlan;
+  evidenceBySlot: Readonly<Record<string, EvidenceObjectDTO>>;
+  evidenceProofsBySlot: Readonly<Record<string, EvidenceProofDTO>>;
   uploadAction: ActionState;
+  canConfirm: boolean;
   fieldValues: TaskEvidenceFieldValues;
-  onFieldValuesChange: (patch: Partial<TaskEvidenceFieldValues>) => void;
+  onFieldValuesChange: (patch: TaskEvidenceFieldValues) => void;
   onBack: () => void;
-  onUpload: (file: File) => void;
+  onUpload: (slotKey: string, file: File) => void;
   onSubmit: () => void;
   onDispute: () => void;
 }) {
-  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+  const fileSlots = evidencePlan.slots.filter((slot) => slot.inputKind === "file");
+  const inputSlots = evidencePlan.slots.filter((slot) => slot.inputKind !== "file");
+  const declaredEvidenceLabels = evidencePlan.mode === "fallback"
+    ? evidencePlan.declaredLabels
+    : evidencePlan.slots.map((slot) => slot.label);
+
+  function handleFileChange(slotKey: string, event: ChangeEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0];
     if (file) {
-      onUpload(file);
+      onUpload(slotKey, file);
     }
     event.currentTarget.value = "";
   }
@@ -954,39 +976,34 @@ function TaskPage({
       <div className="content-layout">
         <Panel>
           <h2>上传阶段凭证</h2>
-          <p>本待办需要的凭证：{task.requiredEvidence.join("、")}。请上传对应文件并填写以下信息。</p>
-          <label className="upload-zone">
-            <UploadCloud />
-            <strong>将文件拖拽到此处，或点击选择文件</strong>
-            <span>仅支持 PDF 格式，单个文件不超过 10MB</span>
-            <input className="sr-only" type="file" accept="application/pdf,.pdf" onChange={handleFileChange} />
-          </label>
-          <ActionNotice state={uploadAction} />
-          {evidence ? (
-            <div className="uploaded-file">
+          <p>本待办需要的凭证：{declaredEvidenceLabels.length > 0 ? declaredEvidenceLabels.join("、") : "按业务约定提交凭证"}。请按以下槽位上传文件并填写信息。</p>
+          {evidencePlan.mode === "fallback" ? (
+            <div className="plain-help-box">
               <FileText />
               <div>
-                <strong>{evidence.fileName}</strong>
-                <span>{formatBytes(evidence.size)} · 指纹 {shortHash(evidence.payloadHash)}</span>
+                <strong>本待办没有结构化证据配置</strong>
+                <p>以上声明按通用凭证上传（不限格式），并会随元数据原样保留，不会丢失或被拒绝。</p>
               </div>
-              <StatusText tone="ok">{evidenceProof?.verificationStatus === "matched" ? "已绑定" : "已上传 · 已生成凭证指纹"}</StatusText>
             </div>
-          ) : (
-            <InlineEmpty text="尚未上传凭证" />
-          )}
+          ) : null}
+          {fileSlots.length > 0 ? fileSlots.map((slot) => (
+            <EvidenceUploadZone key={slot.key} slot={slot} uploaded={evidenceBySlot[slot.key]} proof={evidenceBySlot[slot.key] ? evidenceProofsBySlot[evidenceBySlot[slot.key]!.evidenceId] : undefined} onFileChange={(event) => handleFileChange(slot.key, event)} />
+          )) : <InlineEmpty text="本待办无需上传文件凭证" />}
+          <ActionNotice state={uploadAction} />
           <div className="two-col">
-            <Field label="填写报关单号" required value={fieldValues.referenceNo} onChange={(referenceNo) => onFieldValuesChange({ referenceNo })} placeholder="请输入报关单号" testId="task-reference-no-input" />
-            <Field label="选择出口港口" required value={fieldValues.exportPort} onChange={(exportPort) => onFieldValuesChange({ exportPort })} placeholder="请输入出口港口" testId="task-export-port-input" />
-            <Field label="填写完成时间" required type="date" value={fieldValues.completionDate} onChange={(completionDate) => onFieldValuesChange({ completionDate })} icon={<CalendarDays />} testId="task-completion-date-input" />
+            {inputSlots.map((slot) => slot.inputKind === "date" ? (
+              <Field key={slot.key} label={slot.label} required={slot.required} type="date" value={fieldValues[slot.key] ?? ""} onChange={(value) => onFieldValuesChange({ [slot.key]: value })} icon={<CalendarDays />} testId={`task-field-${slot.key}`} />
+            ) : (
+              <Field key={slot.key} label={slot.label} required={slot.required} value={fieldValues[slot.key] ?? ""} onChange={(value) => onFieldValuesChange({ [slot.key]: value })} placeholder={`请输入${slot.label}`} testId={`task-field-${slot.key}`} />
+            ))}
           </div>
-          <Textarea label="备注（选填）" value={fieldValues.notes} onChange={(notes) => onFieldValuesChange({ notes })} placeholder="请输入备注信息（如有特殊说明可在此填写）" />
-        </Panel>
+          <Textarea label="备注（选填）" value={fieldValues.notes ?? ""} onChange={(notes) => onFieldValuesChange({ notes })} placeholder="请输入备注信息（如有特殊说明可在此填写）" />        </Panel>
         <aside className="side-card">
           <h2>责任确认</h2>
           {task.responsibilityStatements.map((statement) => (
             <CheckStatement key={statement.title} title={statement.title} desc={statement.desc} />
           ))}
-          <button className={evidence ? "primary-button block" : "disabled-button block"} data-testid="task-confirm-button" onClick={evidence ? onSubmit : undefined} disabled={!evidence}>确认阶段完成</button>
+          <button className={canConfirm ? "primary-button block" : "disabled-button block"} data-testid="task-confirm-button" onClick={canConfirm ? onSubmit : undefined} disabled={!canConfirm}>确认阶段完成</button>
           <div className="split-actions">
             <button className="secondary-button" onClick={onDispute}>无法完成</button>
             <button className="secondary-button" onClick={onDispute}>提出争议</button>
@@ -998,8 +1015,52 @@ function TaskPage({
   );
 }
 
+function EvidenceUploadZone({
+  slot,
+  uploaded,
+  proof,
+  onFileChange
+}: {
+  slot: TaskEvidenceSlot;
+  uploaded?: EvidenceObjectDTO | undefined;
+  proof?: EvidenceProofDTO | undefined;
+  onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
+}) {
+  const acceptValue = acceptAttribute(slot.accept);
+  return (
+    <div data-testid={`task-evidence-slot-${slot.key}`}>
+      {slot.description ? <p className="page-subtitle">{slot.description}</p> : null}
+      <label className="upload-zone">
+        <UploadCloud />
+        <strong>{slot.label}</strong>
+        <span>将文件拖拽到此处，或点击选择文件；{acceptHint(slot.accept)}，单个文件不超过 10MB</span>
+        <input
+          className="sr-only"
+          type="file"
+          data-testid={`task-file-input-${slot.key}`}
+          {...(acceptValue ? { accept: acceptValue } : {})}
+          onChange={onFileChange}
+        />
+      </label>
+      {uploaded ? (
+        <div className="uploaded-file">
+          <FileText />
+          <div>
+            <strong>{uploaded.fileName}</strong>
+            <span>{formatBytes(uploaded.size)} · 指纹 {shortHash(uploaded.payloadHash)}</span>
+          </div>
+          <StatusText tone="ok">{proof?.verificationStatus === "matched" ? "已绑定" : "已上传 · 已生成凭证指纹"}</StatusText>
+        </div>
+      ) : (
+        <InlineEmpty text={`尚未上传「${slot.label}」`} />
+      )}
+    </div>
+  );
+}
+
 function SubmitPage({
   task,
+  evidencePlan,
   evidence,
   submitMachine,
   onBack,
@@ -1007,6 +1068,7 @@ function SubmitPage({
   onOrder
 }: {
   task: ProductTaskDTO;
+  evidencePlan: TaskEvidencePlan;
   evidence?: EvidenceObjectDTO | undefined;
   submitMachine: SubmitMachineState;
   onBack: () => void;
@@ -1022,20 +1084,23 @@ function SubmitPage({
     submitMachine.status === "wallet_not_connected" ||
     submitMachine.status === "wallet_rejected";
   const proofRows = submitMachine.submission?.proofRows ?? task.proofRows;
+  const declaredEvidenceLabels = evidencePlan.mode === "fallback"
+    ? evidencePlan.declaredLabels
+    : evidencePlan.slots.map((slot) => slot.label);
   return (
     <section className="page-shell" data-testid="submit-page">
       <BackLine onClick={onBack}>返回待办详情</BackLine>
-      <h1>确认报关完成 / 提交结果</h1>
+      <h1>确认阶段完成 / 提交结果</h1>
       <p className="page-subtitle">请确认凭证指纹和责任声明，钱包授权后会进入提交中状态。</p>
       <div className="submit-layout">
         <Panel>
           <StatusBadge tone="info">确认提交</StatusBadge>
-          <h2>确认报关完成</h2>
+          <h2>确认阶段完成</h2>
           <p>请确认你将代表 {task.assigneeRole} 提交本阶段完成确认。</p>
           <ul className="confirm-list">
             <li><strong>订单：</strong>{task.orderTitle}</li>
             <li><strong>阶段：</strong>{task.stageName}</li>
-            <li><strong>提交凭证：</strong>{task.requiredEvidence.join("、")}</li>
+            <li><strong>提交凭证：</strong>{declaredEvidenceLabels.length > 0 ? declaredEvidenceLabels.join("、") : "按业务约定提交凭证"}</li>
             <li><strong>凭证指纹：</strong>{evidence ? shortHash(evidence.payloadHash) : "待上传"}</li>
             <li><strong>影响：</strong>{task.fundingImpact}</li>
             <li><strong>责任提示：</strong><em>提交后不可删除，只能追加更正或进入争议</em></li>
@@ -1059,7 +1124,7 @@ function SubmitPage({
           <StatusBadge tone={confirmed ? "success" : failed ? "warning" : "info"}>{submitStatusLabel(submitMachine.status)}</StatusBadge>
           <div className="success-hero">
             <span className={failed ? "danger" : ""}>{confirmed ? <Check /> : pending ? <Loader2 className="spin" /> : failed ? <AlertTriangle /> : <Clock3 />}</span>
-            <h2>{confirmed ? "已确认报关完成" : submitStatusTitle(submitMachine.status)}</h2>
+            <h2>{confirmed ? "已确认阶段完成" : submitStatusTitle(submitMachine.status)}</h2>
             <p>{submitMachine.message}</p>
           </div>
           <ul className="success-list">
@@ -1718,7 +1783,7 @@ function submitStatusTitle(status: SubmitMachineStatus): string {
     case "tx_pending":
       return "提交处理中";
     case "confirmed":
-      return "已确认报关完成";
+      return "已确认阶段完成";
     case "failed":
       return "提交失败";
   }
@@ -1796,7 +1861,12 @@ function participantStatusLabel(status: ParticipantStatus): string {
 }
 
 function currentAssignee(order: ProductOrderDTO): string {
-  return order.participants.find((participant) => participant.participantId === "customs")?.role ?? "待确认执行方";
+  const joined = order.participants.find((participant) => participant.status === "joined");
+  return joined?.role ?? order.participants[0]?.role ?? "待确认执行方";
+}
+
+function firstJoinedParticipantId(order: ProductOrderDTO): string | undefined {
+  return order.participants.find((participant) => participant.status === "joined")?.participantId;
 }
 
 function diagEndpointKey(endpoint: string): string {

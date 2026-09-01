@@ -2,92 +2,199 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   EVIDENCE_MAX_FILE_BYTES,
-  missingTaskEvidenceFieldLabels,
-  resolveTaskEvidenceType,
-  validateEvidenceFile
+  acceptAllowsFile,
+  acceptAttribute,
+  acceptHint,
+  acceptIncludesPdf,
+  FALLBACK_EVIDENCE_SLOT_KEY,
+  formatAcceptLabel,
+  missingTaskEvidenceSlotLabels,
+  planTaskEvidence,
+  validateEvidenceFileForSlot
 } from "./workbenchSupport";
+import { customsDemoTaskConfig } from "../demo/customs-demo-config";
 
-describe("task evidence type resolution", () => {
-  it("maps a declared customs declaration to customs_declaration", () => {
-    assert.deepEqual(resolveTaskEvidenceType(["报关单"]), {
-      status: "resolved",
-      documentType: "customs_declaration",
-      businessLabel: "报关单"
+/** 测试用的最小 File 形状：只依赖 size/name/type/slice，能在 Node 测试环境运行。 */
+function fakeFile(input: { readonly name: string; readonly type: string; readonly bytes: Uint8Array; readonly size?: number }): File {
+  const size = input.size ?? input.bytes.length;
+  const file = new File([input.bytes as unknown as BlobPart], input.name, { type: input.type });
+  if (size !== file.size) {
+    Object.defineProperty(file, "size", { value: size });
+  }
+  return file;
+}
+
+describe("task evidence plan (schema-driven)", () => {
+  it("builds slots from the nucleation-core-carried evidenceSpec", () => {
+    const plan = planTaskEvidence({
+      evidenceSpec: customsDemoTaskConfig.evidenceSpec,
+      requiredEvidence: ["报关单 PDF", "报关单号", "出口港口", "完成时间"]
     });
+    assert.equal(plan.mode, "spec");
+    assert.deepEqual(plan.slots.map((slot) => slot.key), [
+      "customs_declaration_pdf",
+      "customs_declaration_no",
+      "export_port",
+      "completion_date"
+    ]);
+    const fileSlot = plan.slots[0];
+    assert.equal(fileSlot?.inputKind, "file");
+    assert.deepEqual(fileSlot?.accept, ["application/pdf", ".pdf"]);
+    assert.equal(fileSlot?.required, true);
+    assert.equal(plan.slots[1]?.inputKind, "text");
+    assert.equal(plan.slots[3]?.inputKind, "date");
+    // 旧声明文本原样保留，不静默丢弃
+    assert.deepEqual(plan.declaredLabels, ["报关单 PDF", "报关单号", "出口港口", "完成时间"]);
   });
 
-  it("maps other registered declarations to their document types", () => {
-    assert.deepEqual(resolveTaskEvidenceType(["提单"]), {
-      status: "resolved",
-      documentType: "bill_of_lading",
-      businessLabel: "提单"
+  it("defaults inputKind to file and required to true when the spec omits them", () => {
+    const plan = planTaskEvidence({
+      requiredEvidence: [],
+      evidenceSpec: [{ key: "report", label: "报告", accept: ["application/pdf"] }]
     });
-    assert.deepEqual(resolveTaskEvidenceType(["验收单"]), {
-      status: "resolved",
-      documentType: "acceptance_certificate",
-      businessLabel: "验收单"
-    });
-  });
-
-  it("reports empty when the task declares no evidence", () => {
-    assert.equal(resolveTaskEvidenceType([]).status, "empty");
-    assert.equal(resolveTaskEvidenceType(["  "]).status, "empty");
-  });
-
-  it("reports unmapped labels instead of mislabeling them", () => {
-    const resolution = resolveTaskEvidenceType(["质检单"]);
-    assert.equal(resolution.status, "unmapped");
-    assert.deepEqual(resolution.status === "unmapped" ? resolution.labels : [], ["质检单"]);
-  });
-
-  it("reports ambiguity when one upload cannot satisfy several evidence types", () => {
-    const resolution = resolveTaskEvidenceType(["报关单", "提单"]);
-    assert.equal(resolution.status, "ambiguous");
-    assert.deepEqual(resolution.status === "ambiguous" ? resolution.documentTypes : [], [
-      "customs_declaration",
-      "bill_of_lading"
+    assert.equal(plan.mode, "spec");
+    assert.deepEqual(plan.slots, [
+      { key: "report", label: "报告", inputKind: "file", accept: ["application/pdf"], required: true, source: "spec" }
     ]);
   });
+
+  it("degrades missing-spec declarations into one generic upload slot without dropping them", () => {
+    const plan = planTaskEvidence({ requiredEvidence: ["质检单", "物流回单"] });
+    assert.equal(plan.mode, "fallback");
+    assert.equal(plan.slots.length, 1);
+    const slot = plan.slots[0];
+    assert.equal(slot?.key, FALLBACK_EVIDENCE_SLOT_KEY);
+    assert.equal(slot?.source, "fallback");
+    assert.deepEqual(slot?.accept, []);
+    // 未知声明不出现在上传前拒绝，也不被丢弃：随元数据上送
+    assert.deepEqual(plan.declaredLabels, ["质检单", "物流回单"]);
+  });
+
+  it("reports no evidence plan when the task declares nothing", () => {
+    assert.deepEqual(planTaskEvidence({ requiredEvidence: [] }), { mode: "none", slots: [], declaredLabels: [] });
+    assert.deepEqual(planTaskEvidence({ requiredEvidence: ["  "] }), { mode: "none", slots: [], declaredLabels: [] });
+  });
+
+  it("prefers evidenceSpec over label parsing: no store-side label table exists", () => {
+    const plan = planTaskEvidence({
+      evidenceSpec: [{ key: "whatever_key", label: "任意业务凭证", inputKind: "file", accept: ["image/png"] }],
+      requiredEvidence: ["商店不认识的声明"]
+    });
+    assert.equal(plan.mode, "spec");
+    assert.equal(plan.slots[0]?.key, "whatever_key");
+  });
 });
 
-describe("evidence file validation", () => {
-  it("accepts a PDF within the size limit", () => {
-    assert.equal(validateEvidenceFile({ size: 1024, name: "出口报关单.pdf", type: "application/pdf" }), undefined);
-    assert.equal(validateEvidenceFile({ size: 1024, name: "报关单.pdf", type: "" }), undefined);
+describe("evidence accept constraints", () => {
+  it("matches files by MIME or extension against the configured accept list", () => {
+    assert.equal(acceptAllowsFile(["application/pdf", ".pdf"], { size: 10, name: "凭证.PDF", type: "" }), true);
+    assert.equal(acceptAllowsFile(["application/pdf"], { size: 10, name: "凭证.pdf", type: "application/pdf" }), true);
+    assert.equal(acceptAllowsFile([".pdf"], { size: 10, name: "照片.jpg", type: "image/jpeg" }), false);
+    assert.equal(acceptAllowsFile([], { size: 10, name: "任意.bin", type: "" }), true);
   });
 
-  it("rejects non-PDF files", () => {
-    assert.match(validateEvidenceFile({ size: 10, name: "照片.jpg", type: "image/jpeg" }) ?? "", /PDF/u);
-    assert.match(validateEvidenceFile({ size: 10, name: "数据.json", type: "application/json" }) ?? "", /PDF/u);
-    assert.match(validateEvidenceFile({ size: 10, name: "凭证.txt", type: "text/plain" }) ?? "", /PDF/u);
+  it("detects pdf-requiring accept lists for the magic-byte fast path", () => {
+    assert.equal(acceptIncludesPdf(["application/pdf", ".pdf"]), true);
+    assert.equal(acceptIncludesPdf(["image/png"]), false);
+    assert.equal(acceptIncludesPdf([]), false);
   });
 
-  it("rejects files above the 10MB API-aligned limit", () => {
-    const error = validateEvidenceFile({ size: EVIDENCE_MAX_FILE_BYTES + 1, name: "大文件.pdf", type: "application/pdf" });
-    assert.match(error ?? "", /10MB/u);
-  });
-
-  it("rejects empty files", () => {
-    assert.match(validateEvidenceFile({ size: 0, name: "空.pdf", type: "application/pdf" }) ?? "", /为空/u);
+  it("derives the input accept attribute and human hint from the spec", () => {
+    assert.equal(acceptAttribute(["application/pdf", ".pdf"]), "application/pdf,.pdf");
+    assert.equal(acceptAttribute([]), undefined);
+    assert.equal(formatAcceptLabel(["application/pdf", ".pdf", "image/png"]), "PDF、PNG");
+    assert.equal(acceptHint(["application/pdf"]), "仅支持 PDF 格式");
+    assert.equal(acceptHint([]), "不限格式");
   });
 });
 
-describe("task evidence field validation", () => {
-  it("lists every missing required field by its visible label", () => {
+describe("evidence file validation (spec-driven)", () => {
+  const pdfAccept = { accept: ["application/pdf", ".pdf"] };
+
+  it("accepts a real PDF within the size limit", async () => {
+    const file = fakeFile({ name: "凭证.pdf", type: "application/pdf", bytes: new TextEncoder().encode("%PDF-1.7 body") });
+    assert.equal(await validateEvidenceFileForSlot(file, pdfAccept), undefined);
+    // 伪造 MIME 但扩展名正确且内容真实：仍应通过（内容是权威信号）
+    const forgedMime = fakeFile({ name: "凭证.pdf", type: "", bytes: new TextEncoder().encode("%PDF-1.4 ok") });
+    assert.equal(await validateEvidenceFileForSlot(forgedMime, pdfAccept), undefined);
+  });
+
+  it("rejects files outside the configured accept list", async () => {
+    const jpg = fakeFile({ name: "现场照片.jpg", type: "image/jpeg", bytes: new TextEncoder().encode("not a pdf") });
+    assert.match(await validateEvidenceFileForSlot(jpg, pdfAccept) ?? "", /仅支持 PDF 格式/u);
+    const json = fakeFile({ name: "数据.json", type: "application/json", bytes: new TextEncoder().encode("{}") });
+    assert.match(await validateEvidenceFileForSlot(json, pdfAccept) ?? "", /仅支持 PDF 格式/u);
+  });
+
+  it("rejects forged MIME/extension when the content lacks the %PDF- magic (STORE-02)", async () => {
+    const forged = fakeFile({ name: "伪造.pdf", type: "application/pdf", bytes: new TextEncoder().encode("MZ fake pdf content") });
+    assert.match(
+      await validateEvidenceFileForSlot(forged, pdfAccept) ?? "",
+      /%PDF-/u
+    );
+    const truncatedMagic = fakeFile({ name: "截断.pdf", type: "application/pdf", bytes: new TextEncoder().encode("%PDF") });
+    assert.match(await validateEvidenceFileForSlot(truncatedMagic, pdfAccept) ?? "", /%PDF-/u);
+  });
+
+  it("does not require PDF magic when the accept list does not ask for pdf", async () => {
+    const png = fakeFile({ name: "截图.png", type: "image/png", bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]) });
+    assert.equal(await validateEvidenceFileForSlot(png, { accept: ["image/png"] }), undefined);
+    const anyFile = fakeFile({ name: "回单.txt", type: "text/plain", bytes: new TextEncoder().encode("hello") });
+    assert.equal(await validateEvidenceFileForSlot(anyFile, { accept: [] }), undefined);
+  });
+
+  it("rejects files above the 10MB API-aligned limit", async () => {
+    const file = fakeFile({ name: "大文件.pdf", type: "application/pdf", size: EVIDENCE_MAX_FILE_BYTES + 1, bytes: new TextEncoder().encode("%PDF-") });
+    assert.match(await validateEvidenceFileForSlot(file, pdfAccept) ?? "", /10MB/u);
+  });
+
+  it("rejects empty files", async () => {
+    const file = fakeFile({ name: "空.pdf", type: "application/pdf", bytes: new Uint8Array() });
+    assert.match(await validateEvidenceFileForSlot(file, pdfAccept) ?? "", /为空/u);
+  });
+});
+
+describe("task evidence slot required-check", () => {
+  it("lists every missing required slot by its configured label", () => {
+    const plan = planTaskEvidence({
+      evidenceSpec: customsDemoTaskConfig.evidenceSpec,
+      requiredEvidence: []
+    });
     assert.deepEqual(
-      missingTaskEvidenceFieldLabels({ referenceNo: "", exportPort: "", completionDate: "", notes: "" }),
-      ["报关单号", "出口港口", "完成时间"]
+      missingTaskEvidenceSlotLabels(plan.slots, {}, []),
+      ["报关单 PDF", "报关单号", "出口港口", "完成时间"]
     );
   });
 
-  it("ignores whitespace-only input and optional notes", () => {
+  it("ignores uploaded file slots, filled fields and optional slots", () => {
+    const plan = planTaskEvidence({
+      evidenceSpec: [
+        ...customsDemoTaskConfig.evidenceSpec,
+        { key: "extra_note", label: "补充说明", inputKind: "text", required: false }
+      ],
+      requiredEvidence: []
+    });
     assert.deepEqual(
-      missingTaskEvidenceFieldLabels({ referenceNo: "  ", exportPort: "洋山港", completionDate: "", notes: "x" }),
+      missingTaskEvidenceSlotLabels(
+        plan.slots,
+        { customs_declaration_no: "  ", export_port: "洋山港", extra_note: "" },
+        ["customs_declaration_pdf"]
+      ),
       ["报关单号", "完成时间"]
     );
     assert.deepEqual(
-      missingTaskEvidenceFieldLabels({ referenceNo: "12345", exportPort: "洋山港", completionDate: "2026-08-01", notes: "" }),
+      missingTaskEvidenceSlotLabels(
+        plan.slots,
+        { customs_declaration_no: "12345", export_port: "洋山港", completion_date: "2026-08-01" },
+        ["customs_declaration_pdf"]
+      ),
       []
     );
+  });
+
+  it("requires the generic upload in fallback mode before submit", () => {
+    const plan = planTaskEvidence({ requiredEvidence: ["任意声明"] });
+    assert.deepEqual(missingTaskEvidenceSlotLabels(plan.slots, {}, []), ["阶段凭证"]);
+    assert.deepEqual(missingTaskEvidenceSlotLabels(plan.slots, {}, [FALLBACK_EVIDENCE_SLOT_KEY]), []);
   });
 });

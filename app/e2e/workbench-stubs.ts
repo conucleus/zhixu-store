@@ -1,8 +1,11 @@
 import type { Page } from "@playwright/test";
+import { customsDemoTaskConfig } from "../src/product/demo/customs-demo-config";
 
 /**
  * page.route 测试桩：把 /product/* 响应注入到浏览器请求上。
  * 生产应用不再有 demo/样例数据源；e2e 需要的目录与身份一律由这些桩提供。
+ * 演示任务的证据配置来自演示配置数据文件（等同某凝结核自带配置），
+ * 商店核心代码按 evidenceSpec 通用渲染。
  */
 
 /** 与 playwright.config.ts 中 VITE_UVP_CHAIN_SERVICES_URL 一致的不可达地址。 */
@@ -90,7 +93,8 @@ export const stubTask = {
   stageName: "出口报关",
   deadline: "2026-12-31",
   fundingImpact: "确认后释放本阶段付款",
-  requiredEvidence: ["报关单"],
+  requiredEvidence: ["报关单 PDF", "报关单号", "出口港口", "完成时间"],
+  evidenceSpec: customsDemoTaskConfig.evidenceSpec,
   status: "open",
   participantRoleLabel: "报关物流",
   primaryActionLabel: "处理待办",
@@ -98,6 +102,15 @@ export const stubTask = {
     { title: "凭证真实", desc: "我确认上传的凭证真实有效。" }
   ],
   proofRows: [{ label: "任务记录", value: "task-2001" }]
+};
+
+/** 无结构化配置的降级任务：商店必须按通用槽位渲染，不得拒绝或丢弃声明。 */
+export const stubFallbackTask = {
+  ...stubTask,
+  taskId: "task-2002-fallback",
+  title: "提交阶段凭证（无结构化配置）",
+  requiredEvidence: ["质检单", "物流回单"],
+  evidenceSpec: undefined
 };
 
 export const stubDraft = {

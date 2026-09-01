@@ -16,29 +16,39 @@ import {
 import { idleAction, type ActionState, type SubmitMachineState } from "./workbenchTypes";
 import {
   delay,
-  missingTaskEvidenceFieldLabels,
+  missingTaskEvidenceSlotLabels,
+  planTaskEvidence,
   readableError,
-  resolveTaskEvidenceType,
-  validateEvidenceFile,
-  type TaskEvidenceFieldValues
+  validateEvidenceFileForSlot,
+  type TaskEvidenceFieldValues,
+  type TaskEvidencePlan
 } from "./workbenchSupport";
+
+/** 已上传证据按槽位 key 归档；框架不预置任何业务槽位。 */
+export type EvidenceBySlot = Readonly<Record<string, EvidenceObjectDTO>>;
+export type EvidenceProofsBySlot = Readonly<Record<string, EvidenceProofDTO>>;
 
 export function useTaskSubmissionFlow(input: {
   readonly api: ProductApiClient;
   readonly activeTask?: ProductTaskDTO | undefined;
 }): {
-  readonly evidence?: EvidenceObjectDTO | undefined;
-  readonly evidenceProof?: EvidenceProofDTO | undefined;
+  readonly evidencePlan: TaskEvidencePlan;
+  readonly evidenceBySlot: EvidenceBySlot;
+  readonly evidenceProofsBySlot: EvidenceProofsBySlot;
   readonly evidenceAction: ActionState;
   readonly submitMachine: SubmitMachineState;
   readonly disputeAction: ActionState;
-  readonly handleUploadEvidence: (file: File, fields: TaskEvidenceFieldValues) => Promise<void>;
+  readonly handleUploadEvidence: (slotKey: string, file: File, fields: TaskEvidenceFieldValues) => Promise<void>;
   readonly handleConfirmSubmit: () => Promise<void>;
   readonly handleDisputeSave: () => Promise<void>;
 } {
   const { api, activeTask } = input;
-  const [evidence, setEvidence] = useState<EvidenceObjectDTO | undefined>();
-  const [evidenceProof, setEvidenceProof] = useState<EvidenceProofDTO | undefined>();
+  const evidencePlan = planTaskEvidence({
+    evidenceSpec: activeTask?.evidenceSpec,
+    requiredEvidence: activeTask?.requiredEvidence ?? []
+  });
+  const [evidenceBySlot, setEvidenceBySlot] = useState<EvidenceBySlot>({});
+  const [proofsBySlot, setProofsBySlot] = useState<EvidenceProofsBySlot>({});
   const [evidenceAction, setEvidenceAction] = useState<ActionState>(idleAction);
   const [submitMachine, setSubmitMachine] = useState<SubmitMachineState>({
     status: "idle",
@@ -46,31 +56,30 @@ export function useTaskSubmissionFlow(input: {
   });
   const [disputeAction, setDisputeAction] = useState<ActionState>(idleAction);
 
-  async function handleUploadEvidence(file: File, fields: TaskEvidenceFieldValues): Promise<void> {
-    if (!activeTask) {
+  async function handleUploadEvidence(
+    slotKey: string,
+    file: File,
+    fields: TaskEvidenceFieldValues
+  ): Promise<void> {
+    const slot = evidencePlan.slots.find((item) => item.key === slotKey);
+    if (!activeTask || !slot) {
       setEvidenceAction({ phase: "error", message: "暂无可处理的待办" });
       return;
     }
-    const missingFields = missingTaskEvidenceFieldLabels(fields);
-    if (missingFields.length > 0) {
-      setEvidenceAction({ phase: "error", message: `请填写必填字段：${missingFields.join("、")}` });
+    // 元数据会随上传进入指纹：必填的文本/日期字段缺失时在上传前拦截。
+    const uploadedKeys = Object.keys(evidenceBySlot);
+    const slotMissing = missingTaskEvidenceSlotLabels(
+      evidencePlan.slots.filter((item) => item.inputKind !== "file"),
+      fields,
+      uploadedKeys
+    );
+    if (slotMissing.length > 0) {
+      setEvidenceAction({ phase: "error", message: `请填写必填字段：${slotMissing.join("、")}` });
       return;
     }
-    const fileError = validateEvidenceFile(file);
+    const fileError = await validateEvidenceFileForSlot(file, slot);
     if (fileError) {
       setEvidenceAction({ phase: "error", message: fileError });
-      return;
-    }
-    // 服务端不校验 documentType 与秩序声明的关系；这里必须先解析，解析不出就显式报错，
-    // 禁止错标证据元数据（会系统性污染 metadataHash）。
-    const evidenceType = resolveTaskEvidenceType(activeTask.requiredEvidence);
-    if (evidenceType.status !== "resolved") {
-      const reason = evidenceType.status === "empty"
-        ? "该待办未声明所需凭证类型"
-        : evidenceType.status === "unmapped"
-          ? `暂不支持上传「${evidenceType.labels.join("、")}」类凭证：未登记的凭证类型会被错标，已拒绝上传`
-          : `该待办要求多种凭证（${evidenceType.labels.join("、")}），当前一次只能绑定一类，请联系维护方拆分阶段声明`;
-      setEvidenceAction({ phase: "error", message: reason });
       return;
     }
     setEvidenceAction({ phase: "pending", message: "正在上传凭证并生成指纹" });
@@ -78,33 +87,32 @@ export function useTaskSubmissionFlow(input: {
       const metadataFields: Record<string, string> = {
         stage: activeTask.stageName
       };
-      if (fields.referenceNo.trim()) {
-        metadataFields.reference_no = fields.referenceNo.trim();
+      // 字段 key 全部来自凝结核配置（spec）；fallback 模式只携带通用备注与
+      // 原样声明的凭证要求文本，框架不携带任何业务字段名。
+      for (const [key, value] of Object.entries(fields)) {
+        const trimmed = value.trim();
+        if (trimmed) {
+          metadataFields[key] = trimmed;
+        }
       }
-      if (fields.exportPort.trim()) {
-        metadataFields.export_port = fields.exportPort.trim();
-      }
-      if (fields.completionDate.trim()) {
-        metadataFields.completion_date = fields.completionDate.trim();
-      }
-      if (fields.notes.trim()) {
-        metadataFields.notes = fields.notes.trim();
+      if (evidencePlan.mode === "fallback" && evidencePlan.declaredLabels.length > 0) {
+        metadataFields.declared_requirements = evidencePlan.declaredLabels.join(", ");
       }
       const result = await api.uploadEvidence({
         file,
         orderId: activeTask.orderId,
         taskId: activeTask.taskId,
         stageIdentifier: activeTask.stageId,
-        documentType: evidenceType.documentType,
+        documentType: slot.key,
         metadata: {
-          businessLabel: evidenceType.businessLabel,
-          documentType: evidenceType.documentType,
+          businessLabel: slot.label,
+          documentType: slot.key,
           fields: metadataFields
         }
       });
-      setEvidence(result.data);
+      setEvidenceBySlot((current) => ({ ...current, [slot.key]: result.data }));
       const proofResult = await api.getEvidenceProof(result.data.evidenceId);
-      setEvidenceProof(proofResult.data);
+      setProofsBySlot((current) => ({ ...current, [slot.key]: proofResult.data }));
       setEvidenceAction({ phase: "success", message: "凭证已上传，指纹已生成", source: result.source });
     } catch (error) {
       setEvidenceAction({ phase: "error", message: readableError(error, "凭证上传失败") });
@@ -116,15 +124,26 @@ export function useTaskSubmissionFlow(input: {
       setSubmitMachine({ status: "failed", message: "暂无可提交的待办" });
       return;
     }
-    if (!evidence) {
+    const uploadedEntries = Object.entries(evidenceBySlot);
+    if (uploadedEntries.length === 0) {
       setSubmitMachine({ status: "failed", message: "请先上传凭证并生成指纹" });
+      return;
+    }
+    const missingRequiredFiles = evidencePlan.slots.filter(
+      (slot) => slot.inputKind === "file" && slot.required && !evidenceBySlot[slot.key]
+    );
+    if (missingRequiredFiles.length > 0) {
+      setSubmitMachine({
+        status: "failed",
+        message: `请先上传必需凭证：${missingRequiredFiles.map((slot) => slot.label).join("、")}`
+      });
       return;
     }
     try {
       setSubmitMachine({ status: "preparing", message: "正在准备签名前摘要" });
       const account = await requestWalletAccount();
       const preparedResult = await api.prepareTaskSubmit(activeTask.taskId, {
-        evidenceIds: [evidence.evidenceId],
+        evidenceIds: uploadedEntries.map(([, value]) => value.evidenceId),
         walletAddress: account.address,
         intent: "confirm_stage"
       });
@@ -217,8 +236,9 @@ export function useTaskSubmissionFlow(input: {
   }
 
   return {
-    evidence,
-    evidenceProof,
+    evidencePlan,
+    evidenceBySlot,
+    evidenceProofsBySlot: proofsBySlot,
     evidenceAction,
     submitMachine,
     disputeAction,

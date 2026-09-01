@@ -1,3 +1,5 @@
+import type { TaskEvidenceSpecDTO } from "@uvp-eth/product-dto";
+
 export function readableError(error: unknown, fallback: string): string {
   if (!(error instanceof Error)) {
     return fallback;
@@ -19,99 +21,244 @@ export function delay(ms: number): Promise<void> {
 }
 
 /**
- * 秩序声明（requiredEvidence）到证据 documentType 的映射。
- * 服务端不校验 documentType 与待办声明的关系；上传前必须在这里解析，
- * 解析不出就显式报错，禁止退回任何默认值错标证据元数据。
+ * 任务证据计划的输入：优先使用凝结核随 zhixu 配置携带的结构化 evidenceSpec；
+ * 没有 spec 时回退解析旧的 requiredEvidence 开放字符串数组。
  */
-export const EVIDENCE_DOCUMENT_TYPE_BY_LABEL: Readonly<Record<string, string>> = {
-  "报关单": "customs_declaration",
-  "提单": "bill_of_lading",
-  "验收单": "acceptance_certificate",
-  "检验报告": "inspection_report",
-  "发票": "invoice"
-};
-
-export type TaskEvidenceTypeResolution =
-  | { readonly status: "resolved"; readonly documentType: string; readonly businessLabel: string }
-  | { readonly status: "empty" }
-  | { readonly status: "unmapped"; readonly labels: readonly string[] }
-  | { readonly status: "ambiguous"; readonly labels: readonly string[]; readonly documentTypes: readonly string[] };
-
-export function resolveTaskEvidenceType(requiredEvidence: readonly string[]): TaskEvidenceTypeResolution {
-  const labels = requiredEvidence.map((item) => item.trim()).filter((item) => item.length > 0);
-  if (labels.length === 0) {
-    return { status: "empty" };
-  }
-  const resolved = new Map<string, string>();
-  const unmapped: string[] = [];
-  for (const label of labels) {
-    const documentType = EVIDENCE_DOCUMENT_TYPE_BY_LABEL[label];
-    if (documentType) {
-      resolved.set(label, documentType);
-    } else {
-      unmapped.push(label);
-    }
-  }
-  if (resolved.size === 0) {
-    return { status: "unmapped", labels: unmapped };
-  }
-  const documentTypes = [...new Set(resolved.values())];
-  if (documentTypes.length > 1) {
-    return { status: "ambiguous", labels: [...resolved.keys()], documentTypes };
-  }
-  const firstEntry = [...resolved.entries()][0];
-  if (!firstEntry) {
-    return { status: "empty" };
-  }
-  const [businessLabel, documentType] = firstEntry;
-  return { status: "resolved", documentType, businessLabel };
+export interface TaskEvidencePlanInput {
+  readonly evidenceSpec?: readonly TaskEvidenceSpecDTO[] | undefined;
+  readonly requiredEvidence: readonly string[];
 }
 
-/** 与后端 Evidence Service 一致的限制：仅 PDF，解码后最大 10MB（HTTP body 上限 16MB）。 */
-export const EVIDENCE_MAX_FILE_BYTES = 10 * 1024 * 1024;
-export const EVIDENCE_FILE_ACCEPT = "application/pdf,.pdf";
+export type TaskEvidenceSlotInputKind = "file" | "text" | "date";
 
-export function validateEvidenceFile(file: { readonly size: number; readonly name: string; readonly type: string }): string | undefined {
-  const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-  if (!isPdf) {
-    return "仅支持 PDF 格式的凭证文件";
+/** 渲染层的一个证据槽位：所有业务语义都来自凝结核配置或旧声明文本本身。 */
+export interface TaskEvidenceSlot {
+  readonly key: string;
+  readonly label: string;
+  readonly inputKind: TaskEvidenceSlotInputKind;
+  /** 文件槽位的 accept 约束（MIME 或扩展名）；空数组表示不限制格式。 */
+  readonly accept: readonly string[];
+  readonly required: boolean;
+  readonly description?: string;
+  /** spec=凝结核配置；fallback=旧 requiredEvidence 字符串的通用降级。 */
+  readonly source: "spec" | "fallback";
+}
+
+export interface TaskEvidencePlan {
+  readonly mode: "spec" | "fallback" | "none";
+  readonly slots: readonly TaskEvidenceSlot[];
+  /** 旧声明文本在 fallback 模式下原样保留并随元数据上送，绝不静默丢弃。 */
+  readonly declaredLabels: readonly string[];
+}
+
+/** 回退模式下的通用文件槽位：不携带任何具体业务语义。 */
+export const FALLBACK_EVIDENCE_SLOT_KEY = "task_evidence_generic";
+
+export const GENERIC_EVIDENCE_SLOT_LABEL = "阶段凭证";
+
+/**
+ * 把任务的证据要求解析为可渲染槽位。
+ *
+ * 框架红线：商店不含业务标签匹配表。spec 缺失或含未知声明时一律降级为
+ * 通用上传槽位（文件 + 可选文本说明），既不在上传前拒绝，也不静默丢弃。
+ */
+export function planTaskEvidence(task: TaskEvidencePlanInput): TaskEvidencePlan {
+  const spec = task.evidenceSpec;
+  if (spec && spec.length > 0) {
+    const slots = spec.map((entry): TaskEvidenceSlot => ({
+      key: entry.key,
+      label: entry.label,
+      inputKind: entry.inputKind ?? "file",
+      accept: entry.inputKind === undefined || entry.inputKind === "file" ? [...(entry.accept ?? [])] : [],
+      required: entry.required ?? true,
+      ...(entry.description ? { description: entry.description } : {}),
+      source: "spec"
+    }));
+    return { mode: "spec", slots, declaredLabels: declaredLabelsFrom(task.requiredEvidence) };
+  }
+  const labels = declaredLabelsFrom(task.requiredEvidence);
+  if (labels.length === 0) {
+    return { mode: "none", slots: [], declaredLabels: [] };
+  }
+  return {
+    mode: "fallback",
+    slots: [
+      {
+        key: FALLBACK_EVIDENCE_SLOT_KEY,
+        label: GENERIC_EVIDENCE_SLOT_LABEL,
+        inputKind: "file",
+        accept: [],
+        required: true,
+        source: "fallback"
+      }
+    ],
+    declaredLabels: labels
+  };
+}
+
+function declaredLabelsFrom(requiredEvidence: readonly string[]): readonly string[] {
+  return requiredEvidence.map((item) => item.trim()).filter((item) => item.length > 0);
+}
+
+/** 与后端 Evidence Service 一致的限制：解码后最大 10MB（HTTP body 上限 16MB）。 */
+export const EVIDENCE_MAX_FILE_BYTES = 10 * 1024 * 1024;
+
+export interface EvidenceFileMetadata {
+  readonly size: number;
+  readonly name: string;
+  readonly type: string;
+}
+
+function normalizeAcceptEntry(entry: string): string {
+  return entry.trim().toLowerCase();
+}
+
+function extensionOf(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot < 0 ? "" : name.slice(dot).toLowerCase();
+}
+
+/** accept 列表是否放行该文件（任一条目命中 MIME 或扩展名即放行）。 */
+export function acceptAllowsFile(accept: readonly string[], file: EvidenceFileMetadata): boolean {
+  if (accept.length === 0) {
+    return true;
+  }
+  const rules = accept.map(normalizeAcceptEntry);
+  const mime = file.type.trim().toLowerCase();
+  const extension = extensionOf(file.name);
+  return rules.some((rule) =>
+    (mime.length > 0 && rule === mime) || (extension.length > 0 && rule === extension)
+  );
+}
+
+const PDF_MIME = "application/pdf";
+const PDF_EXTENSION = ".pdf";
+
+/** accept=pdf 时需要额外的 %PDF- 首字节快检（防止伪造 MIME/扩展名绕过）。 */
+export function acceptIncludesPdf(accept: readonly string[]): boolean {
+  return accept.map(normalizeAcceptEntry).some((rule) => rule === PDF_MIME || rule === PDF_EXTENSION);
+}
+
+const FORMAT_LABELS: Readonly<Record<string, string>> = {
+  [PDF_MIME]: "PDF",
+  [PDF_EXTENSION]: "PDF",
+  "image/png": "PNG",
+  ".png": "PNG",
+  "image/jpeg": "JPG",
+  ".jpg": "JPG",
+  ".jpeg": "JPG"
+};
+
+/** 通用文件格式名（PDF/JPG…），仅按 accept 推导，不含业务语义。 */
+export function formatAcceptLabel(accept: readonly string[]): string {
+  const labels = [...new Set(accept.map(normalizeAcceptEntry).map((rule) => FORMAT_LABELS[rule] ?? rule))];
+  return labels.join("、");
+}
+
+/** <input accept> 属性值；空 accept 返回 undefined 表示不限制。 */
+export function acceptAttribute(accept: readonly string[]): string | undefined {
+  if (accept.length === 0) {
+    return undefined;
+  }
+  return accept.join(",");
+}
+
+export function acceptHint(accept: readonly string[]): string {
+  if (accept.length === 0) {
+    return "不限格式";
+  }
+  return `仅支持 ${formatAcceptLabel(accept)} 格式`;
+}
+
+/** 同步部分校验：大小与 accept 的 MIME/扩展名约束。 */
+export function validateEvidenceFileMetadata(
+  file: EvidenceFileMetadata,
+  accept: readonly string[]
+): string | undefined {
+  if (file.size <= 0) {
+    return "凭证文件内容为空，请重新选择";
   }
   if (file.size > EVIDENCE_MAX_FILE_BYTES) {
     return "凭证文件超过 10MB，请压缩或拆分后再上传";
   }
-  if (file.size <= 0) {
-    return "凭证文件内容为空，请重新选择";
+  if (!acceptAllowsFile(accept, file)) {
+    return `${acceptHint(accept)}的凭证文件`;
   }
   return undefined;
 }
 
-/** 待办凭证上传时随文件采集的补充字段；报关单号、出口港口、完成时间为必填。 */
-export interface TaskEvidenceFieldValues {
-  readonly referenceNo: string;
-  readonly exportPort: string;
-  readonly completionDate: string;
-  readonly notes: string;
+const PDF_MAGIC = "%PDF-";
+
+/**
+ * 上传前前端校验：accept 约束来自凝结核配置（spec.accept）而非硬编码；
+ * 当 accept 要求 PDF 时，读取文件首字节做 %PDF- 快速拦截，
+ * 伪造 MIME 或扩展名的文件在这里被拒绝（服务端魔数校验仍是权威）。
+ */
+export async function validateEvidenceFileForSlot(
+  file: EvidenceFileMetadata & { readonly slice?: (start: number, end: number) => { readonly arrayBuffer: () => Promise<ArrayBuffer> } },
+  slot: Pick<TaskEvidenceSlot, "accept">
+): Promise<string | undefined> {
+  const metadataError = validateEvidenceFileMetadata(file, slot.accept);
+  if (metadataError) {
+    return metadataError;
+  }
+  if (acceptIncludesPdf(slot.accept)) {
+    const head = await readHead(file, PDF_MAGIC.length);
+    if (head !== PDF_MAGIC) {
+      return "文件内容不是有效的 PDF（缺少 %PDF- 标识），请重新导出后上传";
+    }
+  }
+  return undefined;
 }
 
-export const emptyTaskEvidenceFieldValues: TaskEvidenceFieldValues = {
-  referenceNo: "",
-  exportPort: "",
-  completionDate: "",
-  notes: ""
-};
+async function readHead(
+  file: EvidenceFileMetadata & { readonly slice?: (start: number, end: number) => { readonly arrayBuffer: () => Promise<ArrayBuffer> } },
+  length: number
+): Promise<string> {
+  if (typeof file.slice !== "function") {
+    return "";
+  }
+  try {
+    const bytes = new Uint8Array(await file.slice(0, length).arrayBuffer());
+    let head = "";
+    for (const byte of bytes) {
+      head += String.fromCharCode(byte);
+    }
+    return head;
+  } catch {
+    return "";
+  }
+}
 
-export const TASK_EVIDENCE_REQUIRED_FIELD_LABELS = ["报关单号", "出口港口", "完成时间"] as const;
+/** 上传元数据里随文件上送的字段值（key 来自 spec，框架不含具体 key）。 */
+export type TaskEvidenceFieldValues = Readonly<Record<string, string>>;
 
-export function missingTaskEvidenceFieldLabels(values: TaskEvidenceFieldValues): readonly string[] {
+export const emptyTaskEvidenceFieldValues: TaskEvidenceFieldValues = {};
+
+/**
+ * 必填检查：文本/日期槽位按 key 检查字段值，文件槽位按上传结果检查。
+ * 标签直接使用凝结核配置提供的 label，框架不维护任何标签表。
+ */
+export function missingTaskEvidenceSlotLabels(
+  slots: readonly TaskEvidenceSlot[],
+  fieldValues: TaskEvidenceFieldValues,
+  uploadedSlotKeys: readonly string[]
+): readonly string[] {
+  const uploaded = new Set(uploadedSlotKeys);
   const missing: string[] = [];
-  if (!values.referenceNo.trim()) {
-    missing.push("报关单号");
-  }
-  if (!values.exportPort.trim()) {
-    missing.push("出口港口");
-  }
-  if (!values.completionDate.trim()) {
-    missing.push("完成时间");
+  for (const slot of slots) {
+    if (!slot.required) {
+      continue;
+    }
+    if (slot.inputKind === "file") {
+      if (!uploaded.has(slot.key)) {
+        missing.push(slot.label);
+      }
+      continue;
+    }
+    if (!(fieldValues[slot.key] ?? "").trim()) {
+      missing.push(slot.label);
+    }
   }
   return missing;
 }

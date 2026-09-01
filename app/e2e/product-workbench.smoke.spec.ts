@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { assertOrdinaryPageCopy } from "./product-assertions";
-import { installWorkbenchRoutes, STUB_API_BASE, stubZhixu, stubParticipant } from "./workbench-stubs";
+import { installWorkbenchRoutes, STUB_API_BASE, stubFallbackTask, stubZhixu, stubParticipant } from "./workbench-stubs";
 
 test.describe("Product Workbench browser smoke", () => {
   test("renders catalog, order, and task pages against stubbed product API", async ({ page }, testInfo) => {
@@ -70,22 +70,23 @@ test.describe("Product Workbench browser smoke", () => {
     await page.goto("/app");
     await page.getByRole("button", { name: /待办/ }).first().click();
     await expect(page.getByTestId("task-detail-page")).toBeVisible();
-    await expect(page.getByText("尚未上传凭证")).toBeVisible();
+    await expect(page.getByText("尚未上传「报关单 PDF」")).toBeVisible();
 
     // 未填必填字段时先拦截：凭证元数据会随上传进入指纹，缺字段不允许上传
-    await page.locator('input[type="file"]').setInputFiles({
+    await page.getByTestId("task-file-input-customs_declaration_pdf").setInputFiles({
       name: "出口报关单.pdf",
       mimeType: "application/pdf",
       buffer: Buffer.from("%PDF-1.4 e2e evidence")
     });
     await expect(page.getByText("请填写必填字段：报关单号、出口港口、完成时间")).toBeVisible();
-    await expect(page.getByText("尚未上传凭证")).toBeVisible();
+    await expect(page.getByText("尚未上传「报关单 PDF」")).toBeVisible();
 
-    await page.getByTestId("task-reference-no-input").fill("2026-001234");
-    await page.getByTestId("task-export-port-input").fill("洋山港");
-    await page.getByTestId("task-completion-date-input").fill("2026-08-01");
+    // 字段来自凝结核配置（演示配置数据），框架不预置任何业务字段
+    await page.getByTestId("task-field-customs_declaration_no").fill("2026-001234");
+    await page.getByTestId("task-field-export_port").fill("洋山港");
+    await page.getByTestId("task-field-completion_date").fill("2026-08-01");
 
-    await page.locator('input[type="file"]').setInputFiles({
+    await page.getByTestId("task-file-input-customs_declaration_pdf").setInputFiles({
       name: "出口报关单.pdf",
       mimeType: "application/pdf",
       buffer: Buffer.from("%PDF-1.4 e2e evidence")
@@ -93,7 +94,7 @@ test.describe("Product Workbench browser smoke", () => {
     await expect(page.getByText("凭证已上传，指纹已生成")).toBeVisible();
 
     await page.getByTestId("task-confirm-button").click();
-    await expect(page.getByRole("heading", { name: "确认报关完成 / 提交结果" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "确认阶段完成 / 提交结果" })).toBeVisible();
     await page.getByTestId("submit-confirm-button").click();
     // 无 ethereum provider 时必须 fail-closed：不生成提交记录
     await expect(page.getByText("请连接浏览器钱包后再确认提交")).toBeVisible();
@@ -101,30 +102,64 @@ test.describe("Product Workbench browser smoke", () => {
     await assertOrdinaryPageCopy(page);
   });
 
-  test("rejects non-PDF and oversized evidence files before upload", async ({ page }) => {
+  test("rejects non-PDF, forged-PDF and oversized evidence files before upload", async ({ page }) => {
     await installWorkbenchRoutes(page);
     await page.goto("/app");
     await page.getByRole("button", { name: /待办/ }).first().click();
     await expect(page.getByTestId("task-detail-page")).toBeVisible();
 
-    await page.getByTestId("task-reference-no-input").fill("2026-001234");
-    await page.getByTestId("task-export-port-input").fill("洋山港");
-    await page.getByTestId("task-completion-date-input").fill("2026-08-01");
+    await page.getByTestId("task-field-customs_declaration_no").fill("2026-001234");
+    await page.getByTestId("task-field-export_port").fill("洋山港");
+    await page.getByTestId("task-field-completion_date").fill("2026-08-01");
 
-    await page.locator('input[type="file"]').setInputFiles({
+    await page.getByTestId("task-file-input-customs_declaration_pdf").setInputFiles({
       name: "现场照片.jpg",
       mimeType: "image/jpeg",
       buffer: Buffer.from("not a pdf")
     });
     await expect(page.getByText("仅支持 PDF 格式的凭证文件")).toBeVisible();
 
-    await page.locator('input[type="file"]').setInputFiles({
+    // STORE-02：MIME/扩展名伪造绕不过 %PDF- 首字节快检
+    await page.getByTestId("task-file-input-customs_declaration_pdf").setInputFiles({
+      name: "伪造.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("MZ fake pdf content")
+    });
+    await expect(page.getByText(/文件内容不是有效的 PDF/)).toBeVisible();
+
+    await page.getByTestId("task-file-input-customs_declaration_pdf").setInputFiles({
       name: "超大报关单.pdf",
       mimeType: "application/pdf",
       buffer: Buffer.alloc(10 * 1024 * 1024 + 1, 0)
     });
     await expect(page.getByText("凭证文件超过 10MB，请压缩或拆分后再上传")).toBeVisible();
-    await expect(page.getByText("尚未上传凭证")).toBeVisible();
+    await expect(page.getByText("尚未上传「报关单 PDF」")).toBeVisible();
+  });
+
+  test("degrades spec-less tasks into a generic upload slot without rejecting declared evidence", async ({ page }) => {
+    await installWorkbenchRoutes(page, {
+      overrides: {
+        "/product/tasks": {
+          body: { tasks: [stubFallbackTask] }
+        }
+      }
+    });
+    await page.goto("/app");
+    await page.getByRole("button", { name: /待办/ }).first().click();
+    await expect(page.getByTestId("task-detail-page")).toBeVisible();
+
+    // 旧 requiredEvidence 字符串原样展示，不拒绝也不丢弃
+    await expect(page.getByText("本待办需要的凭证：质检单、物流回单")).toBeVisible();
+    await expect(page.getByText("本待办没有结构化证据配置")).toBeVisible();
+
+    // 通用槽位不限格式：商店不含任何业务格式特判
+    await page.getByTestId("task-file-input-task_evidence_generic").setInputFiles({
+      name: "回单.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("fallback slot accepts any file")
+    });
+    await expect(page.getByText("凭证已上传，指纹已生成")).toBeVisible();
+    await expect(page.getByTestId("product-workbench")).not.toHaveAttribute("data-uvp-evidence-id", "");
   });
 
   test("create-order form keeps unsaved values across view switches", async ({ page }) => {
