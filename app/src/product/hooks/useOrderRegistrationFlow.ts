@@ -25,7 +25,14 @@ export function useOrderRegistrationFlow(input: {
       const account = await requestWalletAccount();
       const prepared = await api.prepareOrderTrigger(currentDraft.draftId, { walletAddress: account.address });
       setRegisterDraftAction({ phase: "pending", message: "等待钱包授权", source: prepared.source });
-      const signature = await signTypedData(account, prepared.data.typedData);
+      // 与 executor-kit 同边界：签名前校验启动签名对象的 primaryType、domain 和 submitter。
+      const signature = await signTypedData(account, prepared.data.typedData, {
+        primaryType: "UVPStateMachineTriggerOrderFromOutside",
+        domainName: "UVPStateMachine",
+        domainVersion: "0.8",
+        submitter: account.address,
+        preparedSubmitters: [prepared.data.submitter]
+      });
       const result = await api.triggerOrder(currentDraft.draftId, {
         prepareId: prepared.data.prepareId,
         signature,

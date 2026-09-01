@@ -36,6 +36,11 @@ export interface ProductWorkbenchData {
   readonly activeTask?: ProductTaskDTO | undefined;
   readonly source: ProductApiSource;
   readonly syncState: ProductSyncState;
+  /**
+   * 加载过程中容忍的部分失败（如单个秩序详情 404）。
+   * 非空表示本次数据是降级结果，界面必须如实提示。
+   */
+  readonly diagnostics: readonly WorkbenchEndpointDiagnostic[];
 }
 
 export type ProductSyncState = "ready" | "syncing" | "fallback";
@@ -295,15 +300,22 @@ export interface ProductApiClient {
 
 export function createProductApiClient(): ProductApiClient {
   const baseUrl = normalizeBaseUrl(resolveFrontendApiBaseUrl(import.meta.env));
-  return new BrowserProductApiClient(baseUrl);
+  return new HttpProductApiClient(baseUrl);
 }
 
-class BrowserProductApiClient implements ProductApiClient {
+/**
+ * 生产与测试共用的 HTTP 客户端。
+ * fetchImpl 仅用于测试注入；生产代码必须使用默认的全局 fetch。
+ */
+export class HttpProductApiClient implements ProductApiClient {
   readonly baseUrl?: string | undefined;
 
-  constructor(baseUrl: string | undefined) {
+  constructor(baseUrl: string | undefined, options: { readonly fetchImpl?: typeof fetch } = {}) {
     this.baseUrl = baseUrl;
+    this.fetchImpl = options.fetchImpl ?? fetch.bind(globalThis);
   }
+
+  private readonly fetchImpl: typeof fetch;
 
   async loadWorkbenchData(): Promise<ProductWorkbenchData> {
     if (!this.baseUrl) {
@@ -313,7 +325,9 @@ class BrowserProductApiClient implements ProductApiClient {
     const zhixusResponse = await fetchJsonWithTimeout<{ readonly zhixus: readonly ZhixuSummaryDTO[] }>(
       this.baseUrl,
       "/product/zhixus",
-      UVP_WORKBENCH_FETCH_TIMEOUT_MS
+      UVP_WORKBENCH_FETCH_TIMEOUT_MS,
+      {},
+      this.fetchImpl
     );
     const visibleSummaries = zhixusResponse.zhixus.filter((zhixu) => zhixu.reviewStatus === "approved");
     const zhixuDetailAttempts = await Promise.all(
@@ -327,12 +341,12 @@ class BrowserProductApiClient implements ProductApiClient {
       { path: "/product/tasks", label: "tasks" }
     ] as const;
     const [ordersSettled, tasksSettled, meSettled] = await Promise.allSettled([
-      fetchJsonWithTimeout<{ readonly orders: readonly ProductOrderDTO[] }>(this.baseUrl, "/product/orders", UVP_WORKBENCH_FETCH_TIMEOUT_MS),
-      fetchJsonWithTimeout<{ readonly tasks: readonly ProductTaskDTO[] }>(this.baseUrl, "/product/tasks", UVP_WORKBENCH_FETCH_TIMEOUT_MS),
+      fetchJsonWithTimeout<{ readonly orders: readonly ProductOrderDTO[] }>(this.baseUrl, "/product/orders", UVP_WORKBENCH_FETCH_TIMEOUT_MS, {}, this.fetchImpl),
+      fetchJsonWithTimeout<{ readonly tasks: readonly ProductTaskDTO[] }>(this.baseUrl, "/product/tasks", UVP_WORKBENCH_FETCH_TIMEOUT_MS, {}, this.fetchImpl),
       fetchJsonWithTimeout<{
         readonly participant: ProductParticipantProfileDTO;
         readonly summary?: unknown;
-      }>(this.baseUrl, "/product/me", UVP_WORKBENCH_FETCH_TIMEOUT_MS)
+      }>(this.baseUrl, "/product/me", UVP_WORKBENCH_FETCH_TIMEOUT_MS, {}, this.fetchImpl)
     ]);
 
     const diagnostics = [
@@ -344,15 +358,13 @@ class BrowserProductApiClient implements ProductApiClient {
       ])
     ];
 
-    if (diagnostics.length > 0) {
-      const criticalFailed =
-        zhixuDetailAttempts.some(({ result }) => result.status === "rejected") ||
-        diagnostics.some((diag) =>
-          criticalEndpoints.some((endpoint) => endpoint.path === diag.endpoint)
-        );
-      if (criticalFailed) {
-        throw new WorkbenchLoadError(diagnostics, { kind: "real", baseUrl: this.baseUrl });
-      }
+    // 关键接口（orders/tasks）失败必须整体失败；
+    // 单个秩序详情失败只降级该秩序：进诊断信息，其余秩序、订单和待办保持可用。
+    const criticalFailed = diagnostics.some((diag) =>
+      criticalEndpoints.some((endpoint) => endpoint.path === diag.endpoint)
+    );
+    if (criticalFailed) {
+      throw new WorkbenchLoadError(diagnostics, { kind: "real", baseUrl: this.baseUrl });
     }
 
     const zhixus = zhixuDetailAttempts.flatMap(({ result }) =>
@@ -381,7 +393,8 @@ class BrowserProductApiClient implements ProductApiClient {
       order,
       activeTask,
       source: { kind: "real", baseUrl: this.baseUrl },
-      syncState: isSyncing(order, activeTask) ? "syncing" : "ready"
+      syncState: isSyncing(order, activeTask) ? "syncing" : "ready",
+      diagnostics
     };
   }
 
@@ -526,7 +539,9 @@ class BrowserProductApiClient implements ProductApiClient {
     }
     const response = await fetchJson<{ readonly zhixu: ZhixuDetailDTO }>(
       this.baseUrl,
-      `/product/zhixus/${encodeURIComponent(zhixuId)}`
+      `/product/zhixus/${encodeURIComponent(zhixuId)}`,
+      {},
+      this.fetchImpl
     );
     return response.zhixu;
   }
@@ -747,18 +762,23 @@ class ApiUnsupportedEndpointError extends ApiRequestError {
 }
 
 const UVP_WORKBENCH_FETCH_TIMEOUT_MS = Number(
-  import.meta.env.VITE_UVP_WORKBENCH_FETCH_TIMEOUT_MS
+  (import.meta.env ?? {})?.VITE_UVP_WORKBENCH_FETCH_TIMEOUT_MS
 ) || 6000;
 
 async function fetchJsonWithTimeout<TResponse>(
   baseUrl: string,
   pathname: string,
   timeoutMs: number,
-  init: { readonly method?: string; readonly body?: unknown } = {}
+  init: { readonly method?: string; readonly body?: unknown } = {},
+  fetchImpl: typeof fetch = fetch.bind(globalThis)
 ): Promise<TResponse> {
-  const fetchPromise = fetchJson<TResponse>(baseUrl, pathname, init);
+  const fetchPromise = fetchJson<TResponse>(baseUrl, pathname, init, fetchImpl);
   const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new ApiNetworkError(pathname, "请求超时", 0)), timeoutMs);
+    const timer = setTimeout(() => reject(new ApiNetworkError(pathname, "请求超时", 0)), timeoutMs);
+    // Node 测试环境（tsx --test）中避免未触发的超时定时器拖住进程退出；浏览器返回 number，无 unref。
+    if (typeof timer === "object" && timer !== null && "unref" in timer) {
+      timer.unref();
+    }
   });
   return await Promise.race([fetchPromise, timeoutPromise]);
 }
@@ -766,7 +786,8 @@ async function fetchJsonWithTimeout<TResponse>(
 async function fetchJson<TResponse>(
   baseUrl: string,
   pathname: string,
-  init: { readonly method?: string; readonly body?: unknown } = {}
+  init: { readonly method?: string; readonly body?: unknown } = {},
+  fetchImpl: typeof fetch = fetch.bind(globalThis)
 ): Promise<TResponse> {
   const headers = new Headers();
   let body: BodyInit | undefined;
@@ -778,7 +799,7 @@ async function fetchJson<TResponse>(
   }
   let response: Response;
   try {
-    response = await fetch(`${baseUrl}${pathname}`, {
+    response = await fetchImpl(`${baseUrl}${pathname}`, {
       method: init.method ?? "GET",
       headers,
       ...(body !== undefined ? { body } : {})

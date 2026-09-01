@@ -6,13 +6,15 @@ const port = process.env.UVP_PRODUCT_BROWSER_E2E_PORT ?? "4173";
 const runRoot = process.env.UVP_STORE_E2E_RUN_ROOT;
 const mode = process.env.UVP_PRODUCT_BROWSER_E2E_MODE ?? "fixture";
 const chainBackedMode = mode === "full" || mode === "base-sepolia" || mode === "testnet";
+// Store 访问级别按需注入（如 store_operator）：供试拼沙箱写路径 e2e 使用独立端口/profile 运行。
+const storeAccessLevel = process.env.UVP_PRODUCT_BROWSER_E2E_STORE_ACCESS_LEVEL;
 // fixture 模式：
 // - VITE_UVP_PRODUCT_E2E=1 仅用于开启 Store Console 的 e2e 观测桥；
 // - VITE_UVP_CHAIN_SERVICES_URL 指向不可达地址：任何未被打桩的请求立即网络失败
 //   （fail-closed），需要页面数据的用例通过 page.route 注入响应。
 const fixtureDevEnv = chainBackedMode
   ? ""
-  : `VITE_UVP_PRODUCT_E2E=1 VITE_UVP_CHAIN_SERVICES_URL=http://127.0.0.1:9 `;
+  : `VITE_UVP_PRODUCT_E2E=1 VITE_UVP_CHAIN_SERVICES_URL=http://127.0.0.1:9 ${storeAccessLevel ? `VITE_UVP_STORE_ACCESS_LEVEL=${storeAccessLevel} ` : ""}`;
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://${host}:${port}`;
 const htmlReportDir = process.env.PLAYWRIGHT_HTML_REPORT ??
   (runRoot ? resolve(runRoot, "playwright-report") : "playwright-report");

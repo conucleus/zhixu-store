@@ -195,10 +195,20 @@ export const stubPreparedSubmit = {
     submitter: "0xabc0000000000000000000000000000000000001",
     validUntil: "2026-01-01T01:00:00.000Z"
   },
+  // 与 protocol-bindings buildProductSubmitTypedData 的真实结构一致：
+  // 前端签名前会校验 primaryType/domain/submitter，桩数据必须能通过校验。
   typedData: {
-    domain: { name: "UVP Product Workbench", version: "1", chainId: 31337 },
-    primaryType: "ProductTaskSubmit",
-    message: {}
+    domain: {
+      name: "UVPStateMachine",
+      version: "0.8",
+      chainId: 31337,
+      verifyingContract: "0x0000000000000000000000000000000000000001"
+    },
+    types: { UVPStateMachineSignal: [] },
+    primaryType: "UVPStateMachineSignal",
+    message: {
+      submitter: "0xabc0000000000000000000000000000000000001"
+    }
   }
 };
 
@@ -224,7 +234,10 @@ export interface WorkbenchStubOptions {
 }
 
 function matchOverride(pathname: string, overrides: WorkbenchStubOptions["overrides"]): RouteOverride | undefined {
-  for (const [prefix, override] of Object.entries(overrides ?? {})) {
+  const entries = Object.entries(overrides ?? {});
+  // 最长前缀优先："/product/zhixus/<id>" 的覆盖不会被子列表前缀 "/product/zhixus" 抢先匹配
+  entries.sort(([left], [right]) => right.length - left.length);
+  for (const [prefix, override] of entries) {
     if (pathname === prefix || pathname.startsWith(`${prefix}/`)) {
       return override;
     }
@@ -288,9 +301,17 @@ export async function installWorkbenchRoutes(page: Page, options: WorkbenchStubO
           expiresAt: "2026-01-01T01:00:00.000Z",
           submitter: "0xabc0000000000000000000000000000000000001",
           typedData: {
-            domain: { name: "UVPStateMachine", version: "0.8", chainId: 31337 },
+            domain: {
+              name: "UVPStateMachine",
+              version: "0.8",
+              chainId: 31337,
+              verifyingContract: "0x0000000000000000000000000000000000000001"
+            },
+            types: { UVPStateMachineTriggerOrderFromOutside: [] },
             primaryType: "UVPStateMachineTriggerOrderFromOutside",
-            message: {}
+            message: {
+              submitter: "0xabc0000000000000000000000000000000000001"
+            }
           }
         }
       });

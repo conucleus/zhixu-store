@@ -31,7 +31,7 @@ test.describe("Product Workbench browser smoke", () => {
     await assertOrdinaryPageCopy(page);
 
     await page.getByRole("button", { name: /待办/ }).first().click();
-    await expect(page.getByRole("heading", { name: "上传报关凭证" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "上传阶段凭证" })).toBeVisible();
     await expect(page.getByTestId("task-confirm-button")).toBeDisabled();
     // 身份来自 /product/me 桩，页面展示确认后的身份而不是反推文案
     await expect(page.getByText("测试报关行操作员").first()).toBeVisible();
@@ -72,6 +72,19 @@ test.describe("Product Workbench browser smoke", () => {
     await expect(page.getByTestId("task-detail-page")).toBeVisible();
     await expect(page.getByText("尚未上传凭证")).toBeVisible();
 
+    // 未填必填字段时先拦截：凭证元数据会随上传进入指纹，缺字段不允许上传
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "出口报关单.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("%PDF-1.4 e2e evidence")
+    });
+    await expect(page.getByText("请填写必填字段：报关单号、出口港口、完成时间")).toBeVisible();
+    await expect(page.getByText("尚未上传凭证")).toBeVisible();
+
+    await page.getByTestId("task-reference-no-input").fill("2026-001234");
+    await page.getByTestId("task-export-port-input").fill("洋山港");
+    await page.getByTestId("task-completion-date-input").fill("2026-08-01");
+
     await page.locator('input[type="file"]').setInputFiles({
       name: "出口报关单.pdf",
       mimeType: "application/pdf",
@@ -86,6 +99,117 @@ test.describe("Product Workbench browser smoke", () => {
     await expect(page.getByText("请连接浏览器钱包后再确认提交")).toBeVisible();
     await expect(page.getByText(/提交记录待创建/)).toBeVisible();
     await assertOrdinaryPageCopy(page);
+  });
+
+  test("rejects non-PDF and oversized evidence files before upload", async ({ page }) => {
+    await installWorkbenchRoutes(page);
+    await page.goto("/app");
+    await page.getByRole("button", { name: /待办/ }).first().click();
+    await expect(page.getByTestId("task-detail-page")).toBeVisible();
+
+    await page.getByTestId("task-reference-no-input").fill("2026-001234");
+    await page.getByTestId("task-export-port-input").fill("洋山港");
+    await page.getByTestId("task-completion-date-input").fill("2026-08-01");
+
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "现场照片.jpg",
+      mimeType: "image/jpeg",
+      buffer: Buffer.from("not a pdf")
+    });
+    await expect(page.getByText("仅支持 PDF 格式的凭证文件")).toBeVisible();
+
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "超大报关单.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.alloc(10 * 1024 * 1024 + 1, 0)
+    });
+    await expect(page.getByText("凭证文件超过 10MB，请压缩或拆分后再上传")).toBeVisible();
+    await expect(page.getByText("尚未上传凭证")).toBeVisible();
+  });
+
+  test("create-order form keeps unsaved values across view switches", async ({ page }) => {
+    await installWorkbenchRoutes(page);
+    await page.goto("/app");
+    await page.getByRole("button", { name: "查看秩序库" }).click();
+    await page.getByRole("button", { name: "查看秩序详情" }).first().click();
+    await page.getByTestId("zhixu-create-order-button").click();
+    await expect(page.getByRole("heading", { name: "创建跨境订单" })).toBeVisible();
+
+    await page.getByLabel(/订单名称/).fill("切换视图不丢字段订单");
+    await page.getByRole("button", { name: "车辆" }).click();
+    await page.getByLabel(/^品牌型号/).fill("Persisted Model X");
+    await page.getByLabel(/数量/).fill("3");
+    await page.getByLabel(/VIN/).fill("LVG123456789012345");
+    await page.getByLabel(/备注/).fill("视图切换前录入的备注");
+
+    // 切走再切回：组件被卸载重建，未保存的输入必须保留
+    await page.getByRole("button", { name: /^订单$/ }).click();
+    await expect(page.getByRole("heading", { name: /测试采购订单/ })).toBeVisible();
+    await page.getByRole("button", { name: "秩序库" }).click();
+    await page.getByRole("button", { name: "查看秩序详情" }).first().click();
+    await page.getByTestId("zhixu-create-order-button").click();
+    await expect(page.getByRole("heading", { name: "创建跨境订单" })).toBeVisible();
+
+    await expect(page.getByLabel(/订单名称/)).toHaveValue("切换视图不丢字段订单");
+    await expect(page.getByRole("button", { name: "车辆" })).toHaveClass(/is-active/);
+    await expect(page.getByLabel(/^品牌型号/)).toHaveValue("Persisted Model X");
+    await expect(page.getByLabel(/数量/)).toHaveValue("3");
+    await expect(page.getByLabel(/VIN/)).toHaveValue("LVG123456789012345");
+    await expect(page.getByLabel(/备注/)).toHaveValue("视图切换前录入的备注");
+  });
+
+  test("dispute page presents the unopened channel honestly without fabricated SLA steps", async ({ page }) => {
+    await installWorkbenchRoutes(page);
+    await page.goto("/app");
+    await page.getByRole("button", { name: /^订单$/ }).click();
+    await expect(page.getByRole("heading", { name: /测试采购订单/ })).toBeVisible();
+    await page.getByRole("button", { name: "提出争议" }).first().click();
+    await expect(page.getByRole("heading", { name: /对出口报关凭证提出争议/ })).toBeVisible();
+
+    // 未接入的事实必须如实呈现
+    await expect(page.getByTestId("dispute-channel-status")).toBeVisible();
+    await expect(page.getByText("争议提交通道尚未开通").first()).toBeVisible();
+    const bodyText = await page.locator("body").innerText();
+    expect(bodyText).not.toContain("平台已通知");
+    expect(bodyText).not.toContain("平台裁定");
+    expect(bodyText).not.toContain("个工作日");
+    expect(bodyText).not.toContain("争议处理时间线");
+
+    // 提交仍 fail-closed：不产生任何记录
+    await page.getByRole("button", { name: "提交争议" }).click();
+    await expect(page.locator(".action-notice.error")).toContainText("争议提交未接入后端，未产生任何记录");
+  });
+
+  test("keeps the workbench usable when one zhixu detail fails while others succeed", async ({ page }) => {
+    const zhixuB = { ...stubZhixu, zhixuId: "zhixu-cross-border-high-value-b", title: "备用履约秩序" };
+    await installWorkbenchRoutes(page, {
+      overrides: {
+        // 失败的秩序详情 404；存活的详情显式给桩，避免被列表前缀覆盖
+        "/product/zhixus/zhixu-cross-border-high-value-b": {
+          status: 404,
+          body: { error: "not_found" }
+        },
+        "/product/zhixus/zhixu-cross-border-high-value": {
+          body: { zhixu: stubZhixu }
+        },
+        "/product/zhixus": {
+          body: {
+            zhixus: [stubZhixu, zhixuB]
+          }
+        }
+      }
+    });
+    await page.goto("/app");
+
+    // 整体不进入诊断错误页：待办、订单仍然可用
+    await expect(page.getByTestId("participant-app-page")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "我的待办" })).toBeVisible();
+    await expect(page.getByText(/1 个接口加载失败/)).toBeVisible();
+
+    // 存活的秩序详情仍可打开
+    await page.getByRole("button", { name: "查看秩序库" }).click();
+    await expect(page.getByRole("heading", { name: /跨境高价值货物/ })).toBeVisible();
+    await expect(page.getByText("备用履约秩序")).toHaveCount(0);
   });
 
   test("shows diagnostic panel when /product/tasks returns 500 and /product/me 403", async ({ page }) => {

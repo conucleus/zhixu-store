@@ -57,7 +57,6 @@ import {
 } from "./product/api";
 import {
   emptyOrderDraftFormValues,
-  orderDraftFormValuesFromDraft,
   useOrderDraftFlow,
   type OrderDraftFormValues
 } from "./product/hooks/useOrderDraftFlow";
@@ -65,6 +64,10 @@ import { useOrderRegistrationFlow } from "./product/hooks/useOrderRegistrationFl
 import { useProductWorkbenchData } from "./product/hooks/useProductWorkbenchData";
 import { useTaskSubmissionFlow } from "./product/hooks/useTaskSubmissionFlow";
 import { idleAction, type ActionState, type ProductView, type SubmitMachineState, type SubmitMachineStatus } from "./product/hooks/workbenchTypes";
+import {
+  emptyTaskEvidenceFieldValues,
+  type TaskEvidenceFieldValues
+} from "./product/hooks/workbenchSupport";
 import { shortHash } from "./shared/frontend";
 
 export function ProductWorkbenchApp() {
@@ -72,6 +75,10 @@ export function ProductWorkbenchApp() {
   const { loadState, reload: reloadWorkbench } = useProductWorkbenchData(api);
   const [view, setView] = useState<ProductView>("app");
   const [proofOpen, setProofOpen] = useState(false);
+  // 订单信息与待办凭证表单状态提升到本组件：视图切换会卸载页面组件，
+  // 未保存的用户输入不能因为切换视图被静默清空。
+  const [draftFormValues, setDraftFormValues] = useState<OrderDraftFormValues>(emptyOrderDraftFormValues);
+  const [taskEvidenceFields, setTaskEvidenceFields] = useState<TaskEvidenceFieldValues>(emptyTaskEvidenceFieldValues);
 
   const activeNav = useMemo(() => {
     if (view === "app") {
@@ -268,15 +275,15 @@ export function ProductWorkbenchApp() {
     >
       <TopNav active={activeNav} onGo={setView} participantName={data?.participant?.displayName} openTaskCount={data ? data.tasks.filter((task) => task.status === "open").length : undefined} />
       <main className="product-main">
-        <RuntimeBanner syncing={data.syncState === "syncing"} />
+        <RuntimeBanner syncing={data.syncState === "syncing"} degradedCount={data.diagnostics.length} />
         {loadState.status === "empty" ? <EmptyCatalogPage /> : null}
         {loadState.status === "ready" && view === "app" ? <ParticipantAppPage data={data} onCatalog={() => setView("home")} onViewDetail={() => setView("zhixu")} onCreate={() => setView("create")} onOrder={() => setView("order")} onTask={() => setView("task")} /> : null}
         {loadState.status === "ready" && view === "home" && selectedZhixu ? <CatalogPage zhixu={selectedZhixu} order={selectedOrder} task={activeTask} onViewDetail={() => setView("zhixu")} onCreate={() => setView("create")} onOrder={() => setView("order")} onTask={() => setView("task")} /> : null}
         {loadState.status === "ready" && view === "zhixu" && selectedZhixu ? <ZhixuDetailPage zhixu={selectedZhixu} onBack={() => setView("home")} onCreate={() => setView("create")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : null}
-        {loadState.status === "ready" && view === "create" && selectedZhixu ? <CreateOrderPage zhixu={selectedZhixu} draft={draft} createAction={draftAction} saveAction={saveDraftAction} onBack={() => setView("zhixu")} onCreate={(values) => void handleCreateDraft(values)} onSave={(values) => void handleSaveDraft(values)} onNext={handleNextParticipants} /> : null}
+        {loadState.status === "ready" && view === "create" && selectedZhixu ? <CreateOrderPage zhixu={selectedZhixu} draft={draft} createAction={draftAction} saveAction={saveDraftAction} values={draftFormValues} onValuesChange={(patch) => setDraftFormValues((current) => ({ ...current, ...patch }))} onBack={() => setView("zhixu")} onCreate={(values) => void handleCreateDraft(values)} onSave={(values) => void handleSaveDraft(values)} onNext={handleNextParticipants} /> : null}
         {loadState.status === "ready" && view === "participants" ? <ParticipantsPage order={selectedOrder} draft={draft} draftParticipants={draftParticipants} inviteActions={inviteActions} registerAction={registerDraftAction} onBack={() => setView("create")} onInvite={handleSendInvite} onRegister={handleRegisterDraft} onOrder={() => setView("order")} /> : null}
         {loadState.status === "ready" && view === "order" ? selectedOrder ? <OrderOverviewPage order={selectedOrder} syncing={data.syncState === "syncing" || registerDraftAction.phase === "success"} onBack={() => setView("home")} onTask={() => setView("task")} onDispute={() => setView("dispute")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : <EmptyState title="暂无进行中订单" desc="创建并启动订单后，这里会展示订单总览、当前待办和最近事件。" /> : null}
-        {loadState.status === "ready" && view === "task" ? activeTask ? <TaskPage task={activeTask} evidence={evidence} evidenceProof={evidenceProof} uploadAction={evidenceAction} onBack={() => setView("order")} onUpload={(file) => void handleUploadEvidence(file)} onSubmit={() => setView("submit")} onDispute={() => setView("dispute")} /> : <EmptyState title="暂无待办" desc="当前没有需要你处理的任务。" /> : null}
+        {loadState.status === "ready" && view === "task" ? activeTask ? <TaskPage task={activeTask} evidence={evidence} evidenceProof={evidenceProof} uploadAction={evidenceAction} fieldValues={taskEvidenceFields} onFieldValuesChange={(patch) => setTaskEvidenceFields((current) => ({ ...current, ...patch }))} onBack={() => setView("order")} onUpload={(file) => void handleUploadEvidence(file, taskEvidenceFields)} onSubmit={() => setView("submit")} onDispute={() => setView("dispute")} /> : <EmptyState title="暂无待办" desc="当前没有需要你处理的任务。" /> : null}
         {loadState.status === "ready" && view === "submit" ? activeTask ? <SubmitPage task={activeTask} evidence={evidence} submitMachine={submitMachine} onBack={() => setView("task")} onSubmit={() => void handleConfirmSubmit()} onOrder={() => setView("order")} /> : <EmptyState title="暂无可提交的待办" desc="待办完成凭证上传后，可在这里确认提交。" /> : null}
         {loadState.status === "ready" && view === "dispute" ? activeTask ? <DisputePage task={activeTask} action={disputeAction} onBack={() => setView("order")} onSave={handleDisputeSave} /> : <EmptyState title="暂无可争议事项" desc="订单出现可处理待办后，可以补充争议材料。" /> : null}
       </main>
@@ -651,6 +658,8 @@ function CreateOrderPage({
   draft,
   createAction,
   saveAction,
+  values,
+  onValuesChange,
   onBack,
   onCreate,
   onSave,
@@ -660,43 +669,14 @@ function CreateOrderPage({
   draft?: ProductOrderDraftDTO | undefined;
   createAction: ActionState;
   saveAction: ActionState;
+  values: OrderDraftFormValues;
+  onValuesChange: (patch: Partial<OrderDraftFormValues>) => void;
   onBack: () => void;
   onCreate: (values: OrderDraftFormValues) => void;
   onSave: (values: OrderDraftFormValues) => void;
   onNext: () => void;
 }) {
   const canCreate = zhixu.reviewStatus === "approved";
-  const initialValues = useMemo(
-    () => (draft ? orderDraftFormValuesFromDraft(draft) : emptyOrderDraftFormValues),
-    [draft]
-  );
-  const [title, setTitle] = useState(initialValues.title);
-  const [businessType, setBusinessType] = useState(initialValues.businessType);
-  const [brandModel, setBrandModel] = useState(initialValues.brandModel);
-  const [quantity, setQuantity] = useState(initialValues.quantity);
-  const [vin, setVin] = useState(initialValues.vin);
-  const [totalAmount, setTotalAmount] = useState(initialValues.totalAmount);
-  const [currency, setCurrency] = useState(initialValues.currency);
-  const [exportRegion, setExportRegion] = useState(initialValues.exportRegion);
-  const [destinationRegion, setDestinationRegion] = useState(initialValues.destinationRegion);
-  const [expectedCompletionDate, setExpectedCompletionDate] = useState(initialValues.expectedCompletionDate);
-  const [notes, setNotes] = useState(initialValues.notes);
-
-  function currentValues(): OrderDraftFormValues {
-    return {
-      title,
-      businessType,
-      brandModel,
-      quantity,
-      vin,
-      totalAmount,
-      currency,
-      exportRegion,
-      destinationRegion,
-      expectedCompletionDate,
-      notes
-    };
-  }
 
   return (
     <section className="page-shell" data-testid="create-order-page">
@@ -708,22 +688,22 @@ function CreateOrderPage({
         <Panel>
           <h2>订单信息</h2>
           <div className="form-grid">
-            <Field label="订单名称" required value={title} onChange={setTitle} placeholder="请输入订单名称" />
+            <Field label="订单名称" required value={values.title} onChange={(title) => onValuesChange({ title })} placeholder="请输入订单名称" />
             <ChoiceGroup
               label="标的物类型"
               options={[...BUSINESS_TYPE_OPTIONS]}
-              active={businessType}
-              onSelect={setBusinessType}
+              active={values.businessType}
+              onSelect={(businessType) => onValuesChange({ businessType })}
             />
-            <Field label="VIN" value={vin} onChange={setVin} placeholder="请输入 VIN（选填）" />
-            <Field label="品牌型号" required value={brandModel} onChange={setBrandModel} placeholder="请输入品牌型号" />
-            <Field label="数量" value={quantity} onChange={setQuantity} suffix="台" placeholder="请输入数量" />
-            <Field label="总金额" required value={totalAmount} onChange={setTotalAmount} placeholder="请输入总金额" />
-            <SelectField label="币种" required value={currency} onChange={setCurrency} options={[...new Set([currency.trim(), ...zhixu.supportedPaymentMethods].filter((item) => item.length > 0))]} />
-            <Field label="出口国家/地区" required value={exportRegion} onChange={setExportRegion} placeholder="请输入出口国家/地区" />
-            <Field label="目的国家/地区" required value={destinationRegion} onChange={setDestinationRegion} placeholder="请输入目的国家/地区" />
-            <Field label="预计完成日期" required type="date" value={expectedCompletionDate} onChange={setExpectedCompletionDate} icon={<CalendarDays />} />
-            <Textarea label="备注" value={notes} onChange={setNotes} placeholder="请输入备注（如有特殊说明可在此填写）" />
+            <Field label="VIN" value={values.vin} onChange={(vin) => onValuesChange({ vin })} placeholder="请输入 VIN（选填）" />
+            <Field label="品牌型号" required value={values.brandModel} onChange={(brandModel) => onValuesChange({ brandModel })} placeholder="请输入品牌型号" />
+            <Field label="数量" value={values.quantity} onChange={(quantity) => onValuesChange({ quantity })} suffix="台" placeholder="请输入数量" />
+            <Field label="总金额" required value={values.totalAmount} onChange={(totalAmount) => onValuesChange({ totalAmount })} placeholder="请输入总金额" />
+            <SelectField label="币种" required value={values.currency} onChange={(currency) => onValuesChange({ currency })} options={[...new Set([values.currency.trim(), ...zhixu.supportedPaymentMethods].filter((item) => item.length > 0))]} />
+            <Field label="出口国家/地区" required value={values.exportRegion} onChange={(exportRegion) => onValuesChange({ exportRegion })} placeholder="请输入出口国家/地区" />
+            <Field label="目的国家/地区" required value={values.destinationRegion} onChange={(destinationRegion) => onValuesChange({ destinationRegion })} placeholder="请输入目的国家/地区" />
+            <Field label="预计完成日期" required type="date" value={values.expectedCompletionDate} onChange={(expectedCompletionDate) => onValuesChange({ expectedCompletionDate })} icon={<CalendarDays />} />
+            <Textarea label="备注" value={values.notes} onChange={(notes) => onValuesChange({ notes })} placeholder="请输入备注（如有特殊说明可在此填写）" />
           </div>
         </Panel>
         <aside className="side-card">
@@ -740,8 +720,8 @@ function CreateOrderPage({
       </div>
       <BottomActions>
         <button className="secondary-button" onClick={onBack}>上一步</button>
-        <button className="secondary-button" data-testid="save-draft-button" onClick={() => onSave(currentValues())} disabled={!canCreate || !draft || saveAction.phase === "pending"}>{saveAction.phase === "pending" ? <Loader2 className="spin" /> : null}保存草稿</button>
-        <button className="secondary-button" data-testid="create-draft-button" onClick={() => onCreate(currentValues())} disabled={!canCreate || createAction.phase === "pending"}>{createAction.phase === "pending" ? <Loader2 className="spin" /> : null}{draft ? "重新创建草稿" : "创建订单"}</button>
+        <button className="secondary-button" data-testid="save-draft-button" onClick={() => onSave(values)} disabled={!canCreate || !draft || saveAction.phase === "pending"}>{saveAction.phase === "pending" ? <Loader2 className="spin" /> : null}保存草稿</button>
+        <button className="secondary-button" data-testid="create-draft-button" onClick={() => onCreate(values)} disabled={!canCreate || createAction.phase === "pending"}>{createAction.phase === "pending" ? <Loader2 className="spin" /> : null}{draft ? "重新创建草稿" : "创建订单"}</button>
         <button className="primary-button" data-testid="next-participants-button" onClick={onNext} disabled={!canCreate || createAction.phase === "pending"}>下一步</button>
       </BottomActions>
     </section>
@@ -934,6 +914,8 @@ function TaskPage({
   evidence,
   evidenceProof,
   uploadAction,
+  fieldValues,
+  onFieldValuesChange,
   onBack,
   onUpload,
   onSubmit,
@@ -943,6 +925,8 @@ function TaskPage({
   evidence?: EvidenceObjectDTO | undefined;
   evidenceProof?: EvidenceProofDTO | undefined;
   uploadAction: ActionState;
+  fieldValues: TaskEvidenceFieldValues;
+  onFieldValuesChange: (patch: Partial<TaskEvidenceFieldValues>) => void;
   onBack: () => void;
   onUpload: (file: File) => void;
   onSubmit: () => void;
@@ -953,6 +937,7 @@ function TaskPage({
     if (file) {
       onUpload(file);
     }
+    event.currentTarget.value = "";
   }
 
   return (
@@ -968,13 +953,13 @@ function TaskPage({
       </div>
       <div className="content-layout">
         <Panel>
-          <h2>上传报关凭证</h2>
-          <p>请上传报关单 PDF，并填写以下信息。</p>
+          <h2>上传阶段凭证</h2>
+          <p>本待办需要的凭证：{task.requiredEvidence.join("、")}。请上传对应文件并填写以下信息。</p>
           <label className="upload-zone">
             <UploadCloud />
             <strong>将文件拖拽到此处，或点击选择文件</strong>
-            <span>仅支持 PDF 格式，单个文件不超过 50MB</span>
-            <input className="sr-only" type="file" accept=".pdf,.jpg,.jpeg,.png,.json,application/pdf,image/*,application/json" onChange={handleFileChange} />
+            <span>仅支持 PDF 格式，单个文件不超过 10MB</span>
+            <input className="sr-only" type="file" accept="application/pdf,.pdf" onChange={handleFileChange} />
           </label>
           <ActionNotice state={uploadAction} />
           {evidence ? (
@@ -990,23 +975,23 @@ function TaskPage({
             <InlineEmpty text="尚未上传凭证" />
           )}
           <div className="two-col">
-            <Field label="填写报关单号" required placeholder="请输入报关单号" />
-            <SelectField label="选择出口港口" required value="请选择出口港口" />
-            <Field label="填写完成时间" required value="选择完成时间" icon={<CalendarDays />} />
+            <Field label="填写报关单号" required value={fieldValues.referenceNo} onChange={(referenceNo) => onFieldValuesChange({ referenceNo })} placeholder="请输入报关单号" testId="task-reference-no-input" />
+            <Field label="选择出口港口" required value={fieldValues.exportPort} onChange={(exportPort) => onFieldValuesChange({ exportPort })} placeholder="请输入出口港口" testId="task-export-port-input" />
+            <Field label="填写完成时间" required type="date" value={fieldValues.completionDate} onChange={(completionDate) => onFieldValuesChange({ completionDate })} icon={<CalendarDays />} testId="task-completion-date-input" />
           </div>
-          <Textarea label="备注（选填）" placeholder="请输入备注信息（如有特殊说明可在此填写）" />
+          <Textarea label="备注（选填）" value={fieldValues.notes} onChange={(notes) => onFieldValuesChange({ notes })} placeholder="请输入备注信息（如有特殊说明可在此填写）" />
         </Panel>
         <aside className="side-card">
           <h2>责任确认</h2>
           {task.responsibilityStatements.map((statement) => (
             <CheckStatement key={statement.title} title={statement.title} desc={statement.desc} />
           ))}
-          <button className={evidence ? "primary-button block" : "disabled-button block"} data-testid="task-confirm-button" onClick={evidence ? onSubmit : undefined} disabled={!evidence}>确认报关完成</button>
+          <button className={evidence ? "primary-button block" : "disabled-button block"} data-testid="task-confirm-button" onClick={evidence ? onSubmit : undefined} disabled={!evidence}>确认阶段完成</button>
           <div className="split-actions">
             <button className="secondary-button" onClick={onDispute}>无法完成</button>
             <button className="secondary-button" onClick={onDispute}>提出争议</button>
           </div>
-          <p className="side-note"><HelpCircle /> 如需帮助，请联系平台运营或查看帮助中心。</p>
+          <p className="side-note"><HelpCircle /> 如需帮助，请查看帮助中心。</p>
         </aside>
       </div>
     </section>
@@ -1116,7 +1101,7 @@ function DisputePage({
     <section className="page-shell">
       <BackLine onClick={onBack}>返回订单</BackLine>
       <h1>对{task.stageName}凭证提出争议</h1>
-      <p className="page-subtitle">当您认为“{task.stageName}”凭证存在问题时，可发起争议。发起后将进入争议处理，由平台裁定并同步双方。</p>
+      <p className="page-subtitle">当您认为“{task.stageName}”凭证存在问题时，可以先在这里记录争议说明。当前版本的争议提交通道尚未开通，提交不会产生任何记录，也不会通知对方或进入裁定流程。</p>
       <div className="dispute-grid">
         <Panel>
           <h2>争议信息</h2>
@@ -1139,34 +1124,44 @@ function DisputePage({
         </Panel>
       </div>
       <Panel>
-        <h2>争议处理时间线</h2>
-        <div className="dispute-timeline">
-          {["提出争议", "等待对方回应", "补充凭证", "裁定中", "已处理"].map((label, index) => (
-            <div className={`dispute-step ${index === 0 ? "is-current" : ""}`} key={label}>
-              <span>{index + 1}</span>
-              <strong>{label}</strong>
-              <p>{index === 0 ? "您已提交争议，等待对方回应" : index === 1 ? "平台已通知报关行，请在 2 个工作日内回应" : index === 2 ? "如有需要，双方可补充凭证" : index === 3 ? "平台裁定并通知双方，预计 1-3 个工作日" : "争议已完成并归档"}</p>
-            </div>
-          ))}
+        <h2>争议处理状态</h2>
+        <div className="state-panel warning" data-testid="dispute-channel-status">
+          <span><AlertTriangle /></span>
+          <div>
+            <h2>争议提交通道尚未开通</h2>
+            <p>当前版本未接入后端争议处理：提交争议不会创建任何记录，也不存在对方回应或裁定的时间承诺。如需协商，请先通过订单房间与对方沟通，待通道开通后再正式提交。</p>
+          </div>
         </div>
       </Panel>
     </section>
   );
 }
 
-function RuntimeBanner({ syncing }: { syncing: boolean }) {
-  if (!syncing) {
-    return null;
-  }
-  return (
-    <div className="runtime-banner is-syncing">
-      <RefreshCw className="spin" />
-      <div>
-        <strong>订单状态同步中</strong>
-        <p>后端正在同步最新确认结果，页面会展示当前可用状态。</p>
+function RuntimeBanner({ syncing, degradedCount = 0 }: { syncing: boolean; degradedCount?: number | undefined }) {
+  if (syncing) {
+    return (
+      <div className="runtime-banner is-syncing">
+        <RefreshCw className="spin" />
+        <div>
+          <strong>订单状态同步中</strong>
+          <p>后端正在同步最新确认结果，页面会展示当前可用状态。</p>
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
+  if (degradedCount > 0) {
+    // 部分接口失败但整体可用：如实提示降级，不装作数据完整。
+    return (
+      <div className="runtime-banner is-mock" data-testid="workbench-degraded-banner">
+        <AlertTriangle />
+        <div>
+          <strong>部分接口返回异常</strong>
+          <p>{degradedCount} 个接口加载失败，相关秩序或列表可能暂不可用；其余功能不受影响，可稍后重新加载。</p>
+        </div>
+      </div>
+    );
+  }
+  return null;
 }
 
 function EmptyCatalogPage() {
@@ -1379,7 +1374,8 @@ function Field({
   suffix,
   placeholder,
   type,
-  icon
+  icon,
+  testId
 }: {
   label: string;
   value?: string | undefined;
@@ -1389,6 +1385,7 @@ function Field({
   placeholder?: string | undefined;
   type?: "text" | "date" | undefined;
   icon?: ReactNode | undefined;
+  testId?: string | undefined;
 }) {
   const controlled = Boolean(onChange);
   return (
@@ -1399,6 +1396,7 @@ function Field({
           type={type}
           {...(controlled ? { value: value ?? "", onChange: (event) => onChange?.(event.currentTarget.value) } : { defaultValue: value })}
           placeholder={placeholder}
+          {...(testId ? { "data-testid": testId } : {})}
         />
         {suffix ? <b>{suffix}</b> : null}
         {icon ? <i>{icon}</i> : null}
