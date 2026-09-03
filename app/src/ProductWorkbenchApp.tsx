@@ -78,7 +78,8 @@ import { shortHash } from "./shared/frontend";
 
 export function ProductWorkbenchApp() {
   const api = useMemo(() => createProductApiClient(), []);
-  const { loadState, reload: reloadWorkbench } = useProductWorkbenchData(api);
+  // reload：诊断页手动重试（整页回到加载态）；refresh：mutation 成功后的定向刷新（原地更新，失败保留现数据）。
+  const { loadState, reload: reloadWorkbench, refresh: refreshWorkbench } = useProductWorkbenchData(api);
   const [view, setView] = useState<ProductView>("app");
   const [proofOpen, setProofOpen] = useState(false);
   // 每张待办卡片携带自己的 taskId：这里记录选中的任务，未选中时回退到投影的 activeTask。
@@ -111,7 +112,7 @@ export function ProductWorkbenchApp() {
   const selectedZhixu = data?.zhixu;
   const selectedOrder = data?.order;
   const activeTask = resolveWorkbenchTask(data?.tasks ?? [], selectedTaskId, data?.activeTask);
-  const draftFlow = useOrderDraftFlow({ api, selectedZhixu });
+  const draftFlow = useOrderDraftFlow({ api, selectedZhixu, onMutationSuccess: refreshWorkbench });
   const {
     draft,
     draftParticipants,
@@ -128,6 +129,7 @@ export function ProductWorkbenchApp() {
     ensureDraft,
     onRegistered: (nextDraft) => {
       draftFlow.setDraft(nextDraft);
+      void refreshWorkbench();
       window.setTimeout(() => setView("order"), 500);
     }
   });
@@ -142,7 +144,7 @@ export function ProductWorkbenchApp() {
     handleUploadEvidence,
     handleConfirmSubmit,
     handleDisputeSave
-  } = useTaskSubmissionFlow({ api, activeTask, fieldValues: taskEvidenceFields });
+  } = useTaskSubmissionFlow({ api, activeTask, fieldValues: taskEvidenceFields, onMutationSuccess: refreshWorkbench });
   const firstEvidence = Object.values(evidenceBySlot)[0];
   // 提交门槛：必填证据槽位全部满足（文件已上传或该任务没有文件要求）即可提交；
   // 纯 text/date 或无槽位任务允许零上传的纯字段确认提交。

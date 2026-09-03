@@ -17,6 +17,12 @@ export type ProductWorkbenchLoadState =
 export function useProductWorkbenchData(api: ProductApiClient): {
   readonly loadState: ProductWorkbenchLoadState;
   readonly reload: () => Promise<void>;
+  /**
+   * 定向刷新：mutation 成功后原地重新拉取投影。
+   * 成功时原地更新数据；失败时保留最后一次成功加载的数据（不把用户打回加载/诊断态），
+   * 因此只会在成功回调里触发一次，不会形成循环。
+   */
+  readonly refresh: () => Promise<void>;
 } {
   const [loadState, setLoadState] = useState<ProductWorkbenchLoadState>({ status: "loading" });
 
@@ -41,6 +47,18 @@ export function useProductWorkbenchData(api: ProductApiClient): {
           message: error instanceof Error ? error.message : "工作台加载失败"
         });
       }
+    }
+  }, [api]);
+
+  const refresh = useCallback(async () => {
+    try {
+      const loaded = await api.loadWorkbenchData();
+      setLoadState({
+        status: loaded.zhixus.length === 0 ? "empty" : "ready",
+        data: loaded
+      });
+    } catch {
+      // 刷新失败保留当前投影：页面继续展示最后一次成功加载的数据。
     }
   }, [api]);
 
@@ -75,5 +93,5 @@ export function useProductWorkbenchData(api: ProductApiClient): {
     };
   }, [api]);
 
-  return { loadState, reload };
+  return { loadState, reload, refresh };
 }

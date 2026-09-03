@@ -114,6 +114,8 @@ function requiredFieldError(missingLabels: readonly string[]): ActionState {
 export function useOrderDraftFlow(input: {
   readonly api: ProductApiClient;
   readonly selectedZhixu?: ZhixuDetailDTO | undefined;
+  /** 成功 mutation（建草稿/存草稿/发邀请）后触发一次定向刷新；调用方保证只刷一次，钩子内部不循环。 */
+  readonly onMutationSuccess?: () => void;
 }): {
   readonly draft?: ProductOrderDraftDTO | undefined;
   readonly setDraft: Dispatch<SetStateAction<ProductOrderDraftDTO | undefined>>;
@@ -127,7 +129,7 @@ export function useOrderDraftFlow(input: {
   readonly handleSaveDraft: (values: OrderDraftFormValues) => Promise<void>;
   readonly handleSendInvite: (participant: DraftParticipantDTO) => Promise<void>;
 } {
-  const { api, selectedZhixu } = input;
+  const { api, selectedZhixu, onMutationSuccess } = input;
   const [draft, setDraft] = useState<ProductOrderDraftDTO | undefined>();
   const [draftParticipants, setDraftParticipants] = useState<readonly DraftParticipantDTO[]>([]);
   const [draftAction, setDraftAction] = useState<ActionState>(idleAction);
@@ -169,6 +171,7 @@ export function useOrderDraftFlow(input: {
       setDraftAction({ phase: "success", message: "订单草稿已创建", source: result.source });
       const participantsResult = await api.listParticipants(result.data.draftId);
       setDraftParticipants(participantsResult.data);
+      onMutationSuccess?.();
       return result.data;
     } catch (error) {
       setDraftAction({ phase: "error", message: readableError(error, "订单草稿创建失败") });
@@ -201,6 +204,7 @@ export function useOrderDraftFlow(input: {
       });
       setDraft(result.data);
       setSaveDraftAction({ phase: "success", message: "草稿已保存", source: result.source });
+      onMutationSuccess?.();
     } catch (error) {
       setSaveDraftAction({ phase: "error", message: readableError(error, "草稿保存失败") });
     }
@@ -235,6 +239,7 @@ export function useOrderDraftFlow(input: {
           invite: result.data
         }
       }));
+      onMutationSuccess?.();
     } catch (error) {
       setInviteActions((current) => ({
         ...current,
