@@ -1,16 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { installWorkbenchRoutes, STUB_API_BASE } from "./workbench-stubs";
 
-interface StoreConsoleE2EBridge {
-  attemptImportDraft(): Promise<{ readonly ok: boolean; readonly status: number; readonly message: string }>;
-}
-
-declare global {
-  interface Window {
-    __uvpStoreConsoleE2E?: StoreConsoleE2EBridge;
-  }
-}
-
 test.describe("Store and participant entry split", () => {
   test("/ defaults to /app", async ({ page }) => {
     await installWorkbenchRoutes(page);
@@ -42,23 +32,21 @@ test.describe("Store and participant entry split", () => {
     await expect(page.getByTestId("submit-confirm-button")).toHaveCount(0);
   });
 
-  test("unauthorized Store write attempt reports 403 without any session", async ({ page }) => {
+  test("read-only Store session hides write controls and exposes no e2e bridge", async ({ page }) => {
     // 访问级别只认登录会话/环境配置；默认无配置即 anonymous_read。
     await stubStoreRoutes(page);
     await page.goto("/store");
     await expect(page.getByTestId("store-app")).toHaveAttribute("data-store-access", "anonymous_read");
 
-    const result = await page.evaluate(async () => {
-      const bridge = window.__uvpStoreConsoleE2E;
-      if (!bridge) {
-        throw new Error("store_console_e2e_bridge_missing");
-      }
-      return await bridge.attemptImportDraft();
-    });
+    // 403 是写失败边界（后端强制，见 store_operator 专用跑批）；
+    // UI 层的契约是只读会话不提供任何写入口。
+    await expect(page.getByTestId("store-import-draft-button")).toHaveCount(0);
 
-    expect(result.ok).toBe(false);
-    expect(result.status).toBe(403);
-    expect(result.message).toContain("403");
+    // ND-1 裁决：Store Console 的 E2E 注入桥已整体删除，window 上不应再有该桥。
+    const bridge = await page.evaluate(() => {
+      return (window as { __uvpStoreConsoleE2E?: unknown }).__uvpStoreConsoleE2E;
+    });
+    expect(bridge).toBeUndefined();
   });
 });
 

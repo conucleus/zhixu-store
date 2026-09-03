@@ -418,7 +418,7 @@ export function StoreSearchPage({
             <StoreBoundaryCard
               icon={<ShieldCheck />}
               title="只读会话"
-              text="当前访问不显示导入、试拼保存或治理广播入口；后端写入探测也会 fail closed。"
+              text="当前访问不显示导入、试拼保存或治理广播入口。"
             />
           )}
         </aside>

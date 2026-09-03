@@ -1,7 +1,7 @@
 import { AlertTriangle, ExternalLink, GitBranch, Loader2, PackageSearch, ShieldCheck, Store, Truck, Users } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { accessFromStoreSession, createStoreApiClient, readableStoreError, StoreApiError } from "./api";
+import { accessFromStoreSession, createStoreApiClient, readableStoreError } from "./api";
 import { StoreDockingPage } from "./StoreDockingPage";
 import { StoreRuntimePage } from "./StoreRuntimePage";
 import { StoreSearchPage } from "./StoreSearchPage";
@@ -16,22 +16,6 @@ type StoreLoadState =
   | { readonly status: "loading" }
   | { readonly status: "ready"; readonly data: StoreZhixuSearchResultDTO; readonly source: StoreApiSource }
   | { readonly status: "error"; readonly message: string };
-
-interface StoreConsoleE2EBridge {
-  readonly state: {
-    readonly accessLevel: string;
-    readonly canWrite: boolean;
-    readonly view: StoreView;
-    readonly loadStatus: StoreLoadState["status"];
-  };
-  attemptImportDraft(): Promise<{ readonly ok: boolean; readonly status: number; readonly message: string }>;
-}
-
-declare global {
-  interface Window {
-    __uvpStoreConsoleE2E?: StoreConsoleE2EBridge;
-  }
-}
 
 export function StoreApp({ productHref = "/app" }: { readonly productHref?: string | undefined }) {
   const api = useMemo(() => createStoreApiClient(), []);
@@ -86,39 +70,6 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
     setSelectedZhixuId((current) => current ?? result.data.zhixus[0]?.zhixuId);
     return result.data;
   }
-
-  useEffect(() => {
-    if (!isStoreE2EBridgeEnabled()) {
-      return;
-    }
-    window.__uvpStoreConsoleE2E = {
-      state: {
-        accessLevel: access.level,
-        canWrite: access.canWrite,
-        view,
-        loadStatus: loadState.status
-      },
-      async attemptImportDraft() {
-        try {
-          await api.importZhixuDraft({
-            sourceKind: "zhixu_yaml",
-            content: "name: e2e-unauthorized-import-probe\n",
-            title: "E2E unauthorized import probe"
-          });
-          return { ok: true, status: 200, message: "ok" };
-        } catch (error) {
-          return {
-            ok: false,
-            status: error instanceof StoreApiError ? error.status : 0,
-            message: readableStoreError(error, "Store write failed")
-          };
-        }
-      }
-    };
-    return () => {
-      delete window.__uvpStoreConsoleE2E;
-    };
-  }, [access.canWrite, access.level, api, loadState.status, view]);
 
   return (
     <section className="store-console-shell" data-testid="store-app" data-store-access={access.level}>
@@ -215,10 +166,6 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
       ) : null}
     </section>
   );
-}
-
-function isStoreE2EBridgeEnabled(): boolean {
-  return import.meta.env.VITE_UVP_PRODUCT_E2E === "1";
 }
 
 function StoreStatePanel({
