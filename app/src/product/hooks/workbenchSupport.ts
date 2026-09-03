@@ -264,6 +264,34 @@ export function missingTaskEvidenceSlotLabels(
 }
 
 /**
+ * 上传时进入指纹的元数据字段签名（trim 后非空、按 key 排序，顺序无关）。
+ * 上传成功时对该组字段做快照；之后同一组字段的实时签名与上传时不一致，
+ * 对应槽位即为 stale（指纹不再代表当前表单内容），fail-closed 禁止提交。
+ */
+export function evidenceMetadataSignature(fields: TaskEvidenceFieldValues): string {
+  const entries: Array<readonly [string, string]> = [];
+  for (const [key, value] of Object.entries(fields)) {
+    const trimmed = value.trim();
+    if (trimmed) {
+      entries.push([key, trimmed]);
+    }
+  }
+  entries.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  return JSON.stringify(entries);
+}
+
+/** 槽位是否 stale：无快照（该槽位没有上传记录）恒为 false；字段签名与上传时不一致即 stale。 */
+export function isEvidenceSlotStale(
+  snapshot: string | undefined,
+  fields: TaskEvidenceFieldValues
+): boolean {
+  if (snapshot === undefined) {
+    return false;
+  }
+  return evidenceMetadataSignature(fields) !== snapshot;
+}
+
+/**
  * 视图当前展示的任务：待办卡片携带自己的 taskId 打开对应详情；
  * 选中任务不存在（如刷新后投影变化）时回退到投影给出的 activeTask，
  * 不做任何"挑第一个待办"之类的状态推断。

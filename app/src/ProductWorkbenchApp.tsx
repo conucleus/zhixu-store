@@ -135,6 +135,7 @@ export function ProductWorkbenchApp() {
     evidencePlan,
     evidenceBySlot,
     evidenceProofsBySlot,
+    staleSlotLabels,
     evidenceAction,
     submitMachine,
     disputeAction,
@@ -150,7 +151,8 @@ export function ProductWorkbenchApp() {
     taskEvidenceFields,
     Object.keys(evidenceBySlot)
   );
-  const canConfirmSubmit = missingEvidenceSlotLabels.length === 0;
+  // 上传后相关字段变更的槽位（指纹已分叉）与缺失槽位一样禁锁提交。
+  const canConfirmSubmit = missingEvidenceSlotLabels.length === 0 && staleSlotLabels.length === 0;
 
   async function handleNextParticipants(): Promise<void> {
     const currentDraft = await ensureDraft();
@@ -307,8 +309,8 @@ export function ProductWorkbenchApp() {
         {loadState.status === "ready" && view === "create" && selectedZhixu ? <CreateOrderPage zhixu={selectedZhixu} draft={draft} createAction={draftAction} saveAction={saveDraftAction} values={draftFormValues} onValuesChange={(patch) => setDraftFormValues((current) => ({ ...current, ...patch }))} onBack={() => setView("zhixu")} onCreate={(values) => void handleCreateDraft(values)} onSave={(values) => void handleSaveDraft(values)} onNext={handleNextParticipants} /> : null}
         {loadState.status === "ready" && view === "participants" ? <ParticipantsPage order={selectedOrder} draft={draft} draftParticipants={draftParticipants} inviteActions={inviteActions} registerAction={registerDraftAction} onBack={() => setView("create")} onInvite={handleSendInvite} onRegister={handleRegisterDraft} onOrder={() => setView("order")} /> : null}
         {loadState.status === "ready" && view === "order" ? selectedOrder ? <OrderOverviewPage order={selectedOrder} syncing={data.syncState === "syncing" || registerDraftAction.phase === "success"} onBack={() => setView("home")} onTask={() => setView("task")} onDispute={() => setView("dispute")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : <EmptyState title="暂无进行中订单" desc="创建并启动订单后，这里会展示订单总览、当前待办和最近事件。" /> : null}
-        {loadState.status === "ready" && view === "task" ? activeTask ? <TaskPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} evidenceProofsBySlot={evidenceProofsBySlot} uploadAction={evidenceAction} canConfirm={canConfirmSubmit} missingEvidenceLabels={missingEvidenceSlotLabels} fieldValues={taskEvidenceFields} onFieldValuesChange={(patch) => setTaskEvidenceFields((current) => ({ ...current, ...patch }))} onBack={() => setView("order")} onUpload={(slotKey, file) => void handleUploadEvidence(slotKey, file)} onSubmit={() => setView("submit")} onDispute={() => setView("dispute")} /> : <EmptyState title="暂无待办" desc="当前没有需要你处理的任务。" /> : null}
-        {loadState.status === "ready" && view === "submit" ? activeTask ? <SubmitPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} submitMachine={submitMachine} canSubmit={canConfirmSubmit} onBack={() => setView("task")} onSubmit={() => void handleConfirmSubmit()} onOrder={() => setView("order")} /> : <EmptyState title="暂无可提交的待办" desc="待办完成凭证上传后，可在这里确认提交。" /> : null}
+        {loadState.status === "ready" && view === "task" ? activeTask ? <TaskPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} evidenceProofsBySlot={evidenceProofsBySlot} uploadAction={evidenceAction} canConfirm={canConfirmSubmit} missingEvidenceLabels={missingEvidenceSlotLabels} staleSlotLabels={staleSlotLabels} fieldValues={taskEvidenceFields} onFieldValuesChange={(patch) => setTaskEvidenceFields((current) => ({ ...current, ...patch }))} onBack={() => setView("order")} onUpload={(slotKey, file) => void handleUploadEvidence(slotKey, file)} onSubmit={() => setView("submit")} onDispute={() => setView("dispute")} /> : <EmptyState title="暂无待办" desc="当前没有需要你处理的任务。" /> : null}
+        {loadState.status === "ready" && view === "submit" ? activeTask ? <SubmitPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} submitMachine={submitMachine} canSubmit={canConfirmSubmit} staleSlotLabels={staleSlotLabels} onBack={() => setView("task")} onSubmit={() => void handleConfirmSubmit()} onOrder={() => setView("order")} /> : <EmptyState title="暂无可提交的待办" desc="待办完成凭证上传后，可在这里确认提交。" /> : null}
         {loadState.status === "ready" && view === "dispute" ? activeTask ? <DisputePage task={activeTask} action={disputeAction} onBack={() => setView("order")} onSave={handleDisputeSave} /> : <EmptyState title="暂无可争议事项" desc="订单出现可处理待办后，可以补充争议材料。" /> : null}
       </main>
     </div>
@@ -946,6 +948,7 @@ function TaskPage({
   uploadAction,
   canConfirm,
   missingEvidenceLabels,
+  staleSlotLabels,
   fieldValues,
   onFieldValuesChange,
   onBack,
@@ -960,6 +963,7 @@ function TaskPage({
   uploadAction: ActionState;
   canConfirm: boolean;
   missingEvidenceLabels: readonly string[];
+  staleSlotLabels: readonly string[];
   fieldValues: TaskEvidenceFieldValues;
   onFieldValuesChange: (patch: TaskEvidenceFieldValues) => void;
   onBack: () => void;
@@ -1008,6 +1012,15 @@ function TaskPage({
           {fileSlots.length > 0 ? fileSlots.map((slot) => (
             <EvidenceUploadZone key={slot.key} slot={slot} uploaded={evidenceBySlot[slot.key]} proof={evidenceProofsBySlot[slot.key]} onFileChange={(event) => handleFileChange(slot.key, event)} />
           )) : <InlineEmpty text="本待办无需上传文件凭证" />}
+          {staleSlotLabels.length > 0 ? (
+            <div className="warning-box" data-testid="task-evidence-stale-warning">
+              <AlertTriangle />
+              <div>
+                <strong>字段已变更，请重新上传以更新指纹</strong>
+                <p>以下凭证上传后相关字段又发生了变化：{staleSlotLabels.join("、")}。重新上传对应凭证之前无法提交。</p>
+              </div>
+            </div>
+          ) : null}
           <ActionNotice state={uploadAction} />
           <div className="two-col">
             {inputSlots.map((slot) => slot.inputKind === "date" ? (
@@ -1086,6 +1099,7 @@ function SubmitPage({
   evidenceBySlot,
   submitMachine,
   canSubmit,
+  staleSlotLabels,
   onBack,
   onSubmit,
   onOrder
@@ -1095,6 +1109,7 @@ function SubmitPage({
   evidenceBySlot: Readonly<Record<string, EvidenceObjectDTO>>;
   submitMachine: SubmitMachineState;
   canSubmit: boolean;
+  staleSlotLabels: readonly string[];
   onBack: () => void;
   onSubmit: () => void;
   onOrder: () => void;
@@ -1158,6 +1173,15 @@ function SubmitPage({
               <CheckCircle2 />
             </div>
           </div>
+          {staleSlotLabels.length > 0 ? (
+            <div className="warning-box" data-testid="submit-stale-warning">
+              <AlertTriangle />
+              <div>
+                <strong>字段已变更，请重新上传以更新指纹</strong>
+                <p>以下凭证上传后相关字段又发生了变化：{staleSlotLabels.join("、")}。返回待办页重新上传对应凭证后再提交。</p>
+              </div>
+            </div>
+          ) : null}
           <button className="primary-button block" data-testid="submit-confirm-button" onClick={onSubmit} disabled={!canSubmit || pending}>
             {pending ? <Loader2 className="spin" /> : <WalletCards />} 确认并提交
           </button>

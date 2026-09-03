@@ -118,11 +118,42 @@ test.describe("Product Workbench browser smoke", () => {
 
     await page.getByTestId("task-confirm-button").click();
     await expect(page.getByRole("heading", { name: "确认阶段完成 / 提交结果" })).toBeVisible();
+    // 所见即所签：确认页列出全部已上传证据的槽位名与指纹
+    await expect(page.getByTestId("submit-fingerprint-list")).toContainText("报关单 PDF");
     await page.getByTestId("submit-confirm-button").click();
     // 无 ethereum provider 时必须 fail-closed：不生成提交记录
     await expect(page.getByText("请连接浏览器钱包后再确认提交")).toBeVisible();
     await expect(page.getByText(/提交记录待创建/)).toBeVisible();
     await assertOrdinaryPageCopy(page);
+  });
+
+  test("blocks submit after fields change post-upload until the evidence is re-uploaded", async ({ page }) => {
+    await installWorkbenchRoutes(page);
+    await page.goto("/app");
+    await page.getByRole("button", { name: /待办/ }).first().click();
+    await expect(page.getByTestId("task-detail-page")).toBeVisible();
+
+    await page.getByTestId("task-field-customs_declaration_no").fill("2026-001234");
+    await page.getByTestId("task-field-export_port").fill("洋山港");
+    await page.getByTestId("task-field-completion_date").fill("2026-08-01");
+    const pdf = {
+      name: "出口报关单.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("%PDF-1.4 e2e evidence")
+    };
+    await page.getByTestId("task-file-input-customs_declaration_pdf").setInputFiles(pdf);
+    await expect(page.getByText("凭证已上传，指纹已生成")).toBeVisible();
+    await expect(page.getByTestId("task-confirm-button")).toBeEnabled();
+
+    // 上传后改动字段：指纹已分叉，fail-closed 禁止提交并显著提示
+    await page.getByTestId("task-field-export_port").fill("深圳港");
+    await expect(page.getByTestId("task-evidence-stale-warning")).toBeVisible();
+    await expect(page.getByTestId("task-confirm-button")).toBeDisabled();
+
+    // 重新上传刷新指纹后解锁
+    await page.getByTestId("task-file-input-customs_declaration_pdf").setInputFiles(pdf);
+    await expect(page.getByTestId("task-evidence-stale-warning")).toHaveCount(0);
+    await expect(page.getByTestId("task-confirm-button")).toBeEnabled();
   });
 
   test("rejects non-PDF, forged-PDF and oversized evidence files before upload", async ({ page }) => {

@@ -7,8 +7,10 @@ import {
   acceptAttribute,
   acceptHint,
   acceptIncludesPdf,
+  evidenceMetadataSignature,
   FALLBACK_EVIDENCE_SLOT_KEY,
   formatAcceptLabel,
+  isEvidenceSlotStale,
   missingTaskEvidenceSlotLabels,
   planTaskEvidence,
   resolveWorkbenchTask,
@@ -274,5 +276,28 @@ describe("workbench task resolution", () => {
 
   it("stays undefined when there is no selection and no projected task", () => {
     assert.equal(resolveWorkbenchTask(tasks, undefined, undefined), undefined);
+  });
+});
+
+describe("evidence metadata snapshot staleness", () => {
+  it("does not flag a slot without an upload snapshot", () => {
+    assert.equal(isEvidenceSlotStale(undefined, { any: "value" }), false);
+  });
+
+  it("accepts the same field set regardless of key order or surrounding whitespace", () => {
+    const snapshot = evidenceMetadataSignature({ port: " 洋山港 ", no: "123" });
+    assert.equal(isEvidenceSlotStale(snapshot, { no: "123", port: "洋山港" }), false);
+  });
+
+  it("flags a slot stale when any fingerprinted field changed after upload", () => {
+    const snapshot = evidenceMetadataSignature({ port: "洋山港", no: "123" });
+    assert.equal(isEvidenceSlotStale(snapshot, { port: "深圳港", no: "123" }), true);
+    // 清空字段同样是变更（空值不进入指纹），必须判 stale
+    assert.equal(isEvidenceSlotStale(snapshot, { port: "", no: "123" }), true);
+  });
+
+  it("ignores whitespace-only differences, matching upload metadata semantics", () => {
+    const snapshot = evidenceMetadataSignature({ port: "洋山港" });
+    assert.equal(isEvidenceSlotStale(snapshot, { port: "  洋山港  " }), false);
   });
 });

@@ -16,6 +16,8 @@ import {
 import { idleAction, type ActionState, type SubmitMachineState } from "./workbenchTypes";
 import {
   delay,
+  evidenceMetadataSignature,
+  isEvidenceSlotStale,
   missingTaskEvidenceSlotLabels,
   planTaskEvidence,
   readableError,
@@ -27,6 +29,8 @@ import {
 /** 已上传证据按槽位 key 归档；框架不预置任何业务槽位。 */
 export type EvidenceBySlot = Readonly<Record<string, EvidenceObjectDTO>>;
 export type EvidenceProofsBySlot = Readonly<Record<string, EvidenceProofDTO>>;
+/** 每个已上传槽位在上传时刻的元数据字段快照（JSON），用于检测后续字段变更。 */
+export type FieldSnapshotsBySlot = Readonly<Record<string, string>>;
 
 export function useTaskSubmissionFlow(input: {
   readonly api: ProductApiClient;
@@ -39,6 +43,8 @@ export function useTaskSubmissionFlow(input: {
   readonly evidencePlan: TaskEvidencePlan;
   readonly evidenceBySlot: EvidenceBySlot;
   readonly evidenceProofsBySlot: EvidenceProofsBySlot;
+  /** 上传后相关字段发生变更的槽位标签：存在 stale 槽位时禁止提交。 */
+  readonly staleSlotLabels: readonly string[];
   readonly evidenceAction: ActionState;
   readonly submitMachine: SubmitMachineState;
   readonly disputeAction: ActionState;
@@ -53,12 +59,17 @@ export function useTaskSubmissionFlow(input: {
   });
   const [evidenceBySlot, setEvidenceBySlot] = useState<EvidenceBySlot>({});
   const [proofsBySlot, setProofsBySlot] = useState<EvidenceProofsBySlot>({});
+  const [fieldSnapshotsBySlot, setFieldSnapshotsBySlot] = useState<FieldSnapshotsBySlot>({});
   const [evidenceAction, setEvidenceAction] = useState<ActionState>(idleAction);
   const [submitMachine, setSubmitMachine] = useState<SubmitMachineState>({
     status: "idle",
     message: "等待上传凭证并确认提交"
   });
   const [disputeAction, setDisputeAction] = useState<ActionState>(idleAction);
+  // fail-closed：上传时把表单字段快照进指纹，之后任何相关字段变更都会让对应槽位过期。
+  const staleSlotLabels = Object.keys(evidenceBySlot)
+    .filter((key) => isEvidenceSlotStale(fieldSnapshotsBySlot[key], fieldValues))
+    .map((key) => evidencePlan.slots.find((slot) => slot.key === key)?.label ?? key);
 
   async function handleUploadEvidence(
     slotKey: string,
@@ -117,6 +128,11 @@ export function useTaskSubmissionFlow(input: {
       const proofResult = await api.getEvidenceProof(result.data.evidenceId);
       // 证据核验态与上传归档统一按槽位 key 记录，渲染层按同一 key 读取。
       setProofsBySlot((current) => ({ ...current, [slot.key]: proofResult.data }));
+      // 记录上传时刻的字段快照：指纹由这些字段参与生成，后续字段变更据此判 stale。
+      setFieldSnapshotsBySlot((current) => ({
+        ...current,
+        [slot.key]: evidenceMetadataSignature(fieldValues)
+      }));
       setEvidenceAction({ phase: "success", message: "凭证已上传，指纹已生成", source: result.source });
       onMutationSuccess?.();
     } catch (error) {
@@ -139,6 +155,17 @@ export function useTaskSubmissionFlow(input: {
     );
     if (missingRequired.length > 0) {
       setSubmitMachine({ status: "failed", message: `请先补全必填项：${missingRequired.join("、")}` });
+      return;
+    }
+    // 上传后相关字段已变更：现有指纹不再代表当前表单内容，禁止提交。
+    const staleLabels = Object.keys(evidenceBySlot)
+      .filter((key) => isEvidenceSlotStale(fieldSnapshotsBySlot[key], fieldValues))
+      .map((key) => evidencePlan.slots.find((slot) => slot.key === key)?.label ?? key);
+    if (staleLabels.length > 0) {
+      setSubmitMachine({
+        status: "failed",
+        message: `字段已变更，请重新上传以更新指纹：${staleLabels.join("、")}`
+      });
       return;
     }
     try {
@@ -242,6 +269,7 @@ export function useTaskSubmissionFlow(input: {
     evidencePlan,
     evidenceBySlot,
     evidenceProofsBySlot: proofsBySlot,
+    staleSlotLabels,
     evidenceAction,
     submitMachine,
     disputeAction,
