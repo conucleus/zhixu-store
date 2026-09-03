@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import type { ProductTaskDTO } from "@uvp-eth/product-dto";
 import {
   EVIDENCE_MAX_FILE_BYTES,
   acceptAllowsFile,
@@ -10,9 +11,30 @@ import {
   formatAcceptLabel,
   missingTaskEvidenceSlotLabels,
   planTaskEvidence,
+  resolveWorkbenchTask,
   validateEvidenceFileForSlot
 } from "./workbenchSupport";
 import { customsDemoTaskConfig } from "../demo/customs-demo-config";
+
+function minimalTask(taskId: string): ProductTaskDTO {
+  return {
+    taskId,
+    orderId: "order-1",
+    orderTitle: "测试订单",
+    zhixuId: "zhixu-1",
+    title: `任务 ${taskId}`,
+    subtitle: "",
+    assigneeRole: "执行方",
+    stageId: "stage-1",
+    stageName: "阶段一",
+    deadline: "2026-12-31",
+    fundingImpact: "",
+    requiredEvidence: [],
+    status: "open",
+    responsibilityStatements: [],
+    proofRows: []
+  };
+}
 
 /** 测试用的最小 File 形状：只依赖 size/name/type/slice，能在 Node 测试环境运行。 */
 function fakeFile(input: { readonly name: string; readonly type: string; readonly bytes: Uint8Array; readonly size?: number }): File {
@@ -196,5 +218,27 @@ describe("task evidence slot required-check", () => {
     const plan = planTaskEvidence({ requiredEvidence: ["任意声明"] });
     assert.deepEqual(missingTaskEvidenceSlotLabels(plan.slots, {}, []), ["阶段凭证"]);
     assert.deepEqual(missingTaskEvidenceSlotLabels(plan.slots, {}, [FALLBACK_EVIDENCE_SLOT_KEY]), []);
+  });
+});
+
+describe("workbench task resolution", () => {
+  const taskA = minimalTask("task-a");
+  const taskB = minimalTask("task-b");
+  const tasks = [taskA, taskB];
+
+  it("opens the selected task carried by its own card, not the projection's active task", () => {
+    assert.equal(resolveWorkbenchTask(tasks, "task-b", taskA), taskB);
+  });
+
+  it("falls back to the projected active task when nothing is selected", () => {
+    assert.equal(resolveWorkbenchTask(tasks, undefined, taskA), taskA);
+  });
+
+  it("falls back to the projected active task when the selected id no longer exists", () => {
+    assert.equal(resolveWorkbenchTask(tasks, "task-gone", taskA), taskA);
+  });
+
+  it("stays undefined when there is no selection and no projected task", () => {
+    assert.equal(resolveWorkbenchTask(tasks, undefined, undefined), undefined);
   });
 });

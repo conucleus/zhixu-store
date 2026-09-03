@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { assertOrdinaryPageCopy } from "./product-assertions";
-import { installWorkbenchRoutes, STUB_API_BASE, stubFallbackTask, stubZhixu, stubParticipant } from "./workbench-stubs";
+import { installWorkbenchRoutes, STUB_API_BASE, stubFallbackTask, stubTask, stubZhixu, stubParticipant } from "./workbench-stubs";
 
 test.describe("Product Workbench browser smoke", () => {
   test("renders catalog, order, and task pages against stubbed product API", async ({ page }, testInfo) => {
@@ -35,6 +35,29 @@ test.describe("Product Workbench browser smoke", () => {
     await expect(page.getByTestId("task-confirm-button")).toBeDisabled();
     // 身份来自 /product/me 桩，页面展示确认后的身份而不是反推文案
     await expect(page.getByText("测试报关行操作员").first()).toBeVisible();
+  });
+
+  test("opens each task card's own detail instead of always the projected active task", async ({ page }) => {
+    const secondTask = {
+      ...stubTask,
+      taskId: "task-2002",
+      title: "第二张待办：国际运输",
+      stageId: "stage-delivery",
+      stageName: "国际运输"
+    };
+    await installWorkbenchRoutes(page, {
+      overrides: {
+        "/product/tasks": { body: { tasks: [stubTask, secondTask] } }
+      }
+    });
+    await page.goto("/app");
+    await expect(page.getByTestId("participant-app-page")).toBeVisible();
+
+    // 点第二张待办卡：打开的是该卡片自己的任务，而不是投影选中的第一个待办
+    await page.getByTestId("participant-task-open-task-2002").click();
+    await expect(page.getByTestId("task-detail-page")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "第二张待办：国际运输" })).toBeVisible();
+    await expect(page.getByTestId("product-workbench")).toHaveAttribute("data-uvp-task-id", "task-2002");
   });
 
   test("create order form reports missing required fields by name, then creates a draft", async ({ page }) => {

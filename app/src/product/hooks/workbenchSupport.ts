@@ -1,4 +1,4 @@
-import type { TaskEvidenceSpecDTO } from "@uvp-eth/product-dto";
+import type { ProductTaskDTO, TaskEvidenceSpecDTO } from "@uvp-eth/product-dto";
 
 export function readableError(error: unknown, fallback: string): string {
   if (!(error instanceof Error)) {
@@ -261,4 +261,20 @@ export function missingTaskEvidenceSlotLabels(
     }
   }
   return missing;
+}
+
+/**
+ * 视图当前展示的任务：待办卡片携带自己的 taskId 打开对应详情；
+ * 选中任务不存在（如刷新后投影变化）时回退到投影给出的 activeTask，
+ * 不做任何"挑第一个待办"之类的状态推断。
+ */
+export function resolveWorkbenchTask(
+  tasks: readonly ProductTaskDTO[],
+  selectedTaskId: string | undefined,
+  fallback: ProductTaskDTO | undefined
+): ProductTaskDTO | undefined {
+  const selected = selectedTaskId
+    ? tasks.find((task) => task.taskId === selectedTaskId)
+    : undefined;
+  return selected ?? fallback;
 }

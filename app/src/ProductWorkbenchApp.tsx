@@ -70,7 +70,8 @@ import {
   emptyTaskEvidenceFieldValues,
   type TaskEvidenceFieldValues,
   type TaskEvidencePlan,
-  type TaskEvidenceSlot
+  type TaskEvidenceSlot,
+  resolveWorkbenchTask
 } from "./product/hooks/workbenchSupport";
 import { shortHash } from "./shared/frontend";
 
@@ -79,10 +80,18 @@ export function ProductWorkbenchApp() {
   const { loadState, reload: reloadWorkbench } = useProductWorkbenchData(api);
   const [view, setView] = useState<ProductView>("app");
   const [proofOpen, setProofOpen] = useState(false);
+  // 每张待办卡片携带自己的 taskId：这里记录选中的任务，未选中时回退到投影的 activeTask。
+  const [selectedTaskId, setSelectedTaskId] = useState<string | undefined>(undefined);
   // 订单信息与待办凭证表单状态提升到本组件：视图切换会卸载页面组件，
   // 未保存的用户输入不能因为切换视图被静默清空。
   const [draftFormValues, setDraftFormValues] = useState<OrderDraftFormValues>(emptyOrderDraftFormValues);
   const [taskEvidenceFields, setTaskEvidenceFields] = useState<TaskEvidenceFieldValues>(emptyTaskEvidenceFieldValues);
+
+  /** 打开指定任务详情；不传 taskId 时沿用当前选中任务或投影 activeTask。 */
+  function openTask(taskId?: string): void {
+    setSelectedTaskId(taskId);
+    setView("task");
+  }
 
   const activeNav = useMemo(() => {
     if (view === "app") {
@@ -100,7 +109,7 @@ export function ProductWorkbenchApp() {
   const data = loadState.status === "ready" || loadState.status === "empty" ? loadState.data : undefined;
   const selectedZhixu = data?.zhixu;
   const selectedOrder = data?.order;
-  const activeTask = data?.activeTask;
+  const activeTask = resolveWorkbenchTask(data?.tasks ?? [], selectedTaskId, data?.activeTask);
   const draftFlow = useOrderDraftFlow({ api, selectedZhixu });
   const {
     draft,
@@ -289,8 +298,8 @@ export function ProductWorkbenchApp() {
       <main className="product-main">
         <RuntimeBanner syncing={data.syncState === "syncing"} degradedCount={data.diagnostics.length} />
         {loadState.status === "empty" ? <EmptyCatalogPage /> : null}
-        {loadState.status === "ready" && view === "app" ? <ParticipantAppPage data={data} onCatalog={() => setView("home")} onViewDetail={() => setView("zhixu")} onCreate={() => setView("create")} onOrder={() => setView("order")} onTask={() => setView("task")} /> : null}
-        {loadState.status === "ready" && view === "home" && selectedZhixu ? <CatalogPage zhixu={selectedZhixu} order={selectedOrder} task={activeTask} onViewDetail={() => setView("zhixu")} onCreate={() => setView("create")} onOrder={() => setView("order")} onTask={() => setView("task")} /> : null}
+        {loadState.status === "ready" && view === "app" ? <ParticipantAppPage data={data} onCatalog={() => setView("home")} onViewDetail={() => setView("zhixu")} onCreate={() => setView("create")} onOrder={() => setView("order")} onTask={(taskId) => openTask(taskId)} /> : null}
+        {loadState.status === "ready" && view === "home" && selectedZhixu ? <CatalogPage zhixu={selectedZhixu} order={selectedOrder} task={activeTask} onViewDetail={() => setView("zhixu")} onCreate={() => setView("create")} onOrder={() => setView("order")} onTask={(taskId) => openTask(taskId)} /> : null}
         {loadState.status === "ready" && view === "zhixu" && selectedZhixu ? <ZhixuDetailPage zhixu={selectedZhixu} onBack={() => setView("home")} onCreate={() => setView("create")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : null}
         {loadState.status === "ready" && view === "create" && selectedZhixu ? <CreateOrderPage zhixu={selectedZhixu} draft={draft} createAction={draftAction} saveAction={saveDraftAction} values={draftFormValues} onValuesChange={(patch) => setDraftFormValues((current) => ({ ...current, ...patch }))} onBack={() => setView("zhixu")} onCreate={(values) => void handleCreateDraft(values)} onSave={(values) => void handleSaveDraft(values)} onNext={handleNextParticipants} /> : null}
         {loadState.status === "ready" && view === "participants" ? <ParticipantsPage order={selectedOrder} draft={draft} draftParticipants={draftParticipants} inviteActions={inviteActions} registerAction={registerDraftAction} onBack={() => setView("create")} onInvite={handleSendInvite} onRegister={handleRegisterDraft} onOrder={() => setView("order")} /> : null}
@@ -368,7 +377,7 @@ function ParticipantAppPage({
   onViewDetail: () => void;
   onCreate: () => void;
   onOrder: () => void;
-  onTask: () => void;
+  onTask: (taskId: string) => void;
 }) {
   const openTasks = data.tasks.filter((task) => task.status === "open");
   const blockedTasks = data.tasks.filter((task) => task.status === "blocked");
@@ -385,7 +394,7 @@ function ParticipantAppPage({
           <h1>我的待办</h1>
           <p>所有参与方都在这里处理自己被分配的任务。不同角色看到不同任务插件，但提交后都会留下可核对证明。</p>
           <div className="hero-actions">
-            {primaryTask ? <button className="primary-button" data-testid="participant-primary-task-button" onClick={onTask}><ClipboardCheck /> 处理当前待办</button> : null}
+            {primaryTask ? <button className="primary-button" data-testid="participant-primary-task-button" onClick={() => onTask(primaryTask.taskId)}><ClipboardCheck /> 处理当前待办</button> : null}
             {data.order ? <button className="secondary-button" data-testid="participant-order-room-button" onClick={onOrder}><FileText /> 打开订单房间</button> : null}
           </div>
         </div>
@@ -435,7 +444,12 @@ function ParticipantAppPage({
                   <div className="catalog-card-actions">
                     <strong>{task.primaryActionLabel ?? "处理待办"}</strong>
                     <small>{task.deadline}</small>
-                    <button className={task.status === "open" ? "primary-button block" : "secondary-button block"} onClick={onTask} disabled={task.status === "blocked"}>{task.status === "open" ? "进入处理" : "查看详情"}</button>
+                    <button
+                      className={task.status === "open" ? "primary-button block" : "secondary-button block"}
+                      data-testid={`participant-task-open-${task.taskId}`}
+                      onClick={() => onTask(task.taskId)}
+                      disabled={task.status === "blocked"}
+                    >{task.status === "open" ? "进入处理" : "查看详情"}</button>
                   </div>
                 </article>
               )) : <InlineEmpty text="当前钱包暂无待办" />}
@@ -480,7 +494,7 @@ function CatalogPage({
   onViewDetail: () => void;
   onCreate: () => void;
   onOrder: () => void;
-  onTask: () => void;
+  onTask: (taskId: string) => void;
 }) {
   const canCreate = zhixu.reviewStatus === "approved";
   return (
@@ -557,7 +571,7 @@ function CatalogPage({
           </SidePanel>
           <SidePanel title="我的待办">
             {task ? (
-              <button className="quick-order-card" onClick={onTask}>
+              <button className="quick-order-card" data-testid="catalog-task-card" onClick={() => onTask(task.taskId)}>
                 <strong>{task.title}</strong>
                 <span>{task.assigneeRole} · {task.deadline}</span>
                 <small>{task.fundingImpact}</small>
