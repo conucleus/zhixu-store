@@ -393,7 +393,7 @@ export class HttpProductApiClient implements ProductApiClient {
       order,
       activeTask,
       source: { kind: "real", baseUrl: this.baseUrl },
-      syncState: isSyncing(order, activeTask) ? "syncing" : "ready",
+      syncState: isSyncing(activeTask) ? "syncing" : "ready",
       diagnostics
     };
   }
@@ -898,8 +898,13 @@ function isSnakeCaseIdentifier(value: string): boolean {
   return /^[a-z][a-z0-9_]+$/.test(value) && value.includes("_") && value.length >= 6;
 }
 
-function isSyncing(order: ProductOrderDTO | undefined, task: ProductTaskDTO | undefined): boolean {
-  return order?.statusLabel.includes("同步") === true || task?.status === "blocked";
+/**
+ * 同步判据只用结构化状态字段：任务投影未跟上（含链上状态 unknown）时后端给出
+ * blocked。订单 DTO 的 status 是单值联合（"registered"），结构上无法表达
+ * "同步中"；statusLabel 只是展示文案，不得反过来充当状态机判据。
+ */
+function isSyncing(task: ProductTaskDTO | undefined): boolean {
+  return task?.status === "blocked";
 }
 
 function sortLatestProjectionFirst<TItem>(items: readonly TItem[]): readonly TItem[] {

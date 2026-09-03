@@ -138,6 +138,36 @@ describe("workbench data loading tolerance boundary", () => {
   });
 });
 
+describe("workbench sync state judgement", () => {
+  it("reports syncing from the structured blocked task status only", async () => {
+    const client = clientWith(baseRoutes({
+      "/product/tasks": {
+        body: { tasks: [{ taskId: "task-1", orderId: "order-1", status: "blocked" }] }
+      }
+    }));
+
+    const data = await client.loadWorkbenchData();
+
+    assert.equal(data.syncState, "syncing");
+    assert.equal(data.activeTask?.status, "blocked");
+  });
+
+  it("never derives syncing from the display statusLabel of an order", async () => {
+    // 后端对链上状态 unknown 的订单会下发合成标签“同步中”；
+    // 标签只是渲染文案，不得充当状态机判据（中文标签匹配已删除）。
+    const client = clientWith(baseRoutes({
+      "/product/orders": {
+        body: { orders: [{ orderId: "order-1", status: "registered", statusLabel: "同步中" }] }
+      }
+    }));
+
+    const data = await client.loadWorkbenchData();
+
+    assert.equal(data.syncState, "ready");
+    assert.equal(data.order?.status, "registered");
+  });
+});
+
 describe("write paths honor the injected fetchImpl", () => {
   it("routes createOrderDraft through the injected fetch and never touches global fetch", async () => {
     const calls: Array<{ readonly path: string; readonly method: string; readonly body: unknown }> = [];
