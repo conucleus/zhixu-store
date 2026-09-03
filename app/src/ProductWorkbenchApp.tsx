@@ -68,10 +68,11 @@ import {
   acceptAttribute,
   acceptHint,
   emptyTaskEvidenceFieldValues,
+  missingTaskEvidenceSlotLabels,
+  resolveWorkbenchTask,
   type TaskEvidenceFieldValues,
   type TaskEvidencePlan,
-  type TaskEvidenceSlot,
-  resolveWorkbenchTask
+  type TaskEvidenceSlot
 } from "./product/hooks/workbenchSupport";
 import { shortHash } from "./shared/frontend";
 
@@ -140,14 +141,16 @@ export function ProductWorkbenchApp() {
     handleUploadEvidence,
     handleConfirmSubmit,
     handleDisputeSave
-  } = useTaskSubmissionFlow({ api, activeTask });
+  } = useTaskSubmissionFlow({ api, activeTask, fieldValues: taskEvidenceFields });
   const firstEvidence = Object.values(evidenceBySlot)[0];
-  const firstEvidenceProof = firstEvidence ? evidenceProofsBySlot[firstEvidence.evidenceId] : undefined;
-  // 所有必填文件槽位已上传且至少有一份凭证时才允许进入提交确认。
-  const requiredFileSlotsUploaded = evidencePlan.slots
-    .filter((slot) => slot.inputKind === "file" && slot.required)
-    .every((slot) => Boolean(evidenceBySlot[slot.key]));
-  const canConfirmSubmit = Object.keys(evidenceBySlot).length > 0 && requiredFileSlotsUploaded;
+  // 提交门槛：必填证据槽位全部满足（文件已上传或该任务没有文件要求）即可提交；
+  // 纯 text/date 或无槽位任务允许零上传的纯字段确认提交。
+  const missingEvidenceSlotLabels = missingTaskEvidenceSlotLabels(
+    evidencePlan.slots,
+    taskEvidenceFields,
+    Object.keys(evidenceBySlot)
+  );
+  const canConfirmSubmit = missingEvidenceSlotLabels.length === 0;
 
   async function handleNextParticipants(): Promise<void> {
     const currentDraft = await ensureDraft();
@@ -304,8 +307,8 @@ export function ProductWorkbenchApp() {
         {loadState.status === "ready" && view === "create" && selectedZhixu ? <CreateOrderPage zhixu={selectedZhixu} draft={draft} createAction={draftAction} saveAction={saveDraftAction} values={draftFormValues} onValuesChange={(patch) => setDraftFormValues((current) => ({ ...current, ...patch }))} onBack={() => setView("zhixu")} onCreate={(values) => void handleCreateDraft(values)} onSave={(values) => void handleSaveDraft(values)} onNext={handleNextParticipants} /> : null}
         {loadState.status === "ready" && view === "participants" ? <ParticipantsPage order={selectedOrder} draft={draft} draftParticipants={draftParticipants} inviteActions={inviteActions} registerAction={registerDraftAction} onBack={() => setView("create")} onInvite={handleSendInvite} onRegister={handleRegisterDraft} onOrder={() => setView("order")} /> : null}
         {loadState.status === "ready" && view === "order" ? selectedOrder ? <OrderOverviewPage order={selectedOrder} syncing={data.syncState === "syncing" || registerDraftAction.phase === "success"} onBack={() => setView("home")} onTask={() => setView("task")} onDispute={() => setView("dispute")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : <EmptyState title="暂无进行中订单" desc="创建并启动订单后，这里会展示订单总览、当前待办和最近事件。" /> : null}
-        {loadState.status === "ready" && view === "task" ? activeTask ? <TaskPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} evidenceProofsBySlot={evidenceProofsBySlot} uploadAction={evidenceAction} canConfirm={canConfirmSubmit} fieldValues={taskEvidenceFields} onFieldValuesChange={(patch) => setTaskEvidenceFields((current) => ({ ...current, ...patch }))} onBack={() => setView("order")} onUpload={(slotKey, file) => void handleUploadEvidence(slotKey, file, taskEvidenceFields)} onSubmit={() => setView("submit")} onDispute={() => setView("dispute")} /> : <EmptyState title="暂无待办" desc="当前没有需要你处理的任务。" /> : null}
-        {loadState.status === "ready" && view === "submit" ? activeTask ? <SubmitPage task={activeTask} evidencePlan={evidencePlan} evidence={firstEvidence} submitMachine={submitMachine} onBack={() => setView("task")} onSubmit={() => void handleConfirmSubmit()} onOrder={() => setView("order")} /> : <EmptyState title="暂无可提交的待办" desc="待办完成凭证上传后，可在这里确认提交。" /> : null}
+        {loadState.status === "ready" && view === "task" ? activeTask ? <TaskPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} evidenceProofsBySlot={evidenceProofsBySlot} uploadAction={evidenceAction} canConfirm={canConfirmSubmit} missingEvidenceLabels={missingEvidenceSlotLabels} fieldValues={taskEvidenceFields} onFieldValuesChange={(patch) => setTaskEvidenceFields((current) => ({ ...current, ...patch }))} onBack={() => setView("order")} onUpload={(slotKey, file) => void handleUploadEvidence(slotKey, file)} onSubmit={() => setView("submit")} onDispute={() => setView("dispute")} /> : <EmptyState title="暂无待办" desc="当前没有需要你处理的任务。" /> : null}
+        {loadState.status === "ready" && view === "submit" ? activeTask ? <SubmitPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} submitMachine={submitMachine} canSubmit={canConfirmSubmit} onBack={() => setView("task")} onSubmit={() => void handleConfirmSubmit()} onOrder={() => setView("order")} /> : <EmptyState title="暂无可提交的待办" desc="待办完成凭证上传后，可在这里确认提交。" /> : null}
         {loadState.status === "ready" && view === "dispute" ? activeTask ? <DisputePage task={activeTask} action={disputeAction} onBack={() => setView("order")} onSave={handleDisputeSave} /> : <EmptyState title="暂无可争议事项" desc="订单出现可处理待办后，可以补充争议材料。" /> : null}
       </main>
     </div>
@@ -942,6 +945,7 @@ function TaskPage({
   evidenceProofsBySlot,
   uploadAction,
   canConfirm,
+  missingEvidenceLabels,
   fieldValues,
   onFieldValuesChange,
   onBack,
@@ -955,6 +959,7 @@ function TaskPage({
   evidenceProofsBySlot: Readonly<Record<string, EvidenceProofDTO>>;
   uploadAction: ActionState;
   canConfirm: boolean;
+  missingEvidenceLabels: readonly string[];
   fieldValues: TaskEvidenceFieldValues;
   onFieldValuesChange: (patch: TaskEvidenceFieldValues) => void;
   onBack: () => void;
@@ -1001,7 +1006,7 @@ function TaskPage({
             </div>
           ) : null}
           {fileSlots.length > 0 ? fileSlots.map((slot) => (
-            <EvidenceUploadZone key={slot.key} slot={slot} uploaded={evidenceBySlot[slot.key]} proof={evidenceBySlot[slot.key] ? evidenceProofsBySlot[evidenceBySlot[slot.key]!.evidenceId] : undefined} onFileChange={(event) => handleFileChange(slot.key, event)} />
+            <EvidenceUploadZone key={slot.key} slot={slot} uploaded={evidenceBySlot[slot.key]} proof={evidenceProofsBySlot[slot.key]} onFileChange={(event) => handleFileChange(slot.key, event)} />
           )) : <InlineEmpty text="本待办无需上传文件凭证" />}
           <ActionNotice state={uploadAction} />
           <div className="two-col">
@@ -1018,6 +1023,9 @@ function TaskPage({
             <CheckStatement key={statement.title} title={statement.title} desc={statement.desc} />
           ))}
           <button className={canConfirm ? "primary-button block" : "disabled-button block"} data-testid="task-confirm-button" onClick={canConfirm ? onSubmit : undefined} disabled={!canConfirm}>确认阶段完成</button>
+          {!canConfirm && missingEvidenceLabels.length > 0 ? (
+            <p className="side-note" data-testid="task-confirm-blocked-note"><HelpCircle /> 还需完成：{missingEvidenceLabels.join("、")}</p>
+          ) : null}
           <div className="split-actions">
             <button className="secondary-button" onClick={onDispute}>无法完成</button>
             <button className="secondary-button" onClick={onDispute}>提出争议</button>
@@ -1075,16 +1083,18 @@ function EvidenceUploadZone({
 function SubmitPage({
   task,
   evidencePlan,
-  evidence,
+  evidenceBySlot,
   submitMachine,
+  canSubmit,
   onBack,
   onSubmit,
   onOrder
 }: {
   task: ProductTaskDTO;
   evidencePlan: TaskEvidencePlan;
-  evidence?: EvidenceObjectDTO | undefined;
+  evidenceBySlot: Readonly<Record<string, EvidenceObjectDTO>>;
   submitMachine: SubmitMachineState;
+  canSubmit: boolean;
   onBack: () => void;
   onSubmit: () => void;
   onOrder: () => void;
@@ -1101,6 +1111,11 @@ function SubmitPage({
   const declaredEvidenceLabels = evidencePlan.mode === "fallback"
     ? evidencePlan.declaredLabels
     : evidencePlan.slots.map((slot) => slot.label);
+  // 所见即所签：确认页列出全部已上传证据（签名覆盖的 evidenceIds 与之一一对应），
+  // 每条带槽位名与指纹；纯字段任务没有文件凭证时如实说明。
+  const uploadedEvidence = evidencePlan.slots
+    .map((slot) => ({ slot, evidence: evidenceBySlot[slot.key] }))
+    .filter((entry): entry is { slot: TaskEvidenceSlot; evidence: EvidenceObjectDTO } => Boolean(entry.evidence));
   return (
     <section className="page-shell" data-testid="submit-page">
       <BackLine onClick={onBack}>返回待办详情</BackLine>
@@ -1115,7 +1130,20 @@ function SubmitPage({
             <li><strong>订单：</strong>{task.orderTitle}</li>
             <li><strong>阶段：</strong>{task.stageName}</li>
             <li><strong>提交凭证：</strong>{declaredEvidenceLabels.length > 0 ? declaredEvidenceLabels.join("、") : "按业务约定提交凭证"}</li>
-            <li><strong>凭证指纹：</strong>{evidence ? shortHash(evidence.payloadHash) : "待上传"}</li>
+            <li>
+              <strong>凭证指纹：</strong>
+              {uploadedEvidence.length > 0 ? (
+                <span className="confirm-fingerprint-list" data-testid="submit-fingerprint-list">
+                  {uploadedEvidence.map(({ slot, evidence }) => (
+                    <span className="confirm-fingerprint-item" key={evidence.evidenceId}>
+                      {slot.label}：<code>{shortHash(evidence.payloadHash)}</code>
+                    </span>
+                  ))}
+                </span>
+              ) : (
+                <span>无文件凭证（本次提交为纯字段确认）</span>
+              )}
+            </li>
             <li><strong>影响：</strong>{task.fundingImpact}</li>
             <li><strong>责任提示：</strong><em>提交后不可删除，只能追加更正或进入争议</em></li>
           </ul>
@@ -1130,7 +1158,7 @@ function SubmitPage({
               <CheckCircle2 />
             </div>
           </div>
-          <button className="primary-button block" data-testid="submit-confirm-button" onClick={onSubmit} disabled={!evidence || pending}>
+          <button className="primary-button block" data-testid="submit-confirm-button" onClick={onSubmit} disabled={!canSubmit || pending}>
             {pending ? <Loader2 className="spin" /> : <WalletCards />} 确认并提交
           </button>
         </Panel>
@@ -1142,7 +1170,7 @@ function SubmitPage({
             <p>{submitMachine.message}</p>
           </div>
           <ul className="success-list">
-            <li><CheckCircle2 /> 凭证指纹{evidence ? "已生成" : "待生成"}</li>
+            <li><CheckCircle2 /> 凭证指纹{uploadedEvidence.length > 0 ? `已生成（${uploadedEvidence.length} 份）` : "待生成"}</li>
             <li>{submitMachine.prepared ? <CheckCircle2 /> : <Circle />} 签名前摘要{submitMachine.prepared ? "已生成" : "待生成"}</li>
             <li>{submitMachine.submission ? <CheckCircle2 /> : <Circle />} 提交记录{submitMachine.submission ? submitMachine.submission.statusLabel : "待创建"}</li>
             <li>{confirmed ? <CheckCircle2 /> : <Clock3 />} 下一步：等待订单页同步</li>
@@ -1156,7 +1184,9 @@ function SubmitPage({
               <div className="proof-box-title"><ShieldCheck /> 高级链上证明</div>
               {proofRows.map((row) => <MoneyRow key={row.label} label={row.label} value={row.value} />)}
               {submitMachine.submission?.txHash ? <MoneyRow label="交易编号" value={submitMachine.submission.txHash} /> : null}
-              {evidence ? <MoneyRow label="凭证指纹" value={evidence.payloadHash} /> : null}
+              {uploadedEvidence.map(({ slot, evidence }) => (
+                <MoneyRow key={evidence.evidenceId} label={`凭证指纹 · ${slot.label}`} value={evidence.payloadHash} />
+              ))}
             </div>
           ) : null}
         </Panel>

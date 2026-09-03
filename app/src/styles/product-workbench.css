@@ -1993,6 +1993,22 @@ body {
   font-weight: 800;
 }
 
+/* 确认页：全部已上传证据的槽位名 + 指纹列表 */
+.confirm-fingerprint-list {
+  display: block;
+}
+
+.confirm-fingerprint-item {
+  display: block;
+  font-weight: 400;
+}
+
+.confirm-fingerprint-item code {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.85em;
+  word-break: break-all;
+}
+
 .auth-options {
   display: flex;
   flex-direction: column;

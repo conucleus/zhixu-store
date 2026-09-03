@@ -185,6 +185,44 @@ test.describe("Product Workbench browser smoke", () => {
     await expect(page.getByTestId("product-workbench")).not.toHaveAttribute("data-uvp-evidence-id", "");
   });
 
+  test("submits a file-free task through pure field confirmation without requiring uploads", async ({ page }) => {
+    const textOnlyTask = {
+      ...stubTask,
+      taskId: "task-2003-textonly",
+      title: "纯字段待办：补充说明",
+      requiredEvidence: ["完成时间"],
+      evidenceSpec: [
+        { key: "completion_date", label: "完成时间", inputKind: "date" as const, required: true },
+        { key: "remark", label: "备注说明", inputKind: "text" as const, required: false }
+      ]
+    };
+    await installWorkbenchRoutes(page, {
+      overrides: {
+        "/product/tasks": { body: { tasks: [textOnlyTask] } }
+      }
+    });
+    await page.goto("/app");
+    await page.getByRole("button", { name: /待办/ }).first().click();
+    await expect(page.getByTestId("task-detail-page")).toBeVisible();
+    await expect(page.getByText("本待办无需上传文件凭证")).toBeVisible();
+
+    // 必填字段未填时按钮仍锁，且如实提示缺什么
+    await expect(page.getByTestId("task-confirm-button")).toBeDisabled();
+    await expect(page.getByTestId("task-confirm-blocked-note")).toContainText("完成时间");
+
+    await page.getByTestId("task-field-completion_date").fill("2026-09-01");
+    await expect(page.getByTestId("task-confirm-button")).toBeEnabled();
+    await page.getByTestId("task-confirm-button").click();
+
+    // 确认页如实呈现纯字段提交：无文件凭证，不再要求指纹
+    await expect(page.getByTestId("submit-page")).toBeVisible();
+    await expect(page.getByText("无文件凭证（本次提交为纯字段确认）")).toBeVisible();
+    await expect(page.getByTestId("submit-confirm-button")).toBeEnabled();
+    await page.getByTestId("submit-confirm-button").click();
+    // 无钱包时仍 fail-closed：不产生提交记录
+    await expect(page.getByText("请连接浏览器钱包后再确认提交")).toBeVisible();
+  });
+
   test("create-order form keeps unsaved values across view switches", async ({ page }) => {
     await installWorkbenchRoutes(page);
     await page.goto("/app");

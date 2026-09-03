@@ -31,6 +31,10 @@ export type EvidenceProofsBySlot = Readonly<Record<string, EvidenceProofDTO>>;
 export function useTaskSubmissionFlow(input: {
   readonly api: ProductApiClient;
   readonly activeTask?: ProductTaskDTO | undefined;
+  /** 当前凭证字段值：上传时进入指纹快照，也是提交门槛与 stale 判定的实时依据。 */
+  readonly fieldValues: TaskEvidenceFieldValues;
+  /** 成功 mutation（上传/提交确认）后触发一次定向刷新；由调用方提供，钩子内部不循环调用。 */
+  readonly onMutationSuccess?: () => void;
 }): {
   readonly evidencePlan: TaskEvidencePlan;
   readonly evidenceBySlot: EvidenceBySlot;
@@ -38,11 +42,11 @@ export function useTaskSubmissionFlow(input: {
   readonly evidenceAction: ActionState;
   readonly submitMachine: SubmitMachineState;
   readonly disputeAction: ActionState;
-  readonly handleUploadEvidence: (slotKey: string, file: File, fields: TaskEvidenceFieldValues) => Promise<void>;
+  readonly handleUploadEvidence: (slotKey: string, file: File) => Promise<void>;
   readonly handleConfirmSubmit: () => Promise<void>;
   readonly handleDisputeSave: () => Promise<void>;
 } {
-  const { api, activeTask } = input;
+  const { api, activeTask, fieldValues, onMutationSuccess } = input;
   const evidencePlan = planTaskEvidence({
     evidenceSpec: activeTask?.evidenceSpec,
     requiredEvidence: activeTask?.requiredEvidence ?? []
@@ -58,8 +62,7 @@ export function useTaskSubmissionFlow(input: {
 
   async function handleUploadEvidence(
     slotKey: string,
-    file: File,
-    fields: TaskEvidenceFieldValues
+    file: File
   ): Promise<void> {
     const slot = evidencePlan.slots.find((item) => item.key === slotKey);
     if (!activeTask || !slot) {
@@ -70,7 +73,7 @@ export function useTaskSubmissionFlow(input: {
     const uploadedKeys = Object.keys(evidenceBySlot);
     const slotMissing = missingTaskEvidenceSlotLabels(
       evidencePlan.slots.filter((item) => item.inputKind !== "file"),
-      fields,
+      fieldValues,
       uploadedKeys
     );
     if (slotMissing.length > 0) {
@@ -89,7 +92,7 @@ export function useTaskSubmissionFlow(input: {
       };
       // 字段 key 全部来自凝结核配置（spec）；fallback 模式只携带通用备注与
       // 原样声明的凭证要求文本，框架不携带任何业务字段名。
-      for (const [key, value] of Object.entries(fields)) {
+      for (const [key, value] of Object.entries(fieldValues)) {
         const trimmed = value.trim();
         if (trimmed) {
           metadataFields[key] = trimmed;
@@ -112,8 +115,10 @@ export function useTaskSubmissionFlow(input: {
       });
       setEvidenceBySlot((current) => ({ ...current, [slot.key]: result.data }));
       const proofResult = await api.getEvidenceProof(result.data.evidenceId);
+      // 证据核验态与上传归档统一按槽位 key 记录，渲染层按同一 key 读取。
       setProofsBySlot((current) => ({ ...current, [slot.key]: proofResult.data }));
       setEvidenceAction({ phase: "success", message: "凭证已上传，指纹已生成", source: result.source });
+      onMutationSuccess?.();
     } catch (error) {
       setEvidenceAction({ phase: "error", message: readableError(error, "凭证上传失败") });
     }
@@ -125,18 +130,15 @@ export function useTaskSubmissionFlow(input: {
       return;
     }
     const uploadedEntries = Object.entries(evidenceBySlot);
-    if (uploadedEntries.length === 0) {
-      setSubmitMachine({ status: "failed", message: "请先上传凭证并生成指纹" });
-      return;
-    }
-    const missingRequiredFiles = evidencePlan.slots.filter(
-      (slot) => slot.inputKind === "file" && slot.required && !evidenceBySlot[slot.key]
+    // 提交门槛与确认页一致：必填槽位全部满足即可提交；
+    // 任务没有文件要求时允许纯字段确认提交（evidenceIds 可为空），不再硬性要求至少一份上传。
+    const missingRequired = missingTaskEvidenceSlotLabels(
+      evidencePlan.slots,
+      fieldValues,
+      uploadedEntries.map(([key]) => key)
     );
-    if (missingRequiredFiles.length > 0) {
-      setSubmitMachine({
-        status: "failed",
-        message: `请先上传必需凭证：${missingRequiredFiles.map((slot) => slot.label).join("、")}`
-      });
+    if (missingRequired.length > 0) {
+      setSubmitMachine({ status: "failed", message: `请先补全必填项：${missingRequired.join("、")}` });
       return;
     }
     try {
@@ -200,6 +202,7 @@ export function useTaskSubmissionFlow(input: {
           submission: result.data,
           source: result.source
         });
+        onMutationSuccess?.();
         return;
       }
       if (result.data.status === "failed") {

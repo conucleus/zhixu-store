@@ -187,7 +187,6 @@ describe("task evidence slot required-check", () => {
       ["报关单 PDF", "报关单号", "出口港口", "完成时间"]
     );
   });
-
   it("ignores uploaded file slots, filled fields and optional slots", () => {
     const plan = planTaskEvidence({
       evidenceSpec: [
@@ -218,6 +217,41 @@ describe("task evidence slot required-check", () => {
     const plan = planTaskEvidence({ requiredEvidence: ["任意声明"] });
     assert.deepEqual(missingTaskEvidenceSlotLabels(plan.slots, {}, []), ["阶段凭证"]);
     assert.deepEqual(missingTaskEvidenceSlotLabels(plan.slots, {}, [FALLBACK_EVIDENCE_SLOT_KEY]), []);
+  });
+
+  it("treats a text/date-only task with all fields filled as submittable without any upload", () => {
+    const plan = planTaskEvidence({
+      evidenceSpec: [
+        { key: "completion_date", label: "完成时间", inputKind: "date", required: true },
+        { key: "remark", label: "备注说明", inputKind: "text", required: false }
+      ],
+      requiredEvidence: []
+    });
+    assert.deepEqual(missingTaskEvidenceSlotLabels(plan.slots, {}, []), ["完成时间"]);
+    assert.deepEqual(
+      missingTaskEvidenceSlotLabels(plan.slots, { completion_date: "2026-09-01" }, []),
+      []
+    );
+  });
+
+  it("treats a task with no evidence slots as submittable with zero uploads", () => {
+    const plan = planTaskEvidence({ requiredEvidence: [] });
+    assert.equal(plan.mode, "none");
+    assert.deepEqual(missingTaskEvidenceSlotLabels(plan.slots, {}, []), []);
+  });
+
+  it("still blocks submit while a required file slot has no upload", () => {
+    const plan = planTaskEvidence({
+      evidenceSpec: [
+        { key: "report", label: "报告", inputKind: "file", required: true },
+        { key: "completion_date", label: "完成时间", inputKind: "date", required: true }
+      ],
+      requiredEvidence: []
+    });
+    assert.deepEqual(
+      missingTaskEvidenceSlotLabels(plan.slots, { completion_date: "2026-09-01" }, []),
+      ["报告"]
+    );
   });
 });
 
