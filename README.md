@@ -5,6 +5,11 @@ Store and workbench product boundary.
 This domain is for the nucleus/operator side of UVP: designing, organizing,
 maintaining, and running Zhixu orders through chain-backed Product DTOs.
 
+Scope, staged goals, and anti-drift boundaries for this repository are defined
+in [STORE-CHARTER.md](./STORE-CHARTER.md). Agent orientation and debugging
+boundaries are in [AGENTS.md](./AGENTS.md). New features must be classified
+against the charter before implementation.
+
 - `app/`: current Store and order workbench frontend.
 
 ## Development Topology
