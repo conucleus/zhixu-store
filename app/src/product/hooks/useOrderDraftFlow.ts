@@ -220,11 +220,13 @@ export function useOrderDraftFlow(input: {
       [participant.participantId]: { phase: "pending", message: "正在发送邀请" }
     }));
     try {
+      // 不为缺失的联系方式编造占位值：contact 为空就如实传空，
+      // 页面会显示"未填写"并提示用其他渠道送达邀请链接。
       const result = await api.createInvite(currentDraft.draftId, {
         participantId: participant.participantId,
         roleSlotId: participant.roleSlotId,
         roleLabel: participant.roleLabel,
-        contact: participant.contact || `${participant.roleSlotId}@example.com`,
+        contact: participant.contact.trim(),
         displayName: participant.displayName || participant.roleLabel,
         required: participant.required
       });
@@ -234,7 +236,9 @@ export function useOrderDraftFlow(input: {
         ...current,
         [participant.participantId]: {
           phase: "success",
-          message: "邀请已生成，可复制链接发送给对方",
+          message: participant.contact.trim()
+            ? "邀请已生成，可复制链接发送给对方"
+            : "邀请已生成；该参与方未填写联系方式，请通过其他渠道把邀请链接送达，并请其补填联系方式",
           source: result.source,
           invite: result.data
         }

@@ -823,7 +823,7 @@ function ParticipantsPage({
                   <span className="role-icon">{roleSlotIcon(item.roleSlotId)}</span>
                   <strong>{item.roleLabel}</strong>
                 </div>
-                <p>{item.required ? "关键参与方，需要确认职责" : "可选参与方，可稍后邀请"}</p>
+                <p data-testid={`participant-contact-${item.participantId}`}>{item.required ? "关键参与方，需要确认职责" : "可选参与方，可稍后邀请"}；联系方式：{item.contact.trim() ? item.contact.trim() : "未填写"}</p>
                 <div className="evidence-list"><span><FileText />职责确认</span></div>
                 <StatusText tone={draftParticipantTone(item.status)}>{draftParticipantStatusLabel(item.status)}</StatusText>
                 <div className="row-actions">

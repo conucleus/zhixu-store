@@ -285,6 +285,39 @@ test.describe("Product Workbench browser smoke", () => {
     await expect(page.getByLabel(/备注/)).toHaveValue("视图切换前录入的备注");
   });
 
+  test("sends invites without synthesizing placeholder contacts", async ({ page }) => {
+    const inviteBodies: Array<{ readonly contact?: string }> = [];
+    await installWorkbenchRoutes(page);
+    // 后注册的路由优先：捕获邀请请求体后回落到通用桩
+    await page.route(`${STUB_API_BASE}/product/orders/*/invites`, async (route) => {
+      inviteBodies.push(route.request().postDataJSON() as { readonly contact?: string });
+      await route.fallback();
+    });
+    await page.goto("/app");
+    await page.getByRole("button", { name: "查看秩序详情" }).first().click();
+    await page.getByTestId("zhixu-create-order-button").click();
+    await page.getByLabel(/订单名称/).fill("邀请联系方式测试订单");
+    await page.getByRole("button", { name: "车辆" }).click();
+    await page.getByLabel(/^品牌型号/).fill("测试车型");
+    await page.getByLabel(/总金额/).fill("10000");
+    await page.getByLabel("币种").selectOption("USDC");
+    await page.getByTestId("create-draft-button").click();
+    await page.getByTestId("next-participants-button").click();
+    await expect(page.getByRole("heading", { name: "邀请参与方确认职责" })).toBeVisible();
+
+    // 桩数据里参与方没有联系方式：页面必须如实显示"未填写"
+    await expect(page.getByText("联系方式：未填写").first()).toBeVisible();
+
+    await page.getByRole("button", { name: "发送邀请" }).first().click();
+    await expect(page.getByText("邀请已生成；该参与方未填写联系方式").first()).toBeVisible();
+
+    // 请求体里不得出现编造的占位邮箱
+    expect(inviteBodies.length).toBeGreaterThan(0);
+    for (const body of inviteBodies) {
+      expect(body.contact ?? "").not.toContain("example.com");
+    }
+  });
+
   test("dispute page presents the unopened channel honestly without fabricated SLA steps", async ({ page }) => {
     await installWorkbenchRoutes(page);
     await page.goto("/app");
