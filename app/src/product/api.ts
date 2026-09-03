@@ -558,7 +558,9 @@ export class HttpProductApiClient implements ProductApiClient {
     if (!this.baseUrl) {
       throw new ApiMissingConfigError(pathname, "API base URL is not configured");
     }
-    return await fetchJson<TResponse>(this.baseUrl, pathname, { method, body });
+    // 写路径同样必须走注入的 fetchImpl：读路径（loadWorkbenchData）已注入，
+    // 测试里全局 fetch 不可达，漏传会在测试环境触发真实网络请求。
+    return await fetchJson<TResponse>(this.baseUrl, pathname, { method, body }, this.fetchImpl);
   }
 }
 

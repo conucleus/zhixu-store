@@ -137,3 +137,55 @@ describe("workbench data loading tolerance boundary", () => {
     assert.equal(data.zhixus.length, 2);
   });
 });
+
+describe("write paths honor the injected fetchImpl", () => {
+  it("routes createOrderDraft through the injected fetch and never touches global fetch", async () => {
+    const calls: Array<{ readonly path: string; readonly method: string; readonly body: unknown }> = [];
+    const injected = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = String(input);
+      calls.push({
+        path: url.replace(/^https?:\/\/[^/]+/u, ""),
+        method: init?.method ?? "GET",
+        body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined
+      });
+      return new Response(JSON.stringify({ draft: { draftId: "draft-1" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    }) as typeof fetch;
+
+    // 全局 fetch 直接炸掉：写路径若漏传 fetchImpl 回退到全局实现，测试会立即失败
+    const globalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new Error("global fetch must not be used when fetchImpl is injected");
+    }) as typeof fetch;
+    try {
+      const client = new HttpProductApiClient("https://api.test", { fetchImpl: injected });
+      const result = await client.createOrderDraft({
+        zhixuId: "zhixu-a",
+        title: "注入测试订单",
+        businessType: "工业设备",
+        totalAmount: "100",
+        currency: "USDC"
+      });
+      assert.equal(result.data.draftId, "draft-1");
+      assert.equal(result.source.baseUrl, "https://api.test");
+      assert.deepEqual(
+        calls,
+        [{
+          path: "/product/order-drafts",
+          method: "POST",
+          body: {
+            zhixuId: "zhixu-a",
+            title: "注入测试订单",
+            businessType: "工业设备",
+            totalAmount: "100",
+            currency: "USDC"
+          }
+        }]
+      );
+    } finally {
+      globalThis.fetch = globalFetch;
+    }
+  });
+});
