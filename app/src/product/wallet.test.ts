@@ -7,7 +7,7 @@ const WALLET = "0xAbC0000000000000000000000000000000000001";
 const validSubmitTypedData = {
   domain: {
     name: "UVPStateMachine",
-    version: "0.8",
+    version: "0.9",
     chainId: 31337,
     verifyingContract: "0x0000000000000000000000000000000000000001"
   },
@@ -21,7 +21,7 @@ const validSubmitTypedData = {
 const submitExpectation = {
   primaryType: "UVPStateMachineSignal",
   domainName: "UVPStateMachine",
-  domainVersion: "0.8",
+  domainVersion: "0.9",
   submitter: WALLET
 } as const;
 
@@ -166,7 +166,7 @@ describe("pre-signature typed data validation", () => {
     validateTypedDataForSigning(triggerTypedData, {
       primaryType: "UVPStateMachineTriggerOrderFromOutside",
       domainName: "UVPStateMachine",
-      domainVersion: "0.8",
+      domainVersion: "0.9",
       submitter: WALLET,
       preparedSubmitters: [WALLET]
     }, WALLET);

@@ -222,7 +222,7 @@ export function useTaskSubmissionFlow(input: {
       const signature = await signTypedData(account, preparedResult.data.typedData, {
         primaryType: "UVPStateMachineSignal",
         domainName: "UVPStateMachine",
-        domainVersion: "0.8",
+        domainVersion: "0.9",
         submitter: account.address,
         preparedSubmitters: [preparedResult.data.summary.walletAddress]
       });

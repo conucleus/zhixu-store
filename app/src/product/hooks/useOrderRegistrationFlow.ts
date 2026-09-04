@@ -29,7 +29,7 @@ export function useOrderRegistrationFlow(input: {
       const signature = await signTypedData(account, prepared.data.typedData, {
         primaryType: "UVPStateMachineTriggerOrderFromOutside",
         domainName: "UVPStateMachine",
-        domainVersion: "0.8",
+        domainVersion: "0.9",
         submitter: account.address,
         preparedSubmitters: [prepared.data.submitter]
       });
