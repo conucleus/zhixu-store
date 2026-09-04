@@ -29,7 +29,7 @@ import {
   UserCheck,
   WalletCards
 } from "lucide-react";
-import { useMemo, useState, type ChangeEvent, type ReactNode } from "react";
+import { useLayoutEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
 import type {
   ChainProofRowDTO,
   DockableModuleStatus,
@@ -67,6 +67,7 @@ import { idleAction, type ActionState, type ProductView, type SubmitMachineState
 import {
   acceptAttribute,
   acceptHint,
+  canCreateProductOrder,
   emptyTaskEvidenceFieldValues,
   missingTaskEvidenceSlotLabels,
   resolveWorkbenchTask,
@@ -112,6 +113,13 @@ export function ProductWorkbenchApp() {
   const selectedZhixu = data?.zhixu;
   const selectedOrder = data?.order;
   const activeTask = resolveWorkbenchTask(data?.tasks ?? [], selectedTaskId, data?.activeTask);
+  const taskScopeKey = activeTask?.taskId ?? "none";
+  useLayoutEffect(() => {
+    // Evidence and field values belong to one task. Clearing the scope on an
+    // identity change prevents a previous task's evidence IDs from being
+    // submitted with the next task.
+    setTaskEvidenceFields(emptyTaskEvidenceFieldValues);
+  }, [taskScopeKey]);
   const draftFlow = useOrderDraftFlow({ api, selectedZhixu, onMutationSuccess: refreshWorkbench });
   const {
     draft,
@@ -309,7 +317,7 @@ export function ProductWorkbenchApp() {
         {loadState.status === "ready" && view === "home" && selectedZhixu ? <CatalogPage zhixu={selectedZhixu} order={selectedOrder} task={activeTask} onViewDetail={() => setView("zhixu")} onCreate={() => setView("create")} onOrder={() => setView("order")} onTask={(taskId) => openTask(taskId)} /> : null}
         {loadState.status === "ready" && view === "zhixu" && selectedZhixu ? <ZhixuDetailPage zhixu={selectedZhixu} onBack={() => setView("home")} onCreate={() => setView("create")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : null}
         {loadState.status === "ready" && view === "create" && selectedZhixu ? <CreateOrderPage zhixu={selectedZhixu} draft={draft} createAction={draftAction} saveAction={saveDraftAction} values={draftFormValues} onValuesChange={(patch) => setDraftFormValues((current) => ({ ...current, ...patch }))} onBack={() => setView("zhixu")} onCreate={(values) => void handleCreateDraft(values)} onSave={(values) => void handleSaveDraft(values)} onNext={handleNextParticipants} /> : null}
-        {loadState.status === "ready" && view === "participants" ? <ParticipantsPage order={selectedOrder} draft={draft} draftParticipants={draftParticipants} inviteActions={inviteActions} registerAction={registerDraftAction} onBack={() => setView("create")} onInvite={handleSendInvite} onRegister={handleRegisterDraft} onOrder={() => setView("order")} /> : null}
+        {loadState.status === "ready" && view === "participants" ? <ParticipantsPage order={selectedOrder} draft={draft} draftParticipants={draftParticipants} draftParticipantsStatus={draftFlow.draftParticipantsStatus} draftParticipantsError={draftFlow.draftParticipantsError} inviteActions={inviteActions} registerAction={registerDraftAction} onBack={() => setView("create")} onInvite={handleSendInvite} onRegister={handleRegisterDraft} onOrder={() => setView("order")} /> : null}
         {loadState.status === "ready" && view === "order" ? selectedOrder ? <OrderOverviewPage order={selectedOrder} syncing={data.syncState === "syncing" || registerDraftAction.phase === "success"} onBack={() => setView("home")} onTask={() => setView("task")} onDispute={() => setView("dispute")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : <EmptyState title="暂无进行中订单" desc="创建并启动订单后，这里会展示订单总览、当前待办和最近事件。" /> : null}
         {loadState.status === "ready" && view === "task" ? activeTask ? <TaskPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} evidenceProofsBySlot={evidenceProofsBySlot} uploadAction={evidenceAction} canConfirm={canConfirmSubmit} missingEvidenceLabels={missingEvidenceSlotLabels} staleSlotLabels={staleSlotLabels} fieldValues={taskEvidenceFields} onFieldValuesChange={(patch) => setTaskEvidenceFields((current) => ({ ...current, ...patch }))} onBack={() => setView("order")} onUpload={(slotKey, file) => void handleUploadEvidence(slotKey, file)} onSubmit={() => setView("submit")} onDispute={() => setView("dispute")} /> : <EmptyState title="暂无待办" desc="当前没有需要你处理的任务。" /> : null}
         {loadState.status === "ready" && view === "submit" ? activeTask ? <SubmitPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} submitMachine={submitMachine} canSubmit={canConfirmSubmit} staleSlotLabels={staleSlotLabels} onBack={() => setView("task")} onSubmit={() => void handleConfirmSubmit()} onOrder={() => setView("order")} /> : <EmptyState title="暂无可提交的待办" desc="待办完成凭证上传后，可在这里确认提交。" /> : null}
@@ -391,7 +399,7 @@ function ParticipantAppPage({
   const completedTasks = data.tasks.filter((task) => task.status === "done" || task.status === "submitted");
   const primaryTask = openTasks[0] ?? data.activeTask;
   const zhixu = data.zhixu;
-  const canCreate = zhixu?.reviewStatus === "approved";
+  const canCreate = zhixu ? canCreateProductOrder(zhixu) : false;
 
   return (
     <section className="page-shell" data-testid="participant-app-page">
@@ -503,14 +511,16 @@ function CatalogPage({
   onOrder: () => void;
   onTask: (taskId: string) => void;
 }) {
-  const canCreate = zhixu.reviewStatus === "approved";
+  const canCreate = canCreateProductOrder(zhixu);
+  const catalogFilters = [...new Set(["全部", ...zhixu.applicableBusiness])];
+  const roleSummary = zhixu.roleSlots.slice(0, 3).map((slot) => slot.title).join("、") || "各参与角色";
   return (
     <section className="page-shell" data-testid="catalog-page">
       <section className="store-hero">
         <div>
           <StatusBadge icon={<ShieldCheck />} tone="success">共同秩序审核</StatusBadge>
-          <h1>把跨境订单拆成每个人看得懂的待办</h1>
-          <p>选择审核过的秩序，邀请买家、卖家、物流、检验方按同一套规则协作。每次确认都会留下可核对的证明，方便后续付款、验收和争议处理。</p>
+          <h1>把秩序拆成每个人看得懂的待办</h1>
+          <p>选择已发布的秩序，邀请 {roleSummary} 按同一套规则协作。每次确认都会留下可核对的证明，方便后续处理与复核。</p>
           <div className="button-row">
             <button className={canCreate ? "primary-button" : "disabled-button"} data-testid="catalog-create-order-button" onClick={canCreate ? onCreate : undefined} disabled={!canCreate}>创建订单</button>
             <button className="secondary-button" data-testid="catalog-detail-button" onClick={onViewDetail}>查看秩序详情</button>
@@ -529,7 +539,7 @@ function CatalogPage({
           <input placeholder="搜索业务、角色或凭证" />
         </label>
         <div className="catalog-filter-row">
-          {["全部", "工业设备", "高价值货物"].map((item, index) => (
+          {catalogFilters.map((item, index) => (
             <button className={`filter-chip ${index === 0 ? "is-active" : ""}`} key={item}>{item}</button>
           ))}
         </div>
@@ -611,7 +621,7 @@ function ZhixuDetailPage({
   proofOpen: boolean;
   setProofOpen: (value: boolean) => void;
 }) {
-  const canCreate = zhixu.reviewStatus === "approved";
+  const canCreate = canCreateProductOrder(zhixu);
   return (
     <section className="page-shell" data-testid="zhixu-detail-page">
       <BackLine onClick={onBack}>返回秩序库</BackLine>
@@ -620,7 +630,7 @@ function ZhixuDetailPage({
           <h1>{zhixu.title}</h1>
           <p>{zhixu.subtitle}</p>
         </div>
-        <StatusBadge icon={<ShieldCheck />} tone={zhixu.reviewStatus === "approved" ? "success" : "warning"}>{zhixu.reviewLabel}</StatusBadge>
+        <StatusBadge icon={<ShieldCheck />} tone={canCreate ? "success" : "warning"}>{zhixu.reviewLabel}</StatusBadge>
       </div>
 
       <div className="notice-grid">
@@ -644,7 +654,7 @@ function ZhixuDetailPage({
             <div className="panel-heading">
               <div>
                 <h2>可扩展协作模块</h2>
-                <p>可按业务需要接入资金保障、物流、验收和争议处理模块。</p>
+                <p>可按秩序配置接入协作模块；模块状态以当前秩序数据为准。</p>
               </div>
             </div>
             <DockableModules modules={zhixu.dockableModules} />
@@ -684,8 +694,6 @@ function ZhixuDetailPage({
   );
 }
 
-const BUSINESS_TYPE_OPTIONS = ["车辆", "工业设备", "其他高价值货物"] as const;
-
 function CreateOrderPage({
   zhixu,
   draft,
@@ -709,40 +717,30 @@ function CreateOrderPage({
   onSave: (values: OrderDraftFormValues) => void;
   onNext: () => void;
 }) {
-  const canCreate = zhixu.reviewStatus === "approved";
+  const canCreate = canCreateProductOrder(zhixu);
 
   return (
     <section className="page-shell" data-testid="create-order-page">
       <BackLine onClick={onBack}>返回秩序详情</BackLine>
-      <h1>创建跨境订单</h1>
-      <StepBar current={2} steps={["确认秩序", "订单信息", "参与方", "付款条件", "预览并发起"]} />
-      {!canCreate ? <StatePanel icon={<AlertTriangle />} title="该秩序当前不可创建新订单" desc="请换用已审核且未撤销的秩序。" tone="error" /> : null}
+      <h1>创建订单</h1>
+      <StepBar current={2} steps={["确认秩序", "订单信息", "参与方", "订单条件", "预览并发起"]} />
+      {!canCreate ? <StatePanel icon={<AlertTriangle />} title="该秩序当前不可创建新订单" desc="请使用已审核且已发布的秩序。" tone="error" /> : null}
       <div className="content-layout">
         <Panel>
           <h2>订单信息</h2>
           <div className="form-grid">
             <Field label="订单名称" required value={values.title} onChange={(title) => onValuesChange({ title })} placeholder="请输入订单名称" />
-            <ChoiceGroup
-              label="标的物类型"
-              options={[...BUSINESS_TYPE_OPTIONS]}
-              active={values.businessType}
-              onSelect={(businessType) => onValuesChange({ businessType })}
-            />
-            <Field label="VIN" value={values.vin} onChange={(vin) => onValuesChange({ vin })} placeholder="请输入 VIN（选填）" />
-            <Field label="品牌型号" required value={values.brandModel} onChange={(brandModel) => onValuesChange({ brandModel })} placeholder="请输入品牌型号" />
-            <Field label="数量" value={values.quantity} onChange={(quantity) => onValuesChange({ quantity })} suffix="台" placeholder="请输入数量" />
+            <Field label="业务类型" required value={values.businessType} onChange={(businessType) => onValuesChange({ businessType })} placeholder="按秩序配置填写" />
+            <Textarea label="对象说明（可选）" value={values.goodsText} onChange={(goodsText) => onValuesChange({ goodsText })} placeholder="填写秩序要求的对象或交付说明，每行一项" />
             <Field label="总金额" required value={values.totalAmount} onChange={(totalAmount) => onValuesChange({ totalAmount })} placeholder="请输入总金额" />
             <SelectField label="币种" required value={values.currency} onChange={(currency) => onValuesChange({ currency })} options={[...new Set([values.currency.trim(), ...zhixu.supportedPaymentMethods].filter((item) => item.length > 0))]} />
-            <Field label="出口国家/地区" required value={values.exportRegion} onChange={(exportRegion) => onValuesChange({ exportRegion })} placeholder="请输入出口国家/地区" />
-            <Field label="目的国家/地区" required value={values.destinationRegion} onChange={(destinationRegion) => onValuesChange({ destinationRegion })} placeholder="请输入目的国家/地区" />
-            <Field label="预计完成日期" required type="date" value={values.expectedCompletionDate} onChange={(expectedCompletionDate) => onValuesChange({ expectedCompletionDate })} icon={<CalendarDays />} />
             <Textarea label="备注" value={values.notes} onChange={(notes) => onValuesChange({ notes })} placeholder="请输入备注（如有特殊说明可在此填写）" />
           </div>
         </Panel>
         <aside className="side-card">
           <h2>订单摘要</h2>
           <SideMetric label="使用秩序" value={zhixu.title} />
-          <SideMetric label="审核状态" value={<StatusBadge icon={<ShieldCheck />} tone={zhixu.reviewStatus === "approved" ? "success" : "warning"}>{zhixu.reviewLabel}</StatusBadge>} />
+          <SideMetric label="审核状态" value={<StatusBadge icon={<ShieldCheck />} tone={canCreate ? "success" : "warning"}>{zhixu.reviewLabel}</StatusBadge>} />
           <SideMetric label="阶段数" value={String(zhixu.stageCount)} />
           <SideMetric label="当前还需要" value="邀请所有关键参与方确认职责" />
           <SideMetric label="草稿状态" value={draft ? draftStatusLabel(draft.status) : "尚未创建"} />
@@ -765,6 +763,8 @@ function ParticipantsPage({
   order,
   draft,
   draftParticipants,
+  draftParticipantsStatus,
+  draftParticipantsError,
   inviteActions,
   registerAction,
   onBack,
@@ -775,6 +775,8 @@ function ParticipantsPage({
   order?: ProductOrderDTO | undefined;
   draft?: ProductOrderDraftDTO | undefined;
   draftParticipants: readonly DraftParticipantDTO[];
+  draftParticipantsStatus: "unknown" | "loading" | "ready" | "error";
+  draftParticipantsError?: string | undefined;
   inviteActions: Readonly<Record<string, ActionState & { readonly invite?: ProductInviteDTO | undefined }>>;
   registerAction: ActionState;
   onBack: () => void;
@@ -790,9 +792,12 @@ function ParticipantsPage({
       </section>
     );
   }
-  const requiredReady = draftParticipants.filter((item) => item.required).every((item) =>
-    item.status === "accepted"
-  );
+  const requiredParticipants = draftParticipants.filter((item) => item.required);
+  // Empty/unknown participant data is not proof that all required parties
+  // agreed. Require a successful, non-empty response and explicit acceptance.
+  const requiredReady = draftParticipantsStatus === "ready" &&
+    requiredParticipants.length > 0 &&
+    requiredParticipants.every((item) => item.status === "accepted");
   return (
     <section className="page-shell">
       <BackLine onClick={onBack}>返回订单信息</BackLine>
@@ -806,6 +811,25 @@ function ParticipantsPage({
       <div className="content-layout">
         <Panel>
           <h2>参与方及职责</h2>
+          {draftParticipantsStatus === "loading" ? <div className="inline-empty">正在加载参与方清单…</div> : null}
+          {draftParticipantsStatus === "error" ? (
+            <div className="warning-box" role="alert" data-testid="participants-load-error">
+              <AlertTriangle />
+              <div>
+                <strong>参与方清单加载失败</strong>
+                <p>{draftParticipantsError ?? "无法确认参与方状态，请稍后重试。"}</p>
+              </div>
+            </div>
+          ) : null}
+          {draftParticipantsStatus === "ready" && draftParticipants.length === 0 ? (
+            <div className="warning-box" role="alert" data-testid="participants-empty-state">
+              <AlertTriangle />
+              <div>
+                <strong>参与方清单为空</strong>
+                <p>尚未收到任何参与方记录，无法确认启动条件。</p>
+              </div>
+            </div>
+          ) : null}
           <div className="participant-table">
             <div className="participant-head">
               <span>角色</span>
@@ -839,7 +863,7 @@ function ParticipantsPage({
           <button className={requiredReady ? "primary-button block" : "disabled-button block"} data-testid="register-order-button" onClick={requiredReady ? onRegister : undefined} disabled={!requiredReady || registerAction.phase === "pending"}>
             {registerAction.phase === "pending" ? <Loader2 className="spin" /> : <LockKeyhole />} 全部关键方确认后启动订单
           </button>
-          <p className="center-note">仅当所有启动条件满足后，启动按钮才会可用。</p>
+          <p className="center-note">仅当参与方清单已成功加载且所有关键参与方满足条件后，启动按钮才会可用。</p>
           <ActionNotice state={registerAction} />
         </Panel>
         <aside className="side-card">
@@ -895,7 +919,7 @@ function OrderOverviewPage({
       {syncing ? <StatePanel icon={<RefreshCw className="spin" />} title="订单状态同步中" desc="提交已发出，订单页正在等待后端投影更新。" tone="info" /> : null}
       <div className="order-kpis">
         <Kpi label="总金额" value={order.totalAmount.display} />
-        <Kpi label="付款条件" value={order.fundingStatus} icon={<ShieldCheck />} tone="success" />
+        <Kpi label="资金状态" value={fundingStatusDisplay(order.fundingStatus)} icon={<AlertTriangle />} />
         <Kpi label="当前阶段" value={order.currentStageName} icon={<Layers3 />} tone="success" />
       </div>
       <div className="content-layout">
@@ -928,10 +952,10 @@ function OrderOverviewPage({
               <ParticipantStatus key={item.participantId} active={item.participantId === firstJoinedParticipantId(order)} text={`${item.role} ${participantStatusLabel(item.status)}`} />
             ))}
           </SidePanel>
-          <SidePanel title="付款条件">
+          <SidePanel title="资金信息">
             <MoneyRow label="订单金额" value={order.totalAmount.display} />
-            <MoneyRow label="保障确认" value={order.fundingStatus} success />
-            <span className="text-button as-label">付款条件来自订单状态</span>
+            <MoneyRow label="资金状态" value={fundingStatusDisplay(order.fundingStatus)} />
+            <span className="text-button as-label">资金状态来自订单 DTO；未接入时不会显示为已保障。</span>
           </SidePanel>
           <SidePanel title="最近事件" action="查看全部">
             {order.recentEvents.map((event) => <EventLine key={event.eventId} text={event.text} time={event.time} />)}
@@ -1678,6 +1702,10 @@ function Kpi({ label, value, icon, tone }: { label: string; value: string; icon?
       <strong className={tone ?? ""}>{icon}{value}</strong>
     </div>
   );
+}
+
+function fundingStatusDisplay(value: string): string {
+  return value.trim() || "未接入";
 }
 
 function SummaryItem({ icon, label, title, tone }: { icon: ReactNode; label?: string | undefined; title: string; tone?: "success" | undefined }) {

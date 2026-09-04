@@ -187,11 +187,32 @@ export function readableStoreError(error: unknown, fallback: string): string {
       return "403：当前 Store 访问状态没有写入权限";
     }
     if (error.status > 0) {
+      if (error.status === 409) {
+        const candidates = ambiguousOrderCandidates(error.details);
+        if (candidates.length > 0) {
+          return `409：订单标识不唯一，请选择候选记录：${candidates.join("、")}`;
+        }
+        return `409：请求对应多个订单候选，请选择明确的订单记录后重试`;
+      }
       return `${error.status}：${error.code ?? error.message}`;
     }
     return error.message;
   }
   return error instanceof Error ? error.message : fallback;
+}
+
+function ambiguousOrderCandidates(details: unknown): readonly string[] {
+  if (!isRecord(details) || !Array.isArray(details.candidates)) {
+    return [];
+  }
+  return details.candidates.flatMap((candidate) => {
+    if (!isRecord(candidate)) {
+      return [];
+    }
+    const orderId = stringValue(candidate.orderId);
+    const title = stringValue(candidate.title);
+    return orderId ? [title ? `${title}（${orderId}）` : orderId] : [];
+  });
 }
 
 class BrowserStoreApiClient implements StoreApiClient {
@@ -385,7 +406,7 @@ class BrowserStoreApiClient implements StoreApiClient {
     const pathname = "/store/runtime/summary";
     return await this.withRead(pathname, async () =>
       await this.requestJson<unknown>("GET", pathname).then(
-        runtimeSummaryFromResponse,
+        parseStoreRuntimeSummary,
       ),
     );
   }
@@ -617,29 +638,51 @@ function storeSearchParams(query: StoreSearchInput): string {
   return params.toString();
 }
 
-function runtimeSummaryFromResponse(response: unknown): StoreRuntimeSummaryDTO {
+export function parseStoreRuntimeSummary(response: unknown): StoreRuntimeSummaryDTO {
   const record = requiredStoreRecord(
     response,
     "/store/runtime/summary",
     "store_runtime_summary_response_invalid",
   );
+  if (record.sourceOfTruth !== "contracts-and-chain-events") {
+    throw new StoreApiError(
+      "/store/runtime/summary",
+      0,
+      "store_runtime_summary_response_invalid",
+      { code: "store_runtime_summary_response_invalid" },
+    );
+  }
   return {
-    activeZhixus: requiredStoreNumber(
+    sourceOfTruth: "contracts-and-chain-events",
+    activeZhixuCount: requiredStoreNumber(
       record.activeZhixuCount,
       "/store/runtime/summary",
       "store_runtime_summary_response_invalid",
     ),
-    runningOrders: requiredStoreNumber(
+    runningOrderCount: requiredStoreNumber(
       record.runningOrderCount,
       "/store/runtime/summary",
       "store_runtime_summary_response_invalid",
     ),
-    openTasks: requiredStoreNumber(
+    openTaskCount: requiredStoreNumber(
       record.openTaskCount,
       "/store/runtime/summary",
       "store_runtime_summary_response_invalid",
     ),
-    sourceOfTruth: "contracts-and-chain-events",
+    blockedOrderCount: requiredStoreNumber(
+      record.blockedOrderCount,
+      "/store/runtime/summary",
+      "store_runtime_summary_response_invalid",
+    ),
+    indexerStatus: requiredStoreIndexerStatus(
+      record.indexerStatus,
+      "/store/runtime/summary",
+    ),
+    updatedAt: requiredStoreString(
+      record.updatedAt,
+      "/store/runtime/summary",
+      "store_runtime_summary_response_invalid",
+    ),
   };
 }
 
@@ -750,6 +793,25 @@ function requiredStoreNumber(
     throw new StoreApiError(pathname, 0, code, { code });
   }
   return value;
+}
+
+function requiredStoreString(value: unknown, pathname: string, code: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new StoreApiError(pathname, 0, code, { code });
+  }
+  return value;
+}
+
+function requiredStoreIndexerStatus(
+  value: unknown,
+  pathname: string,
+): StoreRuntimeSummaryDTO["indexerStatus"] {
+  if (value === "ready" || value === "syncing" || value === "rebuilding" || value === "degraded") {
+    return value;
+  }
+  throw new StoreApiError(pathname, 0, "store_runtime_summary_response_invalid", {
+    code: "store_runtime_summary_response_invalid",
+  });
 }
 
 function proofRowsFromResponse(value: unknown): StoreSupplierDTO["proofRows"] {

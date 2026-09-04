@@ -127,8 +127,8 @@ export function StoreZhixuDetailPage({
 
           <div className="store-ops-row">
             <Metric icon={<ShieldCheck />} label="发布" value={zhixu.planPublication.label} />
-            <Metric icon={<Truck />} label="订单" value={`${zhixu.orderCount} 单`} />
-            <Metric icon={<Users />} label="供应商" value={`${zhixu.supplierCount} 个`} />
+            <Metric icon={<Truck />} label="订单" value={storeMetricValue(zhixu, "orderCount", "单")} />
+            <Metric icon={<Users />} label="供应商" value={storeMetricValue(zhixu, "supplierCount", "个")} />
           </div>
 
           <section className="store-role-matrix" aria-label="角色与阶段配置">
@@ -341,6 +341,17 @@ function Metric({ icon, label, value }: { readonly icon: ReactNode; readonly lab
       <strong>{value}</strong>
     </div>
   );
+}
+
+function storeMetricValue(
+  zhixu: Pick<StoreZhixuDetailDTO, "metricsStatus" | "orderCount" | "openTaskCount" | "supplierCount">,
+  field: "orderCount" | "openTaskCount" | "supplierCount",
+  suffix: string,
+): string {
+  if (zhixu.metricsStatus !== "observed") {
+    return "未知";
+  }
+  return `${zhixu[field]} ${suffix}`;
 }
 
 function TagList({

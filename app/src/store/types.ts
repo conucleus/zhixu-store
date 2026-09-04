@@ -4,6 +4,7 @@ import type {
   StoreConsoleSummaryDTO,
   StoreProductSchemaDTO,
   StoreProductSchemaValidationDTO,
+  StoreRuntimeSummaryDTO as FrozenStoreRuntimeSummaryDTO,
   StoreSearchResponseDTO,
   StoreSearchType,
   StoreSupplierReviewStatus,
@@ -185,12 +186,8 @@ export interface StoreSupplierMutationResultDTO {
   readonly governance?: unknown;
 }
 
-export interface StoreRuntimeSummaryDTO {
-  readonly activeZhixus: number;
-  readonly runningOrders: number;
-  readonly openTasks: number;
-  readonly sourceOfTruth: "contracts-and-chain-events";
-}
+/** Frozen Store runtime DTO; this consumer must not rename or drop fields. */
+export type StoreRuntimeSummaryDTO = FrozenStoreRuntimeSummaryDTO;
 
 export interface StoreDockingSessionCreateDTO {
   readonly sourceZhixuId: string;

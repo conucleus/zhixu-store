@@ -43,6 +43,23 @@ export interface ProductWorkbenchData {
   readonly diagnostics: readonly WorkbenchEndpointDiagnostic[];
 }
 
+/**
+ * `/product/orders` and `/product/tasks` add projection freshness metadata to
+ * the frozen Product DTOs.  Keep that transport extension explicit here: the
+ * frozen DTO itself deliberately does not claim to contain `projection`.
+ */
+interface ProductProjectionFreshnessDTO {
+  readonly updatedAtBlock?: string | undefined;
+}
+
+type ProductOrderApiDTO = ProductOrderDTO & {
+  readonly projection?: ProductProjectionFreshnessDTO | undefined;
+};
+
+type ProductTaskApiDTO = ProductTaskDTO & {
+  readonly projection?: ProductProjectionFreshnessDTO | undefined;
+};
+
 export type ProductSyncState = "ready" | "syncing" | "fallback";
 
 export interface WorkbenchEndpointDiagnostic {
@@ -329,7 +346,11 @@ export class HttpProductApiClient implements ProductApiClient {
       {},
       this.fetchImpl
     );
-    const visibleSummaries = zhixusResponse.zhixus.filter((zhixu) => zhixu.reviewStatus === "approved");
+    // Restricted plans are still eligible when their frozen lifecycle says
+    // active; do not silently hide them by checking approval alone.
+    const visibleSummaries = zhixusResponse.zhixus.filter((zhixu) =>
+      zhixu.reviewStatus === "approved" || zhixu.reviewStatus === "restricted"
+    );
     const zhixuDetailAttempts = await Promise.all(
       visibleSummaries.map(async (summary) => ({
         path: `/product/zhixus/${encodeURIComponent(summary.zhixuId)}`,
@@ -341,8 +362,8 @@ export class HttpProductApiClient implements ProductApiClient {
       { path: "/product/tasks", label: "tasks" }
     ] as const;
     const [ordersSettled, tasksSettled, meSettled] = await Promise.allSettled([
-      fetchJsonWithTimeout<{ readonly orders: readonly ProductOrderDTO[] }>(this.baseUrl, "/product/orders", UVP_WORKBENCH_FETCH_TIMEOUT_MS, {}, this.fetchImpl),
-      fetchJsonWithTimeout<{ readonly tasks: readonly ProductTaskDTO[] }>(this.baseUrl, "/product/tasks", UVP_WORKBENCH_FETCH_TIMEOUT_MS, {}, this.fetchImpl),
+      fetchJsonWithTimeout<{ readonly orders: readonly ProductOrderApiDTO[] }>(this.baseUrl, "/product/orders", UVP_WORKBENCH_FETCH_TIMEOUT_MS, {}, this.fetchImpl),
+      fetchJsonWithTimeout<{ readonly tasks: readonly ProductTaskApiDTO[] }>(this.baseUrl, "/product/tasks", UVP_WORKBENCH_FETCH_TIMEOUT_MS, {}, this.fetchImpl),
       fetchJsonWithTimeout<{
         readonly participant: ProductParticipantProfileDTO;
         readonly summary?: unknown;
@@ -370,6 +391,13 @@ export class HttpProductApiClient implements ProductApiClient {
     const zhixus = zhixuDetailAttempts.flatMap(({ result }) =>
       result.status === "fulfilled" ? [result.value] : []
     );
+
+    // A non-empty catalog whose every detail failed is an unavailable catalog,
+    // not an empty one. Preserve endpoint diagnostics so the UI can explain
+    // the failure instead of claiming that no orderable zhixu exists.
+    if (visibleSummaries.length > 0 && zhixus.length === 0) {
+      throw new WorkbenchLoadError(diagnostics, { kind: "real", baseUrl: this.baseUrl });
+    }
 
     const ordersResponse = settledValue(ordersSettled, "/product/orders");
     const tasksResponse = settledValue(tasksSettled, "/product/tasks");
@@ -907,18 +935,30 @@ function isSyncing(task: ProductTaskDTO | undefined): boolean {
   return task?.status === "blocked";
 }
 
-function sortLatestProjectionFirst<TItem>(items: readonly TItem[]): readonly TItem[] {
-  return [...items].sort((left, right) => projectionUpdatedAtBlock(right) - projectionUpdatedAtBlock(left));
+function sortLatestProjectionFirst<TItem extends { readonly projection?: ProductProjectionFreshnessDTO | undefined }>(items: readonly TItem[]): readonly TItem[] {
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((left, right) => {
+      const rightBlock = projectionUpdatedAtBlock(right.item);
+      const leftBlock = projectionUpdatedAtBlock(left.item);
+      if (rightBlock !== undefined && leftBlock !== undefined && rightBlock !== leftBlock) {
+        return rightBlock > leftBlock ? 1 : -1;
+      }
+      if (rightBlock !== undefined && leftBlock === undefined) {
+        return 1;
+      }
+      if (rightBlock === undefined && leftBlock !== undefined) {
+        return -1;
+      }
+      return left.index - right.index;
+    })
+    .map(({ item }) => item);
 }
 
-function projectionUpdatedAtBlock(value: unknown): number {
-  if (!isRecord(value) || !isRecord(value.projection)) {
-    return 0;
+function projectionUpdatedAtBlock(value: { readonly projection?: ProductProjectionFreshnessDTO | undefined }): bigint | undefined {
+  const block = value.projection?.updatedAtBlock;
+  if (typeof block !== "string" || !/^\d+$/u.test(block)) {
+    return undefined;
   }
-  const block = value.projection.updatedAtBlock;
-  if (typeof block !== "string") {
-    return 0;
-  }
-  const parsed = Number(block);
-  return Number.isFinite(parsed) ? parsed : 0;
+  return BigInt(block);
 }

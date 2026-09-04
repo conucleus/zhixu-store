@@ -53,7 +53,7 @@ test.describe("Product Workbench full browser Product E2E @full", () => {
       await assertOrdinaryPageCopy(page);
 
       await page.getByTestId("zhixu-create-order-button").click();
-      await expect(page.getByRole("heading", { name: "创建跨境订单" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "创建订单" })).toBeVisible();
       await fillCreateOrderForm(page);
       await page.getByTestId("create-draft-button").click();
       await expect(page.getByText("订单草稿已创建")).toBeVisible({ timeout: 20_000 });
@@ -104,7 +104,7 @@ test.describe("Product Workbench full browser Product E2E @full", () => {
     skipUnlessFullBackend();
     await openParticipantsWithoutAccepting(page);
     await expect(page.getByTestId("register-order-button")).toBeDisabled();
-    await expect(page.getByText("仅当所有启动条件满足后，启动按钮才会可用。")).toBeVisible();
+    await expect(page.getByText("仅当参与方清单已成功加载且所有关键参与方满足条件后，启动按钮才会可用。")).toBeVisible();
     await expect(page.getByText("当前订单无法启动")).toBeVisible();
   });
 
@@ -169,14 +169,10 @@ async function expectProductE2EControlsDisabled(page: Page, apiBaseUrl?: string)
 
 async function fillCreateOrderForm(page: Page): Promise<void> {
   await page.getByLabel(/订单名称/).fill("全流程 e2e 采购订单");
-  await page.getByRole("button", { name: "车辆" }).click();
-  await page.getByLabel(/^品牌型号/).fill("Toyota Land Cruiser 300");
-  await page.getByLabel(/数量/).fill("1");
+  await page.getByLabel(/业务类型/).fill("车辆");
+  await page.getByLabel(/对象说明/).fill("Toyota Land Cruiser 300");
   await page.getByLabel(/总金额/).fill("10000");
   await page.getByLabel("币种").selectOption({ index: 0 });
-  await page.getByLabel("出口国家/地区").fill("中国");
-  await page.getByLabel("目的国家/地区").fill("阿联酋");
-  await page.getByLabel("预计完成日期").fill("2026-12-31");
 }
 
 async function openParticipantsWithoutAccepting(page: Page): Promise<void> {
@@ -185,7 +181,7 @@ async function openParticipantsWithoutAccepting(page: Page): Promise<void> {
   await page.getByTestId("catalog-detail-button").click();
   await expect(page.getByRole("heading", { name: /跨境高价值货物|秩序详情/ })).toBeVisible();
   await page.getByTestId("zhixu-create-order-button").click();
-  await expect(page.getByRole("heading", { name: "创建跨境订单" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "创建订单" })).toBeVisible();
   await fillCreateOrderForm(page);
   await page.getByTestId("create-draft-button").click();
   await expect(page.getByTestId("product-workbench")).not.toHaveAttribute("data-uvp-draft-id", "");

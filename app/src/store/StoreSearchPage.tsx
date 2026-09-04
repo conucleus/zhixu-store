@@ -2,6 +2,7 @@ import { AlertTriangle, CheckCircle2, ClipboardCheck, FileCheck2, GitBranch, Lay
 import { useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type { StoreProductSchemaDTO, StoreProductSchemaValidationDTO, StoreSearchType } from "@uvp-eth/product-dto";
+import type { StoreZhixuConsoleDTO } from "@uvp-eth/product-dto";
 import { readableStoreError } from "./api";
 import type {
   StoreAccessState,
@@ -86,6 +87,7 @@ export function StoreSearchPage({
   const [schemaText, setSchemaText] = useState("");
 
   const schemaLocked = reviewDraft ? isSchemaLockedStatus(reviewDraft.status) : false;
+  const summaryMetricsObserved = result.zhixus.every((zhixu) => zhixu.metricsStatus === "observed");
 
   async function handleSearchSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -255,8 +257,8 @@ export function StoreSearchPage({
               <SummaryItem icon={<Layers3 />} label="秩序" title={`${result.summary.totalZhixus} 条`} />
               <SummaryItem icon={<ShieldCheck />} label="可用" title={`${result.summary.activeZhixus} 条`} tone="success" />
               <SummaryItem icon={<ClipboardCheck />} label="待处理" title={`${result.summary.needsReview} 条`} tone={result.summary.needsReview > 0 ? "warning" : undefined} />
-              <SummaryItem icon={<Truck />} label="运行订单" title={`${result.summary.runningOrders} 单`} />
-              <SummaryItem icon={<Users />} label="已登记执行方" title={`${result.summary.registeredSuppliers} 个`} />
+              <SummaryItem icon={<Truck />} label="运行订单" title={summaryMetricsObserved ? `${result.summary.runningOrders} 单` : "未知"} />
+              <SummaryItem icon={<Users />} label="已登记执行方" title={summaryMetricsObserved ? `${result.summary.registeredSuppliers} 个` : "未知"} />
             </div>
           </section>
 
@@ -650,7 +652,7 @@ function ZhixuCatalogTable({
             </div>
             <StatusBadge tone={statusTone(zhixu.lifecycleStatus)}>{zhixu.lifecycleLabel}</StatusBadge>
             <span>{zhixu.planPublication.label}</span>
-            <span>{zhixu.orderCount} 单 / {zhixu.openTaskCount} 待办</span>
+            <span data-metric-status={zhixu.metricsStatus}>{storeMetricValue(zhixu, "orderCount", "单")} / {storeMetricValue(zhixu, "openTaskCount", "待办")}</span>
             <button className="secondary-button" data-testid="store-open-zhixu-button" onClick={() => onOpenZhixu(zhixu.zhixuId)}>查看</button>
           </article>
         ))}
@@ -661,6 +663,17 @@ function ZhixuCatalogTable({
       ) : null}
     </>
   );
+}
+
+function storeMetricValue(
+  zhixu: Pick<StoreZhixuConsoleDTO, "metricsStatus" | "orderCount" | "openTaskCount" | "supplierCount">,
+  field: "orderCount" | "openTaskCount" | "supplierCount",
+  suffix: string,
+): string {
+  if (zhixu.metricsStatus !== "observed") {
+    return "未知";
+  }
+  return `${zhixu[field]} ${suffix}`;
 }
 
 function TypedSearchResults({

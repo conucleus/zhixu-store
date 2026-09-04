@@ -6,6 +6,7 @@ import {
   acceptAllowsFile,
   acceptAttribute,
   acceptHint,
+  canCreateProductOrder,
   acceptIncludesPdf,
   evidenceMetadataSignature,
   FALLBACK_EVIDENCE_SLOT_KEY,
@@ -47,6 +48,28 @@ function fakeFile(input: { readonly name: string; readonly type: string; readonl
   }
   return file;
 }
+
+describe("frozen zhixu lifecycle gates", () => {
+  const publication = {
+    status: "published" as const,
+    label: "已发布",
+    stateMachineLabel: "已部署",
+    planId: "plan-1",
+    planHash: "hash-1"
+  };
+
+  it("requires publication in addition to review approval", () => {
+    assert.equal(canCreateProductOrder({ reviewStatus: "approved", planPublication: publication }), true);
+    assert.equal(canCreateProductOrder({
+      reviewStatus: "approved",
+      planPublication: { ...publication, status: "not_found" }
+    }), false);
+  });
+
+  it("keeps restricted published plans active", () => {
+    assert.equal(canCreateProductOrder({ reviewStatus: "restricted", planPublication: publication }), true);
+  });
+});
 
 describe("task evidence plan (schema-driven)", () => {
   it("builds slots from the nucleation-core-carried evidenceSpec", () => {

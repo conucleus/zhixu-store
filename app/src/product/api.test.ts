@@ -136,6 +136,76 @@ describe("workbench data loading tolerance boundary", () => {
     assert.equal(data.syncState, "ready");
     assert.equal(data.zhixus.length, 2);
   });
+
+  it("keeps restricted published zhixus in the product catalog", async () => {
+    const restricted = { ...stubZhixuB, reviewStatus: "restricted" };
+    const client = clientWith(baseRoutes({
+      "/product/zhixus": { body: { zhixus: [restricted] } },
+      "/product/zhixus/zhixu-b": { body: stubDetail(restricted) }
+    }));
+
+    const data = await client.loadWorkbenchData();
+
+    assert.equal(data.zhixus[0]?.zhixuId, "zhixu-b");
+  });
+
+  it("reports a diagnostic when every visible zhixu detail fails instead of returning an empty catalog", async () => {
+    const client = clientWith(baseRoutes({
+      "/product/zhixus/zhixu-a": { status: 503, body: { error: "service_unavailable" } },
+      "/product/zhixus/zhixu-b": { status: 503, body: { error: "service_unavailable" } }
+    }));
+
+    await assert.rejects(
+      client.loadWorkbenchData(),
+      (error: unknown) => {
+        assert.ok(error instanceof WorkbenchLoadError);
+        assert.equal(error.diagnostics.filter((diag) => diag.endpoint.startsWith("/product/zhixus/")).length, 2);
+        return true;
+      }
+    );
+  });
+
+  it("orders Product records by the explicit API projection block extension", async () => {
+    const client = clientWith(baseRoutes({
+      "/product/orders": {
+        body: {
+          orders: [
+            { orderId: "older", status: "registered", projection: { updatedAtBlock: "9007199254740993" } },
+            { orderId: "newer", status: "registered", projection: { updatedAtBlock: "9007199254740995" } }
+          ]
+        }
+      },
+      "/product/tasks": {
+        body: {
+          tasks: [
+            { taskId: "task-old", orderId: "older", status: "open", projection: { updatedAtBlock: "9007199254740993" } },
+            { taskId: "task-new", orderId: "newer", status: "open", projection: { updatedAtBlock: "9007199254740995" } }
+          ]
+        }
+      }
+    }));
+
+    const data = await client.loadWorkbenchData();
+
+    assert.deepEqual(data.orders.map((order) => order.orderId), ["newer", "older"]);
+    assert.deepEqual(data.tasks.map((task) => task.taskId), ["task-new", "task-old"]);
+  });
+
+  it("keeps server order stable when projection freshness is absent or invalid", async () => {
+    const client = clientWith(baseRoutes({
+      "/product/orders": {
+        body: { orders: [
+          { orderId: "first", status: "registered" },
+          { orderId: "second", status: "registered", projection: { updatedAtBlock: "not-a-block" } }
+        ] }
+      },
+      "/product/tasks": { body: { tasks: [] } }
+    }));
+
+    const data = await client.loadWorkbenchData();
+
+    assert.deepEqual(data.orders.map((order) => order.orderId), ["first", "second"]);
+  });
 });
 
 describe("workbench sync state judgement", () => {

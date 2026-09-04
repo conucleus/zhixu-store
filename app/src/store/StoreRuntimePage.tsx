@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, ClipboardCheck, Layers3, Loader2, ShieldCheck, Truck, Users } from "lucide-react";
+import { AlertTriangle, CheckCircle2, CircleDashed, ClipboardCheck, Layers3, Loader2, ShieldCheck, Truck } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { readableStoreError, type StoreApiClient } from "./api";
@@ -50,9 +50,10 @@ export function StoreRuntimePage({ api }: { readonly api: StoreApiClient }) {
           <section className="panel-card store-runtime-main">
             <div className="store-panel-label">1. 运行态总览</div>
             <div className="store-runtime-grid">
-              <Metric icon={<Layers3 />} label="可用秩序" value={`${state.summary.activeZhixus} 条`} />
-              <Metric icon={<Truck />} label="运行订单" value={`${state.summary.runningOrders} 单`} />
-              <Metric icon={<ClipboardCheck />} label="开放待办" value={`${state.summary.openTasks} 个`} />
+              <Metric icon={<Layers3 />} label="可用秩序" value={`${state.summary.activeZhixuCount} 条`} />
+              <Metric icon={<Truck />} label="运行订单" value={`${state.summary.runningOrderCount} 单`} />
+              <Metric icon={<ClipboardCheck />} label="开放待办" value={`${state.summary.openTaskCount} 个`} />
+              <Metric icon={<AlertTriangle />} label="阻塞订单" value={`${state.summary.blockedOrderCount} 单`} />
             </div>
             <section className="store-event-table" aria-label="运行态来源">
               <div className="store-table-head store-event-head">
@@ -84,18 +85,48 @@ export function StoreRuntimePage({ api }: { readonly api: StoreApiClient }) {
                 <h2>回放边界</h2>
                 <p>运行态摘要来自可重建投影，不替代合约和事件日志。</p>
               </div>
-              <span className="status-badge success"><ShieldCheck /> contracts-and-chain-events</span>
+              <span className={`status-badge ${runtimeIndexerTone(state.summary.indexerStatus)}`} data-testid="store-runtime-indexer-status">
+                {runtimeIndexerIcon(state.summary.indexerStatus)} {runtimeIndexerLabel(state.summary.indexerStatus)} · {state.summary.sourceOfTruth}
+              </span>
             </div>
             <div className="store-check-list">
               <span><CheckCircle2 /> 订单和待办从 StateMachine 事件投影</span>
               <span><CheckCircle2 /> 主体与钱包映射从 Identity Registry 投影</span>
               <span><CheckCircle2 /> 试拼草稿不会创建订单授权或发布新秩序</span>
+              <span><CircleDashed /> 摘要更新时间：{state.summary.updatedAt}</span>
             </div>
           </aside>
         </div>
       ) : null}
     </section>
   );
+}
+
+function runtimeIndexerLabel(status: StoreRuntimeSummaryDTO["indexerStatus"]): string {
+  switch (status) {
+    case "ready":
+      return "索引已同步";
+    case "syncing":
+      return "索引同步中";
+    case "rebuilding":
+      return "索引重建中";
+    case "degraded":
+      return "索引降级";
+  }
+}
+
+function runtimeIndexerTone(status: StoreRuntimeSummaryDTO["indexerStatus"]): "success" | "warning" | "info" {
+  if (status === "ready") {
+    return "success";
+  }
+  if (status === "degraded") {
+    return "warning";
+  }
+  return "info";
+}
+
+function runtimeIndexerIcon(status: StoreRuntimeSummaryDTO["indexerStatus"]): ReactNode {
+  return status === "ready" ? <CheckCircle2 /> : status === "degraded" ? <AlertTriangle /> : <CircleDashed />;
 }
 
 function Metric({ icon, label, value }: { readonly icon: ReactNode; readonly label: string; readonly value: string }) {

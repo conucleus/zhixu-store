@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { ProductTaskDTO } from "@uvp-eth/product-dto";
 import type {
   EvidenceObjectDTO,
@@ -66,6 +66,19 @@ export function useTaskSubmissionFlow(input: {
     message: "等待上传凭证并确认提交"
   });
   const [disputeAction, setDisputeAction] = useState<ActionState>(idleAction);
+  const taskScopeKey = activeTask
+    ? `${activeTask.orderId}:${activeTask.taskId}:${activeTask.stageId}`
+    : "none";
+  const taskScopeRef = useRef(taskScopeKey);
+  useLayoutEffect(() => {
+    taskScopeRef.current = taskScopeKey;
+    setEvidenceBySlot({});
+    setProofsBySlot({});
+    setFieldSnapshotsBySlot({});
+    setEvidenceAction(idleAction);
+    setSubmitMachine({ status: "idle", message: "等待上传凭证并确认提交" });
+    setDisputeAction(idleAction);
+  }, [taskScopeKey]);
   // fail-closed：上传时把表单字段快照进指纹，之后任何相关字段变更都会让对应槽位过期。
   const staleSlotLabels = Object.keys(evidenceBySlot)
     .filter((key) => isEvidenceSlotStale(fieldSnapshotsBySlot[key], fieldValues))
@@ -75,6 +88,7 @@ export function useTaskSubmissionFlow(input: {
     slotKey: string,
     file: File
   ): Promise<void> {
+    const requestScopeKey = taskScopeKey;
     const slot = evidencePlan.slots.find((item) => item.key === slotKey);
     if (!activeTask || !slot) {
       setEvidenceAction({ phase: "error", message: "暂无可处理的待办" });
@@ -92,6 +106,9 @@ export function useTaskSubmissionFlow(input: {
       return;
     }
     const fileError = await validateEvidenceFileForSlot(file, slot);
+    if (taskScopeRef.current !== requestScopeKey) {
+      return;
+    }
     if (fileError) {
       setEvidenceAction({ phase: "error", message: fileError });
       return;
@@ -124,8 +141,16 @@ export function useTaskSubmissionFlow(input: {
           fields: metadataFields
         }
       });
+      // A task switch while the request was in flight must not repopulate the
+      // next task's evidence map with the previous task's evidence ID.
+      if (taskScopeRef.current !== requestScopeKey) {
+        return;
+      }
       setEvidenceBySlot((current) => ({ ...current, [slot.key]: result.data }));
       const proofResult = await api.getEvidenceProof(result.data.evidenceId);
+      if (taskScopeRef.current !== requestScopeKey) {
+        return;
+      }
       // 证据核验态与上传归档统一按槽位 key 记录，渲染层按同一 key 读取。
       setProofsBySlot((current) => ({ ...current, [slot.key]: proofResult.data }));
       // 记录上传时刻的字段快照：指纹由这些字段参与生成，后续字段变更据此判 stale。
@@ -136,6 +161,9 @@ export function useTaskSubmissionFlow(input: {
       setEvidenceAction({ phase: "success", message: "凭证已上传，指纹已生成", source: result.source });
       onMutationSuccess?.();
     } catch (error) {
+      if (taskScopeRef.current !== requestScopeKey) {
+        return;
+      }
       setEvidenceAction({ phase: "error", message: readableError(error, "凭证上传失败") });
     }
   }
@@ -145,6 +173,7 @@ export function useTaskSubmissionFlow(input: {
       setSubmitMachine({ status: "failed", message: "暂无可提交的待办" });
       return;
     }
+    const requestScopeKey = taskScopeKey;
     const uploadedEntries = Object.entries(evidenceBySlot);
     // 提交门槛与确认页一致：必填槽位全部满足即可提交；
     // 任务没有文件要求时允许纯字段确认提交（evidenceIds 可为空），不再硬性要求至少一份上传。
@@ -171,11 +200,17 @@ export function useTaskSubmissionFlow(input: {
     try {
       setSubmitMachine({ status: "preparing", message: "正在准备签名前摘要" });
       const account = await requestWalletAccount();
+      if (taskScopeRef.current !== requestScopeKey) {
+        return;
+      }
       const preparedResult = await api.prepareTaskSubmit(activeTask.taskId, {
         evidenceIds: uploadedEntries.map(([, value]) => value.evidenceId),
         walletAddress: account.address,
         intent: "confirm_stage"
       });
+      if (taskScopeRef.current !== requestScopeKey) {
+        return;
+      }
       setSubmitMachine({
         status: "signature_pending",
         message: "等待钱包授权",
@@ -191,11 +226,17 @@ export function useTaskSubmissionFlow(input: {
         submitter: account.address,
         preparedSubmitters: [preparedResult.data.summary.walletAddress]
       });
+      if (taskScopeRef.current !== requestScopeKey) {
+        return;
+      }
       const submissionResult = await api.submitTask(activeTask.taskId, {
         prepareId: preparedResult.data.prepareId,
         signature,
         walletAddress: account.address
       });
+      if (taskScopeRef.current !== requestScopeKey) {
+        return;
+      }
       setSubmitMachine({
         status: "tx_pending",
         message: "提交处理中，等待确认",
@@ -203,8 +244,11 @@ export function useTaskSubmissionFlow(input: {
         submission: submissionResult.data,
         source: submissionResult.source
       });
-      await pollSubmission(submissionResult.data.submissionId, preparedResult.data, submissionResult.source);
+      await pollSubmission(submissionResult.data.submissionId, preparedResult.data, submissionResult.source, requestScopeKey);
     } catch (error) {
+      if (taskScopeRef.current !== requestScopeKey) {
+        return;
+      }
       if (error instanceof WalletNotConnectedError) {
         setSubmitMachine({ status: "wallet_not_connected", message: "请连接浏览器钱包后再确认提交" });
         return;
@@ -217,10 +261,13 @@ export function useTaskSubmissionFlow(input: {
     }
   }
 
-  async function pollSubmission(submissionId: string, prepared: PreparedSubmitDTO, source: ProductApiSource): Promise<void> {
+  async function pollSubmission(submissionId: string, prepared: PreparedSubmitDTO, source: ProductApiSource, requestScopeKey: string): Promise<void> {
     for (let attempt = 0; attempt < 4; attempt += 1) {
       await delay(1100);
       const result = await api.getSubmission(submissionId);
+      if (taskScopeRef.current !== requestScopeKey) {
+        return;
+      }
       if (result.data.status === "confirmed") {
         setSubmitMachine({
           status: "confirmed",
@@ -249,6 +296,9 @@ export function useTaskSubmissionFlow(input: {
         submission: result.data,
         source
       });
+    }
+    if (taskScopeRef.current !== requestScopeKey) {
+      return;
     }
     setSubmitMachine({
       status: "failed",

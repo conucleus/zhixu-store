@@ -1,4 +1,4 @@
-import { useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import type { ZhixuDetailDTO } from "@uvp-eth/product-dto";
 import type {
   DraftParticipantDTO,
@@ -7,67 +7,45 @@ import type {
   ProductOrderDraftDTO
 } from "../api";
 import { idleAction, type ActionState } from "./workbenchTypes";
-import { readableError } from "./workbenchSupport";
+import { canCreateProductOrder, readableError } from "./workbenchSupport";
 
 export interface OrderDraftFormValues {
   readonly title: string;
   readonly businessType: string;
-  readonly brandModel: string;
-  readonly quantity: string;
-  readonly vin: string;
+  /** Publisher-defined description; Store/Product do not infer a business schema. */
+  readonly goodsText: string;
   readonly totalAmount: string;
   readonly currency: string;
-  readonly exportRegion: string;
-  readonly destinationRegion: string;
-  readonly expectedCompletionDate: string;
   readonly notes: string;
 }
 
 export const emptyOrderDraftFormValues: OrderDraftFormValues = {
   title: "",
   businessType: "",
-  brandModel: "",
-  quantity: "",
-  vin: "",
+  goodsText: "",
   totalAmount: "",
   currency: "",
-  exportRegion: "",
-  destinationRegion: "",
-  expectedCompletionDate: "",
   notes: ""
 };
 
-const CREATE_REQUIRED_FIELD_LABELS = ["订单名称", "标的物类型", "品牌型号", "总金额", "币种"] as const;
-const SAVE_EXTRA_REQUIRED_FIELD_LABELS = ["出口国家/地区", "目的国家/地区", "预计完成日期"] as const;
+const CREATE_REQUIRED_FIELD_LABELS = ["订单名称", "业务类型", "总金额", "币种"] as const;
 
 export function orderDraftFormValuesFromDraft(draft: ProductOrderDraftDTO): OrderDraftFormValues {
   return {
     title: draft.title,
     businessType: draft.businessType,
-    brandModel: draft.goods?.find((item) => item.startsWith("品牌型号："))?.slice("品牌型号：".length) ?? "",
-    quantity: draft.goods?.find((item) => item.startsWith("数量："))?.slice("数量：".length) ?? "",
-    vin: draft.goods?.find((item) => item.startsWith("VIN："))?.slice("VIN：".length) ?? "",
+    goodsText: draft.goods?.join("\n") ?? "",
     totalAmount: draft.totalAmount,
     currency: draft.currency,
-    exportRegion: draft.exportRegion ?? "",
-    destinationRegion: draft.destinationRegion ?? "",
-    expectedCompletionDate: draft.expectedCompletionDate ?? "",
     notes: draft.notes ?? ""
   };
 }
 
 function goodsFromValues(values: OrderDraftFormValues): readonly string[] {
-  const goods: string[] = [];
-  if (values.brandModel.trim()) {
-    goods.push(`品牌型号：${values.brandModel.trim()}`);
-  }
-  if (values.quantity.trim()) {
-    goods.push(`数量：${values.quantity.trim()}`);
-  }
-  if (values.vin.trim()) {
-    goods.push(`VIN：${values.vin.trim()}`);
-  }
-  return goods;
+  return values.goodsText
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
 }
 
 function missingRequiredLabels(values: OrderDraftFormValues): readonly string[] {
@@ -76,30 +54,13 @@ function missingRequiredLabels(values: OrderDraftFormValues): readonly string[] 
     missing.push("订单名称");
   }
   if (!values.businessType.trim()) {
-    missing.push("标的物类型");
-  }
-  if (!values.brandModel.trim()) {
-    missing.push("品牌型号");
+    missing.push("业务类型");
   }
   if (!values.totalAmount.trim()) {
     missing.push("总金额");
   }
   if (!values.currency.trim()) {
     missing.push("币种");
-  }
-  return missing;
-}
-
-function missingSaveOnlyLabels(values: OrderDraftFormValues): readonly string[] {
-  const missing: string[] = [];
-  if (!values.exportRegion.trim()) {
-    missing.push("出口国家/地区");
-  }
-  if (!values.destinationRegion.trim()) {
-    missing.push("目的国家/地区");
-  }
-  if (!values.expectedCompletionDate.trim()) {
-    missing.push("预计完成日期");
   }
   return missing;
 }
@@ -121,6 +82,9 @@ export function useOrderDraftFlow(input: {
   readonly setDraft: Dispatch<SetStateAction<ProductOrderDraftDTO | undefined>>;
   readonly draftParticipants: readonly DraftParticipantDTO[];
   readonly setDraftParticipants: Dispatch<SetStateAction<readonly DraftParticipantDTO[]>>;
+  /** Participant data is an explicit state machine; an empty list is not confirmation. */
+  readonly draftParticipantsStatus: "unknown" | "loading" | "ready" | "error";
+  readonly draftParticipantsError?: string | undefined;
   readonly draftAction: ActionState;
   readonly saveDraftAction: ActionState;
   readonly inviteActions: Record<string, ActionState & { readonly invite?: ProductInviteDTO | undefined }>;
@@ -132,9 +96,39 @@ export function useOrderDraftFlow(input: {
   const { api, selectedZhixu, onMutationSuccess } = input;
   const [draft, setDraft] = useState<ProductOrderDraftDTO | undefined>();
   const [draftParticipants, setDraftParticipants] = useState<readonly DraftParticipantDTO[]>([]);
+  const [draftParticipantsStatus, setDraftParticipantsStatus] = useState<"unknown" | "loading" | "ready" | "error">("unknown");
+  const [draftParticipantsError, setDraftParticipantsError] = useState<string | undefined>();
   const [draftAction, setDraftAction] = useState<ActionState>(idleAction);
   const [saveDraftAction, setSaveDraftAction] = useState<ActionState>(idleAction);
   const [inviteActions, setInviteActions] = useState<Record<string, ActionState & { readonly invite?: ProductInviteDTO | undefined }>>({});
+
+  // A catalog switch must not carry a previous order/draft or its participant
+  // confirmations into the newly selected frozen DTO.
+  useEffect(() => {
+    setDraft(undefined);
+    setDraftParticipants([]);
+    setDraftParticipantsStatus("unknown");
+    setDraftParticipantsError(undefined);
+    setDraftAction(idleAction);
+    setSaveDraftAction(idleAction);
+    setInviteActions({});
+  }, [selectedZhixu?.zhixuId]);
+
+  async function loadDraftParticipants(draftId: string): Promise<readonly DraftParticipantDTO[]> {
+    setDraftParticipantsStatus("loading");
+    setDraftParticipantsError(undefined);
+    try {
+      const result = await api.listParticipants(draftId);
+      setDraftParticipants(result.data);
+      setDraftParticipantsStatus("ready");
+      return result.data;
+    } catch (error) {
+      const message = readableError(error, "参与方清单加载失败");
+      setDraftParticipantsStatus("error");
+      setDraftParticipantsError(message);
+      throw error;
+    }
+  }
 
   async function ensureDraft(): Promise<ProductOrderDraftDTO | undefined> {
     if (draft) {
@@ -149,7 +143,7 @@ export function useOrderDraftFlow(input: {
       setDraftAction({ phase: "error", message: "暂无可创建订单的秩序" });
       return undefined;
     }
-    if (selectedZhixu.reviewStatus !== "approved") {
+    if (!canCreateProductOrder(selectedZhixu)) {
       setDraftAction({ phase: "error", message: "该秩序当前不可创建新订单" });
       return undefined;
     }
@@ -169,8 +163,7 @@ export function useOrderDraftFlow(input: {
       });
       setDraft(result.data);
       setDraftAction({ phase: "success", message: "订单草稿已创建", source: result.source });
-      const participantsResult = await api.listParticipants(result.data.draftId);
-      setDraftParticipants(participantsResult.data);
+      await loadDraftParticipants(result.data.draftId);
       onMutationSuccess?.();
       return result.data;
     } catch (error) {
@@ -184,7 +177,7 @@ export function useOrderDraftFlow(input: {
     if (!currentDraft) {
       return;
     }
-    const missing = [...missingRequiredLabels(values), ...missingSaveOnlyLabels(values)];
+    const missing = missingRequiredLabels(values);
     if (missing.length > 0) {
       setSaveDraftAction(requiredFieldError(missing));
       return;
@@ -197,9 +190,6 @@ export function useOrderDraftFlow(input: {
         goods: goodsFromValues(values),
         totalAmount: values.totalAmount.trim(),
         currency: values.currency.trim(),
-        exportRegion: values.exportRegion.trim(),
-        destinationRegion: values.destinationRegion.trim(),
-        expectedCompletionDate: values.expectedCompletionDate.trim(),
         notes: values.notes.trim()
       });
       setDraft(result.data);
@@ -230,8 +220,7 @@ export function useOrderDraftFlow(input: {
         displayName: participant.displayName || participant.roleLabel,
         required: participant.required
       });
-      const participantsResult = await api.listParticipants(currentDraft.draftId);
-      setDraftParticipants(participantsResult.data);
+      await loadDraftParticipants(currentDraft.draftId);
       setInviteActions((current) => ({
         ...current,
         [participant.participantId]: {
@@ -257,6 +246,8 @@ export function useOrderDraftFlow(input: {
     setDraft,
     draftParticipants,
     setDraftParticipants,
+    draftParticipantsStatus,
+    ...(draftParticipantsError ? { draftParticipantsError } : {}),
     draftAction,
     saveDraftAction,
     inviteActions,

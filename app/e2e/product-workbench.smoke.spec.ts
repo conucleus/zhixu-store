@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { assertOrdinaryPageCopy } from "./product-assertions";
-import { installWorkbenchRoutes, STUB_API_BASE, stubFallbackTask, stubTask, stubZhixu, stubParticipant } from "./workbench-stubs";
+import { installWorkbenchRoutes, STUB_API_BASE, stubFallbackTask, stubOrder, stubTask, stubZhixu, stubParticipant } from "./workbench-stubs";
 
 test.describe("Product Workbench browser smoke", () => {
   test("renders catalog, order, and task pages against stubbed product API", async ({ page }, testInfo) => {
@@ -10,7 +10,7 @@ test.describe("Product Workbench browser smoke", () => {
     await expect(page.getByRole("heading", { name: "我的待办" })).toBeVisible();
     await expect(page.getByTestId("store-app")).toHaveCount(0);
     await page.getByRole("button", { name: "查看秩序库" }).click();
-    await expect(page.getByRole("heading", { name: "把跨境订单拆成每个人看得懂的待办" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "把秩序拆成每个人看得懂的待办" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "推荐秩序" })).toBeVisible();
     await assertOrdinaryPageCopy(page);
 
@@ -19,7 +19,7 @@ test.describe("Product Workbench browser smoke", () => {
     await assertOrdinaryPageCopy(page);
 
     await page.getByRole("button", { name: "用此秩序创建订单" }).first().click();
-    await expect(page.getByRole("heading", { name: "创建跨境订单" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "创建订单" })).toBeVisible();
     await assertOrdinaryPageCopy(page);
 
     await page.getByTestId("next-participants-button").click();
@@ -35,6 +35,23 @@ test.describe("Product Workbench browser smoke", () => {
     await expect(page.getByTestId("task-confirm-button")).toBeDisabled();
     // 身份来自 /product/me 桩，页面展示确认后的身份而不是反推文案
     await expect(page.getByText("测试报关行操作员").first()).toBeVisible();
+  });
+
+  test("renders an unavailable funding adapter as unavailable, never as a green guarantee", async ({ page }) => {
+    await installWorkbenchRoutes(page, {
+      overrides: {
+        "/product/orders": {
+          body: { orders: [{ ...stubOrder, fundingStatus: "资金托管未接入本接口" }] }
+        }
+      }
+    });
+    await page.goto("/app");
+    await page.getByRole("button", { name: "订单", exact: true }).click();
+
+    const fundingKpi = page.locator(".order-kpis .kpi-card").filter({ hasText: "资金状态" });
+    await expect(fundingKpi).toContainText("资金托管未接入本接口");
+    await expect(fundingKpi.locator("strong.success")).toHaveCount(0);
+    await expect(page.getByText("未接入时不会显示为已保障")).toBeVisible();
   });
 
   test("opens each task card's own detail instead of always the projected active task", async ({ page }) => {
@@ -60,25 +77,56 @@ test.describe("Product Workbench browser smoke", () => {
     await expect(page.getByTestId("product-workbench")).toHaveAttribute("data-uvp-task-id", "task-2002");
   });
 
+  test("clears uploaded evidence and form fields before rendering a different task", async ({ page }) => {
+    const secondTask = {
+      ...stubTask,
+      taskId: "task-2002-isolated",
+      title: "第二张独立待办",
+      stageId: "stage-second",
+      stageName: "第二阶段"
+    };
+    await installWorkbenchRoutes(page, {
+      overrides: {
+        "/product/tasks": { body: { tasks: [stubTask, secondTask] } }
+      }
+    });
+    await page.goto("/app");
+    await page.getByTestId(`participant-task-open-${stubTask.taskId}`).click();
+
+    await page.getByTestId("task-field-customs_declaration_no").fill("scope-a");
+    await page.getByTestId("task-field-export_port").fill("scope-a-port");
+    await page.getByTestId("task-field-completion_date").fill("2026-09-04");
+    await page.getByTestId("task-file-input-customs_declaration_pdf").setInputFiles({
+      name: "scope-a.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("%PDF-1.4 scoped evidence")
+    });
+    await expect(page.getByTestId("product-workbench")).not.toHaveAttribute("data-uvp-evidence-id", "");
+
+    await page.getByRole("button", { name: "订单工作台", exact: true }).click();
+    await page.getByTestId("participant-task-open-task-2002-isolated").click();
+
+    await expect(page.getByRole("heading", { name: "第二张独立待办" })).toBeVisible();
+    await expect(page.getByTestId("product-workbench")).toHaveAttribute("data-uvp-evidence-id", "");
+    await expect(page.getByTestId("task-field-customs_declaration_no")).toHaveValue("");
+    await expect(page.getByTestId("task-confirm-button")).toBeDisabled();
+    await expect(page.getByTestId("submit-fingerprint-list")).toHaveCount(0);
+  });
+
   test("create order form reports missing required fields by name, then creates a draft", async ({ page }) => {
     await installWorkbenchRoutes(page);
     await page.goto("/app");
     await page.getByRole("button", { name: "查看秩序详情" }).first().click();
     await page.getByTestId("zhixu-create-order-button").click();
-    await expect(page.getByRole("heading", { name: "创建跨境订单" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "创建订单" })).toBeVisible();
 
     await page.getByTestId("create-draft-button").click();
-    await expect(page.getByText(`请填写必填字段：订单名称、标的物类型、品牌型号、总金额、币种`)).toBeVisible();
+    await expect(page.getByText(`请填写必填字段：订单名称、业务类型、总金额、币种`)).toBeVisible();
 
     await page.getByLabel(/订单名称/).fill("e2e 受控表单订单");
-    await page.getByRole("button", { name: "车辆" }).click();
-    await page.getByLabel(/^品牌型号/).fill("测试车型 X1");
-    await page.getByLabel(/数量/).fill("2");
+    await page.getByLabel(/业务类型/).fill("车辆");
     await page.getByLabel(/总金额/).fill("10000");
     await page.getByLabel("币种").selectOption("USDC");
-    await page.getByLabel("出口国家/地区").fill("中国");
-    await page.getByLabel("目的国家/地区").fill("阿联酋");
-    await page.getByLabel("预计完成日期").fill("2026-07-31");
 
     await page.getByTestId("create-draft-button").click();
     await expect(page.getByText("订单草稿已创建")).toBeVisible();
@@ -86,6 +134,26 @@ test.describe("Product Workbench browser smoke", () => {
 
     await page.getByTestId("save-draft-button").click();
     await expect(page.getByText("草稿已保存")).toBeVisible();
+  });
+
+  test("keeps registration locked when a successfully loaded participant list is empty", async ({ page }) => {
+    await installWorkbenchRoutes(page, {
+      overrides: {
+        "/product/orders/draft-3001/participants": { body: { participants: [] } }
+      }
+    });
+    await page.goto("/app");
+    await page.getByRole("button", { name: "查看秩序详情" }).first().click();
+    await page.getByTestId("zhixu-create-order-button").click();
+    await page.getByLabel(/订单名称/).fill("空参与方边界测试");
+    await page.getByLabel(/业务类型/).fill("通用业务");
+    await page.getByLabel(/总金额/).fill("10000");
+    await page.getByLabel("币种").selectOption("USDC");
+    await page.getByTestId("create-draft-button").click();
+    await page.getByTestId("next-participants-button").click();
+
+    await expect(page.getByTestId("participants-empty-state")).toBeVisible();
+    await expect(page.getByTestId("register-order-button")).toBeDisabled();
   });
 
   test("uploads real evidence file and fails closed when no browser wallet is connected", async ({ page }) => {
@@ -260,13 +328,11 @@ test.describe("Product Workbench browser smoke", () => {
     await page.getByRole("button", { name: "查看秩序库" }).click();
     await page.getByRole("button", { name: "查看秩序详情" }).first().click();
     await page.getByTestId("zhixu-create-order-button").click();
-    await expect(page.getByRole("heading", { name: "创建跨境订单" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "创建订单" })).toBeVisible();
 
     await page.getByLabel(/订单名称/).fill("切换视图不丢字段订单");
-    await page.getByRole("button", { name: "车辆" }).click();
-    await page.getByLabel(/^品牌型号/).fill("Persisted Model X");
-    await page.getByLabel(/数量/).fill("3");
-    await page.getByLabel(/VIN/).fill("LVG123456789012345");
+    await page.getByLabel(/业务类型/).fill("车辆");
+    await page.getByLabel(/对象说明/).fill("Persisted object description");
     await page.getByLabel(/备注/).fill("视图切换前录入的备注");
 
     // 切走再切回：组件被卸载重建，未保存的输入必须保留
@@ -275,13 +341,11 @@ test.describe("Product Workbench browser smoke", () => {
     await page.getByRole("button", { name: "秩序库" }).click();
     await page.getByRole("button", { name: "查看秩序详情" }).first().click();
     await page.getByTestId("zhixu-create-order-button").click();
-    await expect(page.getByRole("heading", { name: "创建跨境订单" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "创建订单" })).toBeVisible();
 
     await expect(page.getByLabel(/订单名称/)).toHaveValue("切换视图不丢字段订单");
-    await expect(page.getByRole("button", { name: "车辆" })).toHaveClass(/is-active/);
-    await expect(page.getByLabel(/^品牌型号/)).toHaveValue("Persisted Model X");
-    await expect(page.getByLabel(/数量/)).toHaveValue("3");
-    await expect(page.getByLabel(/VIN/)).toHaveValue("LVG123456789012345");
+    await expect(page.getByLabel(/业务类型/)).toHaveValue("车辆");
+    await expect(page.getByLabel(/对象说明/)).toHaveValue("Persisted object description");
     await expect(page.getByLabel(/备注/)).toHaveValue("视图切换前录入的备注");
   });
 
@@ -297,8 +361,7 @@ test.describe("Product Workbench browser smoke", () => {
     await page.getByRole("button", { name: "查看秩序详情" }).first().click();
     await page.getByTestId("zhixu-create-order-button").click();
     await page.getByLabel(/订单名称/).fill("邀请联系方式测试订单");
-    await page.getByRole("button", { name: "车辆" }).click();
-    await page.getByLabel(/^品牌型号/).fill("测试车型");
+    await page.getByLabel(/业务类型/).fill("车辆");
     await page.getByLabel(/总金额/).fill("10000");
     await page.getByLabel("币种").selectOption("USDC");
     await page.getByTestId("create-draft-button").click();

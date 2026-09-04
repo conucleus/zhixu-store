@@ -1,4 +1,20 @@
-import type { ProductTaskDTO, TaskEvidenceSpecDTO } from "@uvp-eth/product-dto";
+import {
+  lifecycleStatusForZhixu,
+  type ProductTaskDTO,
+  type TaskEvidenceSpecDTO,
+  type ZhixuSummaryDTO
+} from "@uvp-eth/product-dto";
+
+/**
+ * Order creation follows the frozen lifecycle DTO.  Review approval alone is
+ * not enough: the plan must also be published, and restricted plans remain
+ * active when their published lifecycle says so.
+ */
+export function canCreateProductOrder(
+  zhixu: Pick<ZhixuSummaryDTO, "reviewStatus" | "planPublication">
+): boolean {
+  return lifecycleStatusForZhixu(zhixu) === "active";
+}
 
 export function readableError(error: unknown, fallback: string): string {
   if (!(error instanceof Error)) {
