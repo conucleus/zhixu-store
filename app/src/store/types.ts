@@ -19,6 +19,7 @@ export type StoreAccessLevel =
   | "store_admin";
 export type StoreAuthMode =
   | "anonymous"
+  | "wallet_session"
   | "dev_store_headers"
   | "dev_governance_admin_headers"
   | "dev_headers_disabled"
@@ -35,6 +36,7 @@ export type StoreCapability =
   | "store.draft.review"
   | "store.version.activate"
   | "store.version.deprecate"
+  | "store.listing.manage"
   | "store.supplier.create"
   | "store.supplier.review"
   | "store.supplier.tags.update"
@@ -54,6 +56,9 @@ export interface StoreAccessState {
   readonly canWrite: boolean;
   readonly canAdmin: boolean;
   readonly headers: Readonly<Record<string, string>>;
+  /** PRD89：会话已证明控制的钱包地址（未锚定为 undefined）。 */
+  readonly anchoredAddress?: string | undefined;
+  readonly anchorSource?: "wallet_session" | "dev_header" | undefined;
 }
 
 export interface StoreSessionDTO {
@@ -63,6 +68,11 @@ export interface StoreSessionDTO {
   readonly roles: readonly StoreRole[];
   readonly capabilities: readonly StoreCapability[];
   readonly authMode: StoreAuthMode;
+  /** PRD89：钱包会话叠加字段。 */
+  readonly anchoredAddress?: string | undefined;
+  readonly anchorSource?: string | undefined;
+  readonly accountId?: string | undefined;
+  readonly accountAddresses?: readonly StoreAccountAddressView[] | undefined;
 }
 
 export type StoreApiSource = {
@@ -275,4 +285,224 @@ export interface StoreDockingSessionDTO {
 
 export interface StoreDockingValidationInput {
   readonly draftSignalMap: readonly StoreDraftSignalMapEntryDTO[];
+}
+
+// ---- PRD89-92：会话配对 / 上架锚核验 / 装修权限 / 加入闭环 ----
+
+export interface StoreAccountAddressView {
+  readonly address: string;
+  readonly status: "active" | "revoked";
+  readonly anchoredAt: string;
+}
+
+export interface StoreWalletSessionChallengeDTO {
+  readonly nonce: string;
+  readonly address: string;
+  readonly message: string;
+  readonly issuedAt: string;
+  readonly expiresAt: string;
+}
+
+export interface StoreWalletSessionView {
+  readonly sessionId: string;
+  readonly accountId: string;
+  readonly anchoredAddress: string;
+  readonly createdAt: string;
+  readonly expiresAt: string;
+  readonly addresses: readonly StoreAccountAddressView[];
+}
+
+export interface StoreWalletSessionVerifyResult {
+  readonly token: string;
+  readonly session: StoreWalletSessionView;
+  readonly linkedToExistingAccount: boolean;
+}
+
+export interface StoreAnchorCheckView {
+  readonly id: string;
+  readonly label: string;
+  readonly expected?: string | undefined;
+  readonly actual?: string | undefined;
+  readonly outcome: "match" | "mismatch" | "unavailable";
+}
+
+export interface StoreAnchorVerificationView {
+  readonly listingId: string;
+  readonly planId: string;
+  readonly status: "consistent" | "conflict" | "pending_indexing";
+  readonly checks: readonly StoreAnchorCheckView[];
+  readonly projection: {
+    readonly planProjected: boolean;
+    readonly planHash?: string | undefined;
+    readonly publisher?: string | undefined;
+    readonly stateMachineAddress?: string | undefined;
+  };
+  readonly chain?: {
+    readonly source: "live_read";
+    readonly planFinalized?: boolean | undefined;
+    readonly planPublisher?: string | undefined;
+  } | undefined;
+  readonly verifiedAt: string;
+}
+
+export type StoreListingStatus = "imported" | "public" | "rejected" | "delisted";
+
+export interface StoreListingView {
+  readonly listingId: string;
+  readonly planId: string;
+  readonly planHashClaimed?: string | undefined;
+  readonly status: StoreListingStatus;
+  readonly importedAt: string;
+  readonly reviewNote?: string | undefined;
+  readonly delistReason?: string | undefined;
+}
+
+export interface StoreDecorationThemeView {
+  readonly displayName?: string | undefined;
+  readonly description?: string | undefined;
+  readonly tags?: readonly string[] | undefined;
+  readonly highlights?: readonly string[] | undefined;
+}
+
+export interface StoreDecorationEvidenceSpecSlotView {
+  readonly key: string;
+  readonly label: string;
+  readonly inputKind?: "file" | "text" | "date" | undefined;
+  readonly accept?: readonly string[] | undefined;
+  readonly required?: boolean | undefined;
+  readonly description?: string | undefined;
+}
+
+export interface StoreDecorationTaskDeclarationView {
+  readonly stageId?: string | undefined;
+  readonly taskId?: string | undefined;
+  readonly evidenceSpec?: readonly StoreDecorationEvidenceSpecSlotView[] | undefined;
+}
+
+export interface StoreDecorationDataView {
+  readonly schemaVersion: "store-zhixu-decoration.v1";
+  readonly theme?: StoreDecorationThemeView | undefined;
+  readonly taskDeclarations?: readonly StoreDecorationTaskDeclarationView[] | undefined;
+}
+
+export interface StoreDecorationVersionView {
+  readonly decorationId: string;
+  readonly planId: string;
+  readonly version: number;
+  readonly data: StoreDecorationDataView;
+  readonly authorAddress: string;
+  readonly note?: string | undefined;
+  readonly createdAt: string;
+}
+
+export interface StoreDecorationView {
+  readonly planId: string;
+  readonly current?: StoreDecorationVersionView | undefined;
+  readonly versions: readonly StoreDecorationVersionView[];
+}
+
+export interface StoreDecorationPermissionView {
+  readonly planId: string;
+  readonly publisher?: string | undefined;
+  readonly viewerIsPublisher: boolean;
+  readonly viewerActiveDelegations: readonly {
+    readonly delegationId: string;
+    readonly publisherAddress: string;
+    readonly memberAddress: string;
+    readonly grantedAt: string;
+  }[];
+}
+
+export interface StorePublisherDelegationView {
+  readonly delegationId: string;
+  readonly publisherAddress: string;
+  readonly memberAddress: string;
+  readonly grantedAt: string;
+  readonly revokedAt?: string | undefined;
+  readonly reason?: string | undefined;
+}
+
+export interface StoreZhixuOverlayView {
+  readonly listing?: StoreListingView | undefined;
+  readonly anchorVerification?: StoreAnchorVerificationView | undefined;
+  readonly decoration?: StoreDecorationView | undefined;
+  readonly viewerPermission?: StoreDecorationPermissionView | undefined;
+}
+
+export type StoreJoinApplicationStatus =
+  | "applied"
+  | "under_review"
+  | "authorized"
+  | "active"
+  | "rejected"
+  | "revoked";
+
+export type StoreJoinAuthorizationKind = "signal_submitter" | "stage_executor";
+
+export interface StoreJoinTxEvidenceView {
+  readonly kind: "identity_binding" | "signal_submitter" | "stage_executor";
+  readonly txHash?: string | undefined;
+  readonly executionMode?: "simulated" | "on_chain" | undefined;
+  readonly planId: string;
+  readonly slot: string;
+  readonly address: string;
+  readonly status: "recorded" | "materialized";
+  readonly recordedAt: string;
+  readonly materializedAt?: string | undefined;
+}
+
+export interface StoreJoinApplicationView {
+  readonly applicationId: string;
+  readonly planId: string;
+  readonly zhixuId?: string | undefined;
+  readonly roleSlotId: string;
+  readonly authorizationKind: StoreJoinAuthorizationKind;
+  readonly stageId?: string | undefined;
+  readonly applicantAddress: string;
+  readonly applicantSubjectId: string;
+  readonly applicantDisplayName?: string | undefined;
+  readonly status: StoreJoinApplicationStatus;
+  readonly txEvidence: readonly StoreJoinTxEvidenceView[];
+  readonly rejectionReason?: string | undefined;
+  readonly revocationReason?: string | undefined;
+  readonly decidedAt?: string | undefined;
+  readonly submittedAt: string;
+  readonly updatedAt: string;
+}
+
+export interface StoreJoinApplicationEventView {
+  readonly eventId: string;
+  readonly applicationId: string;
+  readonly type:
+    | "submitted"
+    | "review_started"
+    | "approved"
+    | "rejected"
+    | "revoked"
+    | "authorized"
+    | "activated"
+    | "binding_revoked";
+  readonly actorAddress?: string | undefined;
+  readonly reason?: string | undefined;
+  readonly txHash?: string | undefined;
+  readonly createdAt: string;
+}
+
+export interface StoreJoinApplicationDetailView {
+  readonly application: StoreJoinApplicationView;
+  readonly events: readonly StoreJoinApplicationEventView[];
+  readonly identityPairing: {
+    readonly bindingStatus: "active" | "revoked" | "not_found";
+    readonly bindingAccount?: string | undefined;
+    readonly bindingTxHash?: string | undefined;
+  };
+}
+
+export interface StoreJoinApplicationSubmitInput {
+  readonly planId: string;
+  readonly roleSlotId: string;
+  readonly authorizationKind: StoreJoinAuthorizationKind;
+  readonly stageId?: string | undefined;
+  readonly displayName?: string | undefined;
+  readonly statement?: string | undefined;
 }

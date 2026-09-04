@@ -8,14 +8,24 @@ import type {
   StoreAccessLevel,
   StoreAccessState,
   StoreApiResult,
+  StoreAccountAddressView,
   StoreAuthMode,
   StoreCapability,
+  StoreDecorationDataView,
+  StoreDecorationView,
   StoreDockingSessionCreateDTO,
   StoreDockingSessionDTO,
   StoreDockingValidationInput,
   StoreDraftSignalMapEntryDTO,
   StoreImportZhixuDraftInput,
+  StoreJoinApplicationDetailView,
+  StoreJoinApplicationSubmitInput,
+  StoreJoinApplicationStatus,
+  StoreJoinApplicationView,
+  StoreListingStatus,
+  StoreListingView,
   StoreProductSchemaUpdateResultDTO,
+  StorePublisherDelegationView,
   StoreRuntimeSummaryDTO,
   StoreSearchInput,
   StoreSessionDTO,
@@ -23,8 +33,11 @@ import type {
   StoreSupplierDTO,
   StoreSupplierMutationResultDTO,
   StoreRole,
+  StoreWalletSessionChallengeDTO,
+  StoreWalletSessionVerifyResult,
   StoreZhixuDraftDTO,
   StoreZhixuDraftReviewResultDTO,
+  StoreZhixuOverlayView,
   StoreZhixuSearchResultDTO,
 } from "./types";
 import {
@@ -42,6 +55,10 @@ export interface StoreApiClient {
     query?: StoreSearchInput,
   ): Promise<StoreApiResult<StoreZhixuSearchResultDTO>>;
   getZhixuDetail(zhixuId: string): Promise<StoreApiResult<StoreZhixuDetailDTO>>;
+  /** PRD92：详情 + 上架/锚核验/装修叠加层。 */
+  getZhixuDetailWithOverlay(
+    zhixuId: string,
+  ): Promise<StoreApiResult<{ readonly zhixu: StoreZhixuDetailDTO; readonly overlay?: StoreZhixuOverlayView | undefined }>>;
   getZhixuDraft(
     draftId: string,
   ): Promise<StoreApiResult<{ readonly draft: StoreZhixuDraftDTO }>>;
@@ -87,6 +104,41 @@ export interface StoreApiClient {
     sessionId: string,
     draftSignalMap: readonly StoreDraftSignalMapEntryDTO[],
   ): Promise<StoreApiResult<StoreDockingSessionDTO>>;
+  // ---- PRD89：钱包会话 ----
+  authChallenge(
+    input: { readonly address: string; readonly intent?: "login" | "anchor_address" },
+  ): Promise<StoreApiResult<StoreWalletSessionChallengeDTO>>;
+  authVerify(
+    input: { readonly nonce: string; readonly signature: string },
+  ): Promise<StoreApiResult<StoreWalletSessionVerifyResult>>;
+  authLogout(): Promise<StoreApiResult<{ readonly revoked: boolean }>>;
+  listAccountAddresses(): Promise<
+    StoreApiResult<{ readonly accountId: string; readonly addresses: readonly { readonly address: string; readonly status: "active" | "revoked"; readonly anchoredAt: string }[] }>
+  >;
+  revokeAccountAddress(address: string): Promise<StoreApiResult<{ readonly accountId: string; readonly addresses: readonly { readonly address: string; readonly status: "active" | "revoked"; readonly anchoredAt: string }[] }>>;
+  // ---- PRD91：装修与委托 ----
+  getDecoration(planId: string): Promise<StoreApiResult<StoreDecorationView>>;
+  saveDecoration(planId: string, decoration: StoreDecorationDataView, note?: string): Promise<StoreApiResult<StoreDecorationView>>;
+  restoreDecorationVersion(planId: string, version: number): Promise<StoreApiResult<StoreDecorationView>>;
+  listDelegations(publisherAddress: string): Promise<StoreApiResult<{ readonly delegations: readonly StorePublisherDelegationView[] }>>;
+  grantDelegation(publisherAddress: string, memberAddress: string): Promise<StoreApiResult<{ readonly delegations: readonly StorePublisherDelegationView[] }>>;
+  revokeDelegation(delegationId: string, reason?: string): Promise<StoreApiResult<{ readonly delegations: readonly StorePublisherDelegationView[] }>>;
+  // ---- PRD92：上架 ----
+  importListing(
+    input: { readonly planId: string; readonly planHash?: string | undefined; readonly deploymentId?: string | undefined },
+  ): Promise<StoreApiResult<{ readonly listing: StoreListingView; readonly anchorVerification: { readonly status: string; readonly checks: readonly { readonly id: string; readonly outcome: string }[] } }>>;
+  listListings(status?: StoreListingStatus): Promise<StoreApiResult<{ readonly listings: readonly StoreListingView[] }>>;
+  reviewListing(listingId: string, decision: "approve" | "reject", note?: string): Promise<StoreApiResult<{ readonly listing: StoreListingView }>>;
+  delistListing(listingId: string, reason?: string): Promise<StoreApiResult<{ readonly listing: StoreListingView }>>;
+  relistListing(listingId: string): Promise<StoreApiResult<{ readonly listing: StoreListingView }>>;
+  // ---- PRD90：加入闭环 ----
+  submitJoinApplication(input: StoreJoinApplicationSubmitInput): Promise<StoreApiResult<StoreJoinApplicationDetailView>>;
+  listJoinApplications(query?: { readonly planId?: string; readonly status?: StoreJoinApplicationStatus }): Promise<StoreApiResult<{ readonly applications: readonly StoreJoinApplicationDetailView[] }>>;
+  getJoinApplication(applicationId: string): Promise<StoreApiResult<StoreJoinApplicationDetailView>>;
+  joinReviewStart(applicationId: string): Promise<StoreApiResult<StoreJoinApplicationDetailView>>;
+  joinApprove(applicationId: string, note?: string): Promise<StoreApiResult<StoreJoinApplicationDetailView>>;
+  joinReject(applicationId: string, reason: string): Promise<StoreApiResult<StoreJoinApplicationDetailView>>;
+  joinRevoke(applicationId: string, reason?: string): Promise<StoreApiResult<StoreJoinApplicationDetailView>>;
 }
 
 export class StoreApiError extends Error {
@@ -125,10 +177,36 @@ class StoreApiUnavailableError extends Error {
 
 export function createStoreApiClient(
   access: StoreAccessState = resolveStoreAccess(),
+  sessionToken?: string,
 ): StoreApiClient {
   return new BrowserStoreApiClient(resolveStoreApiBaseUrl(), {
     access,
+    ...(sessionToken ? { sessionToken } : {}),
   });
+}
+
+/** PRD89：钱包会话 token 的本地持久化（仅 token，不含任何链上签名材料）。 */
+export const STORE_SESSION_TOKEN_STORAGE_KEY = "uvp-store-session-token";
+
+export function readStoredStoreSessionToken(): string | undefined {
+  try {
+    const value = window.localStorage.getItem(STORE_SESSION_TOKEN_STORAGE_KEY);
+    return value && value.startsWith("uvs_") ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function storeStoreSessionToken(token: string | undefined): void {
+  try {
+    if (token) {
+      window.localStorage.setItem(STORE_SESSION_TOKEN_STORAGE_KEY, token);
+    } else {
+      window.localStorage.removeItem(STORE_SESSION_TOKEN_STORAGE_KEY);
+    }
+  } catch {
+    // localStorage 不可用时退化为内存态（本次会话内仍可用）。
+  }
 }
 
 /** 访问级别只认显式环境配置；运行时 query/localStorage 注入链已删除。 */
@@ -178,6 +256,10 @@ export function accessFromStoreSession(
     canWrite: hasWriteCapability(capabilities),
     canAdmin: session.roles.includes("governance_admin") || session.accessLevel === "store_admin",
     headers: fallback.headers,
+    ...(session.anchoredAddress ? { anchoredAddress: session.anchoredAddress } : {}),
+    ...(session.anchorSource === "wallet_session" || session.anchorSource === "dev_header"
+      ? { anchorSource: session.anchorSource }
+      : {}),
   };
 }
 
@@ -218,13 +300,15 @@ function ambiguousOrderCandidates(details: unknown): readonly string[] {
 class BrowserStoreApiClient implements StoreApiClient {
   readonly baseUrl?: string | undefined;
   readonly access: StoreAccessState;
+  readonly #sessionToken: string | undefined;
 
   constructor(
     baseUrl: string | undefined,
-    options: { readonly access: StoreAccessState },
+    options: { readonly access: StoreAccessState; readonly sessionToken?: string },
   ) {
     this.baseUrl = baseUrl;
     this.access = options.access;
+    this.#sessionToken = options.sessionToken;
   }
 
   async getSession(): Promise<StoreApiResult<StoreSessionDTO>> {
@@ -264,11 +348,28 @@ class BrowserStoreApiClient implements StoreApiClient {
   ): Promise<StoreApiResult<StoreZhixuDetailDTO>> {
     const pathname = `/store/zhixus/${encodeURIComponent(zhixuId)}`;
     return await this.withRead(pathname, async () =>
-      await this.requestJson<{ readonly zhixu: StoreZhixuDetailDTO }>(
+      await this.requestJson<{ readonly zhixu: StoreZhixuDetailDTO; readonly storeOverlay?: unknown }>(
         "GET",
         pathname,
       ).then((response) => response.zhixu),
     );
+  }
+
+  /** PRD92：详情 + 上架/锚核验/装修叠加层（详情页专用）。 */
+  async getZhixuDetailWithOverlay(
+    zhixuId: string,
+  ): Promise<StoreApiResult<{ readonly zhixu: StoreZhixuDetailDTO; readonly overlay?: StoreZhixuOverlayView | undefined }>> {
+    const pathname = `/store/zhixus/${encodeURIComponent(zhixuId)}`;
+    return await this.withRead(pathname, async () => {
+      const response = await this.requestJson<{
+        readonly zhixu: StoreZhixuDetailDTO;
+        readonly storeOverlay?: StoreZhixuOverlayView;
+      }>("GET", pathname);
+      return {
+        zhixu: response.zhixu,
+        ...(response.storeOverlay ? { overlay: response.storeOverlay } : {}),
+      };
+    });
   }
 
   async getZhixuDraft(
@@ -459,6 +560,180 @@ class BrowserStoreApiClient implements StoreApiClient {
     );
   }
 
+  // ---- PRD89：钱包会话 ----
+
+  async authChallenge(
+    input: { readonly address: string; readonly intent?: "login" | "anchor_address" },
+  ): Promise<StoreApiResult<StoreWalletSessionChallengeDTO>> {
+    const pathname = "/store/auth/challenge";
+    const result = await this.realWrite<{ readonly challenge?: StoreWalletSessionChallengeDTO } | StoreWalletSessionChallengeDTO>("POST", pathname, {
+      address: input.address,
+      ...(input.intent ? { intent: input.intent } : {}),
+    });
+    const payload = result.data;
+    const challenge = payload && typeof payload === "object" && "challenge" in payload
+      ? (payload as { readonly challenge: StoreWalletSessionChallengeDTO }).challenge
+      : (payload as StoreWalletSessionChallengeDTO);
+    if (!challenge || typeof challenge.nonce !== "string" || typeof challenge.message !== "string") {
+      throw new StoreApiError(pathname, 0, "store_challenge_response_invalid");
+    }
+    return { data: challenge, source: result.source };
+  }
+
+  async authVerify(
+    input: { readonly nonce: string; readonly signature: string },
+  ): Promise<StoreApiResult<StoreWalletSessionVerifyResult>> {
+    const pathname = "/store/auth/verify";
+    return await this.realWrite<StoreWalletSessionVerifyResult>("POST", pathname, input);
+  }
+
+  async authLogout(): Promise<StoreApiResult<{ readonly revoked: boolean }>> {
+    const pathname = "/store/auth/logout";
+    return await this.realWrite<{ readonly revoked: boolean }>("POST", pathname, {});
+  }
+
+  async listAccountAddresses(): Promise<
+    StoreApiResult<{ readonly accountId: string; readonly addresses: readonly { readonly address: string; readonly status: "active" | "revoked"; readonly anchoredAt: string }[] }>
+  > {
+    const pathname = "/store/auth/addresses";
+    return await this.withRead(pathname, async () =>
+      await this.requestJson<{ readonly accountId: string; readonly addresses: { readonly address: string; readonly status: "active" | "revoked"; readonly anchoredAt: string }[] }>("GET", pathname),
+    );
+  }
+
+  async revokeAccountAddress(address: string): Promise<
+    StoreApiResult<{ readonly accountId: string; readonly addresses: readonly { readonly address: string; readonly status: "active" | "revoked"; readonly anchoredAt: string }[] }>
+  > {
+    const pathname = "/store/auth/addresses/revoke";
+    return await this.realWrite<{ readonly accountId: string; readonly addresses: { readonly address: string; readonly status: "active" | "revoked"; readonly anchoredAt: string }[] }>("POST", pathname, { address });
+  }
+
+  // ---- PRD91：装修与委托 ----
+
+  async getDecoration(planId: string): Promise<StoreApiResult<StoreDecorationView>> {
+    const pathname = `/store/decoration/${encodeURIComponent(planId)}`;
+    return await this.withRead(pathname, async () => await this.requestJson<StoreDecorationView>("GET", pathname));
+  }
+
+  async saveDecoration(planId: string, decoration: StoreDecorationDataView, note?: string): Promise<StoreApiResult<StoreDecorationView>> {
+    const pathname = `/store/decoration/${encodeURIComponent(planId)}`;
+    return await this.realWrite<StoreDecorationView>("PUT", pathname, { decoration, ...(note ? { note } : {}) });
+  }
+
+  async restoreDecorationVersion(planId: string, version: number): Promise<StoreApiResult<StoreDecorationView>> {
+    const pathname = `/store/decoration/${encodeURIComponent(planId)}/versions/${version}/restore`;
+    return await this.realWrite<StoreDecorationView>("POST", pathname, {});
+  }
+
+  async listDelegations(publisherAddress: string): Promise<StoreApiResult<{ readonly delegations: readonly StorePublisherDelegationView[] }>> {
+    const pathname = `/store/publishers/${encodeURIComponent(publisherAddress)}/delegations`;
+    return await this.withRead(pathname, async () =>
+      await this.requestJson<{ readonly delegations: StorePublisherDelegationView[] }>("GET", pathname),
+    );
+  }
+
+  async grantDelegation(publisherAddress: string, memberAddress: string): Promise<StoreApiResult<{ readonly delegations: readonly StorePublisherDelegationView[] }>> {
+    const pathname = "/store/publishers/delegations";
+    return await this.realWrite<{ readonly delegations: StorePublisherDelegationView[] }>("POST", pathname, {
+      publisherAddress,
+      memberAddress,
+    });
+  }
+
+  async revokeDelegation(delegationId: string, reason?: string): Promise<StoreApiResult<{ readonly delegations: readonly StorePublisherDelegationView[] }>> {
+    const pathname = `/store/publishers/delegations/${encodeURIComponent(delegationId)}/revoke`;
+    return await this.realWrite<{ readonly delegations: StorePublisherDelegationView[] }>("POST", pathname, {
+      ...(reason ? { reason } : {}),
+    });
+  }
+
+  // ---- PRD92：上架 ----
+
+  async importListing(
+    input: { readonly planId: string; readonly planHash?: string | undefined; readonly deploymentId?: string | undefined },
+  ): Promise<StoreApiResult<{ readonly listing: StoreListingView; readonly anchorVerification: { readonly status: string; readonly checks: readonly { readonly id: string; readonly outcome: string }[] } }>> {
+    const pathname = "/store/listings/import";
+    return await this.realWrite<{ readonly listing: StoreListingView; readonly anchorVerification: { readonly status: string; readonly checks: readonly { readonly id: string; readonly outcome: string }[] } }>("POST", pathname, input);
+  }
+
+  async listListings(status?: StoreListingStatus): Promise<StoreApiResult<{ readonly listings: readonly StoreListingView[] }>> {
+    const pathname = "/store/listings";
+    return await this.withRead(pathname, async () =>
+      await this.requestJson<{ readonly listings: StoreListingView[] }>("GET", status ? `${pathname}?status=${status}` : pathname),
+    );
+  }
+
+  async reviewListing(listingId: string, decision: "approve" | "reject", note?: string): Promise<StoreApiResult<{ readonly listing: StoreListingView }>> {
+    const pathname = `/store/listings/${encodeURIComponent(listingId)}/review`;
+    return await this.realWrite<{ readonly listing: StoreListingView }>("POST", pathname, {
+      decision,
+      ...(note ? { note } : {}),
+    });
+  }
+
+  async delistListing(listingId: string, reason?: string): Promise<StoreApiResult<{ readonly listing: StoreListingView }>> {
+    const pathname = `/store/listings/${encodeURIComponent(listingId)}/delist`;
+    return await this.realWrite<{ readonly listing: StoreListingView }>("POST", pathname, {
+      ...(reason ? { reason } : {}),
+    });
+  }
+
+  async relistListing(listingId: string): Promise<StoreApiResult<{ readonly listing: StoreListingView }>> {
+    const pathname = `/store/listings/${encodeURIComponent(listingId)}/relist`;
+    return await this.realWrite<{ readonly listing: StoreListingView }>("POST", pathname, {});
+  }
+
+  // ---- PRD90：加入闭环 ----
+
+  async submitJoinApplication(input: StoreJoinApplicationSubmitInput): Promise<StoreApiResult<StoreJoinApplicationDetailView>> {
+    const pathname = "/store/join-applications";
+    return await this.realWrite<StoreJoinApplicationDetailView>("POST", pathname, input);
+  }
+
+  async listJoinApplications(query?: { readonly planId?: string; readonly status?: StoreJoinApplicationStatus }): Promise<StoreApiResult<{ readonly applications: readonly StoreJoinApplicationDetailView[] }>> {
+    const pathname = "/store/join-applications";
+    const params = new URLSearchParams();
+    if (query?.planId) {
+      params.set("planId", query.planId);
+    }
+    if (query?.status) {
+      params.set("status", query.status);
+    }
+    const qs = params.size > 0 ? `?${params.toString()}` : "";
+    return await this.withRead(pathname, async () =>
+      await this.requestJson<{ readonly applications: StoreJoinApplicationDetailView[] }>("GET", `${pathname}${qs}`),
+    );
+  }
+
+  async getJoinApplication(applicationId: string): Promise<StoreApiResult<StoreJoinApplicationDetailView>> {
+    const pathname = `/store/join-applications/${encodeURIComponent(applicationId)}`;
+    return await this.withRead(pathname, async () => await this.requestJson<StoreJoinApplicationDetailView>("GET", pathname));
+  }
+
+  async joinReviewStart(applicationId: string): Promise<StoreApiResult<StoreJoinApplicationDetailView>> {
+    const pathname = `/store/join-applications/${encodeURIComponent(applicationId)}/review-start`;
+    return await this.realWrite<StoreJoinApplicationDetailView>("POST", pathname, {});
+  }
+
+  async joinApprove(applicationId: string, note?: string): Promise<StoreApiResult<StoreJoinApplicationDetailView>> {
+    const pathname = `/store/join-applications/${encodeURIComponent(applicationId)}/approve`;
+    return await this.realWrite<StoreJoinApplicationDetailView>("POST", pathname, {
+      ...(note ? { note } : {}),
+    });
+  }
+
+  async joinReject(applicationId: string, reason: string): Promise<StoreApiResult<StoreJoinApplicationDetailView>> {
+    const pathname = `/store/join-applications/${encodeURIComponent(applicationId)}/reject`;
+    return await this.realWrite<StoreJoinApplicationDetailView>("POST", pathname, { reason });
+  }
+
+  async joinRevoke(applicationId: string, reason?: string): Promise<StoreApiResult<StoreJoinApplicationDetailView>> {
+    const pathname = `/store/join-applications/${encodeURIComponent(applicationId)}/revoke`;
+    return await this.realWrite<StoreJoinApplicationDetailView>("POST", pathname, {
+      ...(reason ? { reason } : {}),
+    });
+  }
+
   private async withRead<TData>(
     pathname: string,
     request: () => Promise<TData>,
@@ -501,7 +776,10 @@ class BrowserStoreApiClient implements StoreApiClient {
     return await fetchStoreJson<TResponse>(baseUrl, pathname, {
       method,
       body,
-      headers: this.access.headers,
+      headers: {
+        ...this.access.headers,
+        ...(this.#sessionToken ? { "x-uvp-store-session": this.#sessionToken } : {}),
+      },
     });
   }
 
@@ -936,6 +1214,7 @@ function capabilitiesForAccessLevel(
     "store.draft.compile",
     "store.draft.schema.save",
     "store.draft.review",
+    "store.listing.manage",
     "store.supplier.create",
     "store.supplier.review",
     "store.supplier.tags.update",
@@ -985,6 +1264,12 @@ function sessionFromResponse(
   );
   const authMode =
     authModeValue(stringValue(session.authMode)) ?? fallback.authMode;
+  const anchoredAddress = stringValue(session.anchoredAddress);
+  const anchorSource = stringValue(session.anchorSource);
+  const accountId = stringValue(session.accountId);
+  const accountAddresses = Array.isArray(session.accountAddresses)
+    ? (session.accountAddresses as readonly StoreAccountAddressView[])
+    : undefined;
   return {
     authenticated: Boolean(session.authenticated) || Boolean(principalId),
     ...(principalId ? { principalId } : {}),
@@ -992,6 +1277,10 @@ function sessionFromResponse(
     roles,
     capabilities,
     authMode,
+    ...(anchoredAddress ? { anchoredAddress } : {}),
+    ...(anchorSource ? { anchorSource: anchorSource as StoreSessionDTO["anchorSource"] } : {}),
+    ...(accountId ? { accountId } : {}),
+    ...(accountAddresses ? { accountAddresses } : {}),
   };
 }
 
@@ -1004,6 +1293,7 @@ function arrayOfStrings(value: unknown): readonly string[] {
 function authModeValue(value: string | undefined): StoreAuthMode | undefined {
   switch (value) {
     case "anonymous":
+    case "wallet_session":
     case "dev_store_headers":
     case "dev_governance_admin_headers":
     case "dev_headers_disabled":

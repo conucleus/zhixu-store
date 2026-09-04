@@ -15,13 +15,16 @@ import {
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { readableStoreError, type StoreApiClient } from "./api";
+import { StoreAnchorPanel, joinEntrySuppressed, joinSuppressionReason } from "./StoreAnchorPanel";
+import { StoreDecorationEditor } from "./StoreDecorationEditor";
+import { StoreJoinEntry } from "./StoreJoinEntry";
 import type { CapabilityPluginSource, StoreCapabilityReviewStatus, StoreZhixuDetailDTO } from "@uvp-eth/product-dto";
-import type { StoreAccessState } from "./types";
+import type { StoreAccessState, StoreZhixuOverlayView } from "./types";
 import { shortValue } from "../shared/frontend";
 
 type DetailState =
   | { readonly status: "loading" }
-  | { readonly status: "ready"; readonly zhixu: StoreZhixuDetailDTO }
+  | { readonly status: "ready"; readonly zhixu: StoreZhixuDetailDTO; readonly overlay?: StoreZhixuOverlayView | undefined }
   | { readonly status: "error"; readonly message: string };
 
 export function StoreZhixuDetailPage({
@@ -29,13 +32,15 @@ export function StoreZhixuDetailPage({
   api,
   zhixuId,
   onBack,
-  onOpenDocking
+  onOpenDocking,
+  onOpenJoinForPlan
 }: {
   readonly access: StoreAccessState;
   readonly api: StoreApiClient;
   readonly zhixuId: string;
   readonly onBack: () => void;
   readonly onOpenDocking: () => void;
+  readonly onOpenJoinForPlan: (planId: string) => void;
 }) {
   const [state, setState] = useState<DetailState>({ status: "loading" });
   const [proofOpen, setProofOpen] = useState(false);
@@ -43,9 +48,9 @@ export function StoreZhixuDetailPage({
   useEffect(() => {
     let cancelled = false;
     setState({ status: "loading" });
-    void api.getZhixuDetail(zhixuId).then((result) => {
+    void api.getZhixuDetailWithOverlay(zhixuId).then((result) => {
       if (!cancelled) {
-        setState({ status: "ready", zhixu: result.data });
+        setState({ status: "ready", zhixu: result.data.zhixu, ...(result.data.overlay ? { overlay: result.data.overlay } : {}) });
       }
     }).catch((error) => {
       if (!cancelled) {
@@ -66,19 +71,40 @@ export function StoreZhixuDetailPage({
   }
 
   const zhixu = state.zhixu;
+  const overlay = state.overlay;
   const stageTitleById = new Map(zhixu.stages.map((stage) => [stage.stageId, stage.title]));
   const slotReviewSummary = summarizeSlotReviews(zhixu.roleSlots);
+  const suppressionReason = joinSuppressionReason(overlay?.anchorVerification, overlay?.listing);
+  const joinSuppressed = joinEntrySuppressed(overlay?.anchorVerification, overlay?.listing);
+  const reloadDetail = () => {
+    void api.getZhixuDetailWithOverlay(zhixuId).then((result) => {
+      setState({ status: "ready", zhixu: result.data.zhixu, ...(result.data.overlay ? { overlay: result.data.overlay } : {}) });
+    }).catch(() => {
+      // 刷新失败保留当前视图。
+    });
+  };
+  const decorationTheme = overlay?.decoration?.current?.data.theme;
   return (
-    <section className="page-shell" data-testid="store-zhixu-detail-page">
+    <section className="page-shell" data-testid="store-zhixu-detail-page" data-anchor-status={overlay?.anchorVerification?.status ?? "unknown"}>
       <button className="back-line" onClick={onBack}><ChevronLeft /> 返回秩序检索</button>
+
+      {suppressionReason ? (
+        <div className="store-suppression-banner" role="alert" data-testid="store-suppression-banner">
+          <AlertTriangle />
+          <div>
+            <strong>{overlay?.anchorVerification?.status === "conflict" ? "listing 与链上事实冲突" : "该秩序已下架"}</strong>
+            <p>{suppressionReason}</p>
+          </div>
+        </div>
+      ) : null}
 
       <div className="store-detail-grid">
         <section className="panel-card">
           <div className="panel-heading">
             <div>
               <span className="store-section-kicker">跨境电商履约秩序</span>
-              <h2>{zhixu.title}</h2>
-              <p>{zhixu.subtitle}</p>
+              <h2>{decorationTheme?.displayName ?? zhixu.title}</h2>
+              <p>{decorationTheme?.description ?? zhixu.subtitle}</p>
             </div>
             <span className={`status-badge ${statusTone(zhixu.lifecycleStatus)}`}>{zhixu.lifecycleLabel}</span>
           </div>
@@ -175,6 +201,33 @@ export function StoreZhixuDetailPage({
               </div>
             )}
           </section>
+
+          <StoreAnchorPanel verification={overlay?.anchorVerification} listing={overlay?.listing} />
+
+          {joinSuppressed ? null : (
+            <StoreJoinEntry
+              access={access}
+              api={api}
+              planId={zhixu.planId}
+              roleSlots={zhixu.roleSlots.map((slot) => ({ slotId: slot.roleSlotId, title: slot.title }))}
+              stageIds={zhixu.stages.map((stage) => stage.stageId)}
+              onSubmitted={() => onOpenJoinForPlan(zhixu.planId)}
+            />
+          )}
+
+          <StoreDecorationEditor
+            access={access}
+            api={api}
+            planId={zhixu.planId}
+            decoration={overlay?.decoration}
+            viewerIsPublisher={overlay?.viewerPermission?.viewerIsPublisher ?? false}
+            viewerIsDelegate={(overlay?.viewerPermission?.viewerActiveDelegations ?? []).length > 0}
+            onChanged={reloadDetail}
+          />
+
+          {overlay?.viewerPermission?.viewerActiveDelegations && overlay.viewerPermission.viewerActiveDelegations.length > 0 ? (
+            <p className="muted store-delegation-hint">当前会话经发布者委托获得该秩序的装修/加入审核权。</p>
+          ) : null}
 
           <section className="side-panel" data-testid="store-version-governance-boundary">
             <div className="side-panel-title">

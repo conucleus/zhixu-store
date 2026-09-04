@@ -3,7 +3,8 @@ import { useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type { StoreProductSchemaDTO, StoreProductSchemaValidationDTO, StoreSearchType } from "@uvp-eth/product-dto";
 import type { StoreZhixuConsoleDTO } from "@uvp-eth/product-dto";
-import { readableStoreError } from "./api";
+import { readableStoreError, type StoreApiClient } from "./api";
+import { StoreListingPanel } from "./StoreListingPanel";
 import type {
   StoreAccessState,
   StoreApiResult,
@@ -45,6 +46,7 @@ const initialImportDraftForm: ImportDraftFormState = {
 
 export function StoreSearchPage({
   access,
+  api,
   result,
   onOpenZhixu,
   onGoDocking,
@@ -58,6 +60,7 @@ export function StoreSearchPage({
   onRefreshCatalog
 }: {
   readonly access: StoreAccessState;
+  readonly api: StoreApiClient;
   readonly result: StoreZhixuSearchResultDTO;
   readonly onOpenZhixu: (zhixuId: string) => void;
   readonly onGoDocking: () => void;
@@ -242,6 +245,10 @@ export function StoreSearchPage({
 
   return (
     <section className="page-shell store-console-page" data-testid="store-search-page">
+
+        {access.capabilities.includes("store.listing.manage") ? (
+          <StoreListingPanel api={api} />
+        ) : null}
       <div className="store-dashboard-grid">
         <div className="store-dashboard-main">
           <section className="panel-card store-summary-panel" aria-labelledby="store-summary-title">
