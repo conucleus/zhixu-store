@@ -224,7 +224,7 @@ describe("workbench sync state judgement", () => {
 
   it("never derives syncing from the display statusLabel of an order", async () => {
     // 后端对链上状态 unknown 的订单会下发合成标签“同步中”；
-    // 标签只是渲染文案，不得充当状态机判据（中文标签匹配已删除）。
+    // 标签只是渲染文案，不得充当状态机判据（中文标签不充当判据）。
     const client = clientWith(baseRoutes({
       "/product/orders": {
         body: { orders: [{ orderId: "order-1", status: "registered", statusLabel: "同步中" }] }

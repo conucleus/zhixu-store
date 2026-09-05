@@ -56,7 +56,7 @@ export interface StoreAccessState {
   readonly canWrite: boolean;
   readonly canAdmin: boolean;
   readonly headers: Readonly<Record<string, string>>;
-  /** PRD89：会话已证明控制的钱包地址（未锚定为 undefined）。 */
+  /** 会话已证明控制的钱包地址（未锚定为 undefined）。 */
   readonly anchoredAddress?: string | undefined;
   readonly anchorSource?: "wallet_session" | "dev_header" | undefined;
 }
@@ -68,7 +68,7 @@ export interface StoreSessionDTO {
   readonly roles: readonly StoreRole[];
   readonly capabilities: readonly StoreCapability[];
   readonly authMode: StoreAuthMode;
-  /** PRD89：钱包会话叠加字段。 */
+  /** 钱包会话叠加字段。 */
   readonly anchoredAddress?: string | undefined;
   readonly anchorSource?: string | undefined;
   readonly accountId?: string | undefined;
@@ -283,7 +283,7 @@ export interface StoreDockingSessionDTO {
   readonly updatedAt: string;
 }
 
-// ---- PRD89-92：会话配对 / 上架锚核验 / 装修权限 / 加入闭环 ----
+// ---- 会话配对 / 上架锚核验 / 装修权限 / 加入闭环 ----
 
 export interface StoreAccountAddressView {
   readonly address: string;

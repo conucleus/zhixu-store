@@ -24,8 +24,8 @@ const JOIN_STATUS_LABELS: Record<StoreJoinApplicationStatus, string> = {
 };
 
 /**
- * PRD90 加入闭环页：供应商看"我的申请"，publisher（或受托成员）按 plan
- * 看审核队列。通过审批即执行身份配对（PRD89）并记录链上交易证据。
+ * 加入闭环页：供应商看"我的申请"，publisher（或受托成员）按 plan
+ * 看审核队列。通过审批即执行身份配对并记录链上交易证据。
  */
 export function StoreJoinPage({
   access,
@@ -135,7 +135,7 @@ export function StoreJoinPage({
       {message ? <p className="store-account-message" data-testid="store-join-message">{message}</p> : null}
       {state.status === "unauthenticated" ? (
         <p className="store-account-warn" data-testid="store-join-unauthenticated">
-          <ShieldAlert /> 加入闭环要求会话已锚定钱包地址（PRD89）。请先在「账号与地址」页连接钱包登录。
+          <ShieldAlert /> 加入闭环要求会话已锚定钱包地址。请先在「账号与地址」页连接钱包登录。
         </p>
       ) : null}
       {state.status === "loading" ? <p className="muted"><Loader2 className="spin" /> 正在读取申请…</p> : null}

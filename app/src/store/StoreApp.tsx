@@ -28,7 +28,7 @@ type StoreLoadState =
   | { readonly status: "error"; readonly message: string };
 
 export function StoreApp({ productHref = "/app" }: { readonly productHref?: string | undefined }) {
-  // PRD89：会话 token 驱动 client 重建——登录/退出后 access 与能力随之刷新。
+  // 会话 token 驱动 client 重建——登录/退出后 access 与能力随之刷新。
   const [sessionToken, setSessionToken] = useState<string | undefined>(() => readStoredStoreSessionToken());
   const baseAccess = useMemo(() => createStoreApiClient().access, []);
   const api = useMemo(

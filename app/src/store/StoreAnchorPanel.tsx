@@ -9,7 +9,7 @@ const ANCHOR_STATUS_LABELS: Record<StoreAnchorVerificationView["status"], string
 };
 
 /**
- * PRD92 锚核验面板：呈现 planHash/planPublisher/状态机地址与核验结果。
+ * 锚核验面板：呈现 planHash/planPublisher/状态机地址与核验结果。
  * listing 与链不一致时页面必须显式呈现冲突并抑制加入入口（由父组件处理）。
  */
 export function StoreAnchorPanel({
@@ -84,7 +84,7 @@ export function listingStatusLabel(status: StoreListingView["status"]): string {
   }
 }
 
-/** PRD92 红线：锚冲突、已下架、审核未通过或尚未完成上架审核时抑制加入入口。 */
+/** 红线：锚冲突、已下架、审核未通过或尚未完成上架审核时抑制加入入口。 */
 export function joinEntrySuppressed(
   verification: StoreAnchorVerificationView | undefined,
   listing: StoreListingView | undefined,

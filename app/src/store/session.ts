@@ -1,5 +1,5 @@
 /**
- * PRD89 会话配对编排：challenge → 钱包 personal_sign → verify → token。
+ * 会话配对编排：challenge → 钱包 personal_sign → verify → token。
  * 签名消息由服务端下发并明示"只建立会话，不授权任何链上动作"。
  */
 import type { StoreApiClient } from "./api";

@@ -38,7 +38,7 @@ export function delay(ms: number): Promise<void> {
 
 /**
  * 任务证据计划的输入：优先使用凝结核随 zhixu 配置携带的结构化 evidenceSpec；
- * 没有 spec 时回退解析旧的 requiredEvidence 开放字符串数组。
+ * 没有 spec 时回退解析 requiredEvidence 开放字符串数组（通用降级声明形状）。
  */
 export interface TaskEvidencePlanInput {
   readonly evidenceSpec?: readonly TaskEvidenceSpecDTO[] | undefined;
@@ -47,7 +47,7 @@ export interface TaskEvidencePlanInput {
 
 export type TaskEvidenceSlotInputKind = "file" | "text" | "date";
 
-/** 渲染层的一个证据槽位：所有业务语义都来自凝结核配置或旧声明文本本身。 */
+/** 渲染层的一个证据槽位：所有业务语义都来自凝结核配置或声明文本本身。 */
 export interface TaskEvidenceSlot {
   readonly key: string;
   readonly label: string;
@@ -56,14 +56,14 @@ export interface TaskEvidenceSlot {
   readonly accept: readonly string[];
   readonly required: boolean;
   readonly description?: string;
-  /** spec=凝结核配置；fallback=旧 requiredEvidence 字符串的通用降级。 */
+  /** spec=凝结核配置；fallback=requiredEvidence 字符串的通用降级。 */
   readonly source: "spec" | "fallback";
 }
 
 export interface TaskEvidencePlan {
   readonly mode: "spec" | "fallback" | "none";
   readonly slots: readonly TaskEvidenceSlot[];
-  /** 旧声明文本在 fallback 模式下原样保留并随元数据上送，绝不静默丢弃。 */
+  /** 声明文本在 fallback 模式下原样保留并随元数据上送，绝不静默丢弃。 */
   readonly declaredLabels: readonly string[];
 }
 
@@ -130,8 +130,8 @@ function normalizeAcceptEntry(entry: string): string {
   if (trimmed.length === 0 || trimmed.startsWith(".") || trimmed.includes("/")) {
     return trimmed;
   }
-  // 无点前缀的裸扩展名（如 "pdf"）：补点，否则既匹配不到文件扩展名，
-  // 也绕过 %PDF- 首字节快检（accept=["pdf"] 的历史写法失效且不安全）。
+  // 无点前缀的裸扩展名（如 "pdf"）：补点归一——不补点则既匹配不到文件
+  // 扩展名，也绕过 %PDF- 首字节快检。
   return `.${trimmed}`;
 }
 

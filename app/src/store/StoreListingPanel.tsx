@@ -11,7 +11,7 @@ type ListingsState =
   | { readonly status: "error"; readonly message: string };
 
 /**
- * PRD92 上架治理面板（运营方）：导入链上秩序锚 → 锚核验 → 审核公开 → 下架/重新上架。
+ * 上架治理面板（运营方）：导入链上秩序锚 → 锚核验 → 审核公开 → 下架/重新上架。
  * 只改 Store 可见性，不改链上事实；审核通过要求锚核验一致。
  */
 export function StoreListingPanel({ api }: { readonly api: StoreApiClient }) {
@@ -62,7 +62,7 @@ export function StoreListingPanel({ api }: { readonly api: StoreApiClient }) {
   return (
     <section className="store-listing-panel" data-testid="store-listing-panel">
       <button className="proof-toggle" onClick={() => setOpen((value) => !value)} data-testid="store-listing-toggle">
-        <span><PackagePlus /> 上架治理（PRD92：锚核验 → 审核 → 公开）</span>
+        <span><PackagePlus /> 上架治理（锚核验 → 审核 → 公开）</span>
         <small>只改 Store 可见性，不改链上事实</small>
       </button>
       {open ? (

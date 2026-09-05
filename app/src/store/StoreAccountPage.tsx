@@ -13,7 +13,7 @@ type AddressesState =
   | { readonly status: "error"; readonly message: string };
 
 /**
- * PRD89 账号页：钱包登录（SIWE 式签名证明）+ 地址管理。
+ * 账号页：钱包登录（SIWE 式签名证明）+ 地址管理。
  * 一个账号可关联多个地址（凝结核团队成员）；当前会话锚定的地址不可撤销。
  */
 export function StoreAccountPage({
@@ -121,7 +121,7 @@ export function StoreAccountPage({
     <section className="store-account-page" data-testid="store-account-page">
       <header className="store-panel-head">
         <h2><KeyRound /> 账号与地址</h2>
-        <p>会话配对（PRD89）：登录会话必须声明并证明控制一个钱包地址；敏感操作（授权、装修、审核写操作）只对已锚定地址的会话开放。</p>
+        <p>会话配对：登录会话必须声明并证明控制一个钱包地址；敏感操作（授权、装修、审核写操作）只对已锚定地址的会话开放。</p>
       </header>
 
       <div className="store-account-current" data-testid="store-account-current">

@@ -93,7 +93,7 @@ describe("task evidence plan (schema-driven)", () => {
     assert.equal(fileSlot?.required, true);
     assert.equal(plan.slots[1]?.inputKind, "text");
     assert.equal(plan.slots[3]?.inputKind, "date");
-    // 旧声明文本原样保留，不静默丢弃
+    // 声明文本原样保留，不静默丢弃
     assert.deepEqual(plan.declaredLabels, ["报关单 PDF", "报关单号", "出口港口", "完成时间"]);
   });
 
@@ -143,8 +143,9 @@ describe("evidence accept constraints", () => {
     assert.equal(acceptAllowsFile([], { size: 10, name: "任意.bin", type: "" }), true);
   });
 
-  it("normalizes bare extension entries so accept=[\"pdf\"] no longer bypasses checks", () => {
-    // 历史写法 accept=["pdf"]（无点前缀）既匹配不到扩展名，也绕过 %PDF- 快检。
+  it("normalizes bare extension entries so accept=[\"pdf\"] cannot bypass checks", () => {
+    // 无点前缀的 accept=["pdf"] 既匹配不到扩展名，也绕不过 %PDF- 快检的前提
+    // 是先归一化补点。
     assert.equal(acceptAllowsFile(["pdf"], { size: 10, name: "凭证.pdf", type: "" }), true);
     assert.equal(acceptAllowsFile(["pdf"], { size: 10, name: "照片.jpg", type: "" }), false);
     assert.equal(acceptIncludesPdf(["pdf"]), true);

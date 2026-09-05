@@ -8,7 +8,7 @@ import type {
 } from "./types";
 
 /**
- * PRD91 装修编辑器（详情页侧栏抽屉）：
+ * 装修编辑器（详情页侧栏抽屉）：
  * - 只有 planPublisher（或受托成员）能保存——服务端强制，前端只读权限视图做展示。
  * - theme 为纯展示字段；taskDeclarations.evidenceSpec 走结构校验（服务端
  *   validateTaskEvidenceSpec 同源规则），永不编码业务预期。
@@ -32,7 +32,7 @@ export function StoreDecorationEditor({
   readonly viewerIsDelegate: boolean;
   readonly onChanged: () => void;
 }) {
-  // PRD91：publisher 与受托成员都可写装修；委托只传 Store 侧操作权。
+  // publisher 与受托成员都可写装修；委托只传 Store 侧操作权。
   const canWrite = (viewerIsPublisher || viewerIsDelegate) && Boolean(access.anchoredAddress);
   const current = decoration?.current;
   const [open, setOpen] = useState(false);

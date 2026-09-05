@@ -53,7 +53,7 @@ export interface StoreApiClient {
     query?: StoreSearchInput,
   ): Promise<StoreApiResult<StoreZhixuSearchResultDTO>>;
   getZhixuDetail(zhixuId: string): Promise<StoreApiResult<StoreZhixuDetailDTO>>;
-  /** PRD92：详情 + 上架/锚核验/装修叠加层。 */
+  /** 详情 + 上架/锚核验/装修叠加层。 */
   getZhixuDetailWithOverlay(
     zhixuId: string,
   ): Promise<StoreApiResult<{ readonly zhixu: StoreZhixuDetailDTO; readonly overlay?: StoreZhixuOverlayView | undefined }>>;
@@ -94,7 +94,7 @@ export interface StoreApiClient {
   getDockingSession(
     sessionId: string,
   ): Promise<StoreApiResult<StoreDockingSessionDTO>>;
-  // ---- PRD89：钱包会话 ----
+  // ---- 钱包会话 ----
   authChallenge(
     input: { readonly address: string; readonly intent?: "login" | "anchor_address" },
   ): Promise<StoreApiResult<StoreWalletSessionChallengeDTO>>;
@@ -106,13 +106,13 @@ export interface StoreApiClient {
     StoreApiResult<{ readonly accountId: string; readonly addresses: readonly { readonly address: string; readonly status: "active" | "revoked"; readonly anchoredAt: string }[] }>
   >;
   revokeAccountAddress(address: string): Promise<StoreApiResult<{ readonly accountId: string; readonly addresses: readonly { readonly address: string; readonly status: "active" | "revoked"; readonly anchoredAt: string }[] }>>;
-  // ---- PRD91：装修与委托 ----
+  // ---- 装修与委托 ----
   saveDecoration(planId: string, decoration: StoreDecorationDataView, note?: string): Promise<StoreApiResult<StoreDecorationView>>;
   restoreDecorationVersion(planId: string, version: number): Promise<StoreApiResult<StoreDecorationView>>;
   listDelegations(publisherAddress: string): Promise<StoreApiResult<{ readonly delegations: readonly StorePublisherDelegationView[] }>>;
   grantDelegation(publisherAddress: string, memberAddress: string): Promise<StoreApiResult<{ readonly delegations: readonly StorePublisherDelegationView[] }>>;
   revokeDelegation(delegationId: string, reason?: string): Promise<StoreApiResult<{ readonly delegations: readonly StorePublisherDelegationView[] }>>;
-  // ---- PRD92：上架 ----
+  // ---- 上架 ----
   importListing(
     input: { readonly planId: string; readonly planHash?: string | undefined; readonly deploymentId?: string | undefined },
   ): Promise<StoreApiResult<{ readonly listing: StoreListingView; readonly anchorVerification: { readonly status: string; readonly checks: readonly { readonly id: string; readonly outcome: string }[] } }>>;
@@ -120,7 +120,7 @@ export interface StoreApiClient {
   reviewListing(listingId: string, decision: "approve" | "reject", note?: string): Promise<StoreApiResult<{ readonly listing: StoreListingView }>>;
   delistListing(listingId: string, reason?: string): Promise<StoreApiResult<{ readonly listing: StoreListingView }>>;
   relistListing(listingId: string): Promise<StoreApiResult<{ readonly listing: StoreListingView }>>;
-  // ---- PRD90：加入闭环 ----
+  // ---- 加入闭环 ----
   submitJoinApplication(input: StoreJoinApplicationSubmitInput): Promise<StoreApiResult<StoreJoinApplicationDetailView>>;
   listJoinApplications(query?: { readonly planId?: string; readonly status?: StoreJoinApplicationStatus }): Promise<StoreApiResult<{ readonly applications: readonly StoreJoinApplicationDetailView[] }>>;
   getJoinApplication(applicationId: string): Promise<StoreApiResult<StoreJoinApplicationDetailView>>;
@@ -179,7 +179,7 @@ export function createStoreApiClient(
   });
 }
 
-/** PRD89：钱包会话 token 的本地持久化（仅 token，不含任何链上签名材料）。 */
+/** 钱包会话 token 的本地持久化（仅 token，不含任何链上签名材料）。 */
 export const STORE_SESSION_TOKEN_STORAGE_KEY = "uvp-store-session-token";
 
 export function readStoredStoreSessionToken(): string | undefined {
@@ -203,7 +203,7 @@ export function storeStoreSessionToken(token: string | undefined): void {
   }
 }
 
-/** 访问级别只认显式环境配置；运行时 query/localStorage 注入链已删除。 */
+/** 访问级别只认显式环境配置；运行时不认 query/localStorage 注入链。 */
 export function configuredStoreAccessLevel(): StoreAccessLevel | undefined {
   const value = import.meta.env.VITE_UVP_STORE_ACCESS_LEVEL;
   return normalizeStoreAccessLevel(
@@ -331,7 +331,7 @@ class BrowserStoreApiClient implements StoreApiClient {
     );
   }
 
-  /** PRD92：详情 + 上架/锚核验/装修叠加层（详情页专用）。 */
+  /** 详情 + 上架/锚核验/装修叠加层（详情页专用）。 */
   async getZhixuDetailWithOverlay(
     zhixuId: string,
   ): Promise<StoreApiResult<{ readonly zhixu: StoreZhixuDetailDTO; readonly overlay?: StoreZhixuOverlayView | undefined }>> {
@@ -516,7 +516,7 @@ class BrowserStoreApiClient implements StoreApiClient {
     }));
   }
 
-  // ---- PRD89：钱包会话 ----
+  // ---- 钱包会话 ----
 
   async authChallenge(
     input: { readonly address: string; readonly intent?: "login" | "anchor_address" },
@@ -564,7 +564,7 @@ class BrowserStoreApiClient implements StoreApiClient {
     return await this.realWrite<{ readonly accountId: string; readonly addresses: { readonly address: string; readonly status: "active" | "revoked"; readonly anchoredAt: string }[] }>("POST", pathname, { address });
   }
 
-  // ---- PRD91：装修与委托 ----
+  // ---- 装修与委托 ----
 
   async saveDecoration(planId: string, decoration: StoreDecorationDataView, note?: string): Promise<StoreApiResult<StoreDecorationView>> {
     const pathname = `/store/decoration/${encodeURIComponent(planId)}`;
@@ -598,7 +598,7 @@ class BrowserStoreApiClient implements StoreApiClient {
     });
   }
 
-  // ---- PRD92：上架 ----
+  // ---- 上架 ----
 
   async importListing(
     input: { readonly planId: string; readonly planHash?: string | undefined; readonly deploymentId?: string | undefined },
@@ -634,7 +634,7 @@ class BrowserStoreApiClient implements StoreApiClient {
     return await this.realWrite<{ readonly listing: StoreListingView }>("POST", pathname, {});
   }
 
-  // ---- PRD90：加入闭环 ----
+  // ---- 加入闭环 ----
 
   async submitJoinApplication(input: StoreJoinApplicationSubmitInput): Promise<StoreApiResult<StoreJoinApplicationDetailView>> {
     const pathname = "/store/join-applications";
@@ -1216,8 +1216,8 @@ function sessionFromResponse(
   fallback: StoreAccessState,
 ): StoreSessionDTO {
   const record = isRecord(response) ? response : {};
-  // 服务端固定返回 { session: {...} }（store-console.ts）；历史裸 session
-  // 形状的兼容分支已删除——畸形响应一律按缺省（未登录/环境配置）处理。
+  // 服务端固定返回 { session: {...} }（store-console.ts）；
+  // 畸形响应一律按缺省（未登录/环境配置）处理。
   const session: Record<string, unknown> = isRecord(record.session)
     ? record.session
     : {};
