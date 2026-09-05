@@ -1216,7 +1216,11 @@ function sessionFromResponse(
   fallback: StoreAccessState,
 ): StoreSessionDTO {
   const record = isRecord(response) ? response : {};
-  const session = isRecord(record.session) ? record.session : record;
+  // 服务端固定返回 { session: {...} }（store-console.ts）；历史裸 session
+  // 形状的兼容分支已删除——畸形响应一律按缺省（未登录/环境配置）处理。
+  const session: Record<string, unknown> = isRecord(record.session)
+    ? record.session
+    : {};
   const accessLevel =
     normalizeStoreAccessLevel(stringValue(session.accessLevel)) ??
     fallback.level;

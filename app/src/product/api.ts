@@ -60,7 +60,8 @@ type ProductTaskApiDTO = ProductTaskDTO & {
   readonly projection?: ProductProjectionFreshnessDTO | undefined;
 };
 
-export type ProductSyncState = "ready" | "syncing" | "fallback";
+/** 工作台数据同步态：ready=链上投影已就绪，syncing=仍在追赶链上事件。 */
+export type ProductSyncState = "ready" | "syncing";
 
 export interface WorkbenchEndpointDiagnostic {
   readonly endpoint: string;
