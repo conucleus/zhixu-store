@@ -39,6 +39,7 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
   const [view, setView] = useState<StoreView>("search");
   const [selectedZhixuId, setSelectedZhixuId] = useState<string | undefined>();
   const [joinPlanFilter, setJoinPlanFilter] = useState<string | undefined>();
+  const [joinZhixuFilter, setJoinZhixuFilter] = useState<string | undefined>();
   const [loadState, setLoadState] = useState<StoreLoadState>({ status: "loading" });
   const [loginBusy, setLoginBusy] = useState(false);
   const [loginMessage, setLoginMessage] = useState<string | undefined>();
@@ -233,8 +234,9 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
           api={api}
           onBack={() => setView("search")}
           onOpenDocking={() => setView("docking")}
-          onOpenJoinForPlan={(planId) => {
+          onOpenJoinForPlan={(planId, zhixuId) => {
             setJoinPlanFilter(planId);
+            setJoinZhixuFilter(zhixuId);
             setView("join");
           }}
           zhixuId={selectedZhixuId}
@@ -263,7 +265,7 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
       ) : null}
 
       {view === "join" ? (
-        <StoreJoinPage access={access} api={api} planIdFilter={joinPlanFilter} />
+        <StoreJoinPage access={access} api={api} planIdFilter={joinPlanFilter} zhixuFilter={joinZhixuFilter} />
       ) : null}
     </section>
   );

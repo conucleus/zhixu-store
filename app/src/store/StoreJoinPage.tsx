@@ -31,18 +31,49 @@ export function StoreJoinPage({
   access,
   api,
   planIdFilter,
+  zhixuFilter,
 }: {
   readonly access: StoreAccessState;
   readonly api: StoreApiClient;
   readonly planIdFilter?: string | undefined;
+  /** plan 过滤视图对应的 zhixuId：用于向服务端查询当前会话的审核能力。 */
+  readonly zhixuFilter?: string | undefined;
 }) {
   const [state, setState] = useState<JoinListState>({ status: "loading" });
   const [busyId, setBusyId] = useState<string | undefined>();
   const [message, setMessage] = useState<string | undefined>();
   const [rejectTarget, setRejectTarget] = useState<string | undefined>();
   const [rejectReason, setRejectReason] = useState("");
+  // 服务端声明的审核能力（publisher 或受托成员）；未查询到即视为无能力（fail-closed）。
+  const [viewerMayReviewPlan, setViewerMayReviewPlan] = useState(false);
 
   const anchored = access.anchoredAddress;
+
+  useEffect(() => {
+    setViewerMayReviewPlan(false);
+    if (!planIdFilter || !zhixuFilter) {
+      return;
+    }
+    let cancelled = false;
+    void api.getZhixuDetailWithOverlay(zhixuFilter).then((result) => {
+      if (cancelled) {
+        return;
+      }
+      const permission = result.data.overlay?.viewerPermission;
+      setViewerMayReviewPlan(
+        permission !== undefined &&
+        (permission.viewerIsPublisher || permission.viewerActiveDelegations.length > 0),
+      );
+    }).catch(() => {
+      // 叠加层不可得时按无审核能力渲染，不猜服务端权限。
+      if (!cancelled) {
+        setViewerMayReviewPlan(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, planIdFilter, zhixuFilter]);
 
   const reload = useCallback(async () => {
     if (!anchored) {
@@ -86,9 +117,9 @@ export function StoreJoinPage({
   }
 
   const isOperator = access.level === "store_operator" || access.level === "store_admin";
-  // 审核操作位只出现在运营方视图或 plan 过滤的审核队列（publisher 语境）；
-  // "我的申请"视图不渲染写入口（403 不是前端展示边界）。
-  const viewerCanReview = isOperator || Boolean(planIdFilter);
+  // 审核操作位按服务端能力渲染：运营方能力，或服务端叠加层声明当前会话是
+  // publisher/受托成员。任意已锚定会话不再默认获得写入口（点下去只会得到 403）。
+  const viewerCanReview = isOperator || (Boolean(planIdFilter) && viewerMayReviewPlan);
 
   return (
     <section className="store-join-page" data-testid="store-join-page">

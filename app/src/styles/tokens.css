@@ -1,33 +1,33 @@
 @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap");
 
+/*
+ * 设计令牌与 app/AGENTS_UI.md 的 Store Console 视觉规范对齐：
+ * 白/灰工作台面板、主色绿 #047857、蓝=信息/链上证明、橙=审核/待定、红=风险/驳回，
+ * 8px 基础圆角、克制的阴影、不做发光/渐变装饰。product-workbench.css 内的
+ * 具体组件使用这些值的字面量；本文件是单一事实源，二者不得漂移。
+ */
 :root {
   --bg: #fafaf9;
   --bg-deep: #ece9e2;
-  --bg-grid: rgba(30, 41, 59, 0.045);
   --panel: rgba(255, 255, 255, 0.72);
   --panel-strong: rgba(255, 255, 255, 0.84);
   --panel-dark: rgba(15, 23, 42, 0.9);
-  --surface: #fffdfa;
+  --surface: #ffffff;
   --surface-strong: #ffffff;
-  --surface-tint: rgba(255, 247, 237, 0.7);
-  --canvas: #0f172a;
-  --canvas-2: #162033;
-  --canvas-glow: rgba(251, 146, 60, 0.14);
   --ink: #142033;
   --muted: #5e6c82;
   --muted-strong: #334155;
+  --uvp-muted: #64748b;
   --line: rgba(30, 41, 59, 0.1);
   --line-strong: rgba(30, 41, 59, 0.18);
-  --glass-line: rgba(255, 255, 255, 0.52);
-  --accent: #f97316;
-  --accent-strong: #ea580c;
-  --accent-deep: #c2410c;
-  --accent-soft: rgba(249, 115, 22, 0.12);
-  --accent-soft-strong: rgba(249, 115, 22, 0.18);
-  --accent-glow: rgba(249, 115, 22, 0.28);
-  --accent-gradient: linear-gradient(135deg, #f97316, #fb923c);
-  --brand-indigo: #1e293b;
-  --brand-indigo-soft: rgba(30, 41, 59, 0.08);
+
+  /* 主色：操作绿（与 .primary-button 的 #079669→#047857 渐变同族）。 */
+  --accent: #047857;
+  --accent-strong: #079669;
+  --accent-deep: #036b4e;
+  --accent-soft: rgba(4, 120, 87, 0.08);
+
+  /* 语义色：蓝=信息/链上证明，橙=审核/待定，红=风险/驳回。 */
   --blue-soft: rgba(59, 130, 246, 0.08);
   --blue-ink: #295fbd;
   --green-soft: rgba(34, 197, 94, 0.08);
@@ -36,10 +36,12 @@
   --warn-ink: #9a6104;
   --danger-soft: rgba(239, 68, 68, 0.08);
   --danger-ink: #a12b2b;
+
+  /* 几何：8px 基础圆角（AGENTS_UI 规定），大容器至多 12px。 */
   --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 24px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
   --font-body: "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-display: "Plus Jakarta Sans", "IBM Plex Sans", "PingFang SC", sans-serif;
   --font-mono: "IBM Plex Mono", "SFMono-Regular", monospace;
@@ -49,19 +51,15 @@
   --text-lg: 20px;
   --text-xl: 28px;
   --text-2xl: 40px;
-  --shadow-rest: 0 18px 44px rgba(15, 23, 42, 0.08);
-  --shadow-hover: 0 24px 64px rgba(15, 23, 42, 0.14);
-  --shadow-active: 0 12px 30px rgba(15, 23, 42, 0.12);
-  --shadow-modal: 0 42px 120px rgba(15, 23, 42, 0.22);
-  --shadow-sm: var(--shadow-rest);
-  --shadow-md: var(--shadow-hover);
-  --shadow-lg: var(--shadow-modal);
+
+  /* 阴影克制、无光晕。 */
+  --shadow-rest: 0 1px 3px rgba(15, 23, 42, 0.08);
+  --shadow-hover: 0 2px 8px rgba(15, 23, 42, 0.12);
+  --shadow-modal: 0 12px 32px rgba(15, 23, 42, 0.16);
   --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-exit: cubic-bezier(0.2, 0, 0, 1);
+
   font-family: var(--font-body);
   color: var(--ink);
-  background:
-    radial-gradient(circle at top left, rgba(251, 146, 60, 0.12), transparent 26%),
-    radial-gradient(circle at top right, rgba(30, 41, 59, 0.12), transparent 28%),
-    linear-gradient(180deg, #fffefb 0%, var(--bg) 100%);
+  background: linear-gradient(180deg, #ffffff 0%, var(--bg) 100%);
 }

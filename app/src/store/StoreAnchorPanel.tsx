@@ -84,7 +84,7 @@ export function listingStatusLabel(status: StoreListingView["status"]): string {
   }
 }
 
-/** PRD92 红线：锚冲突或已下架时抑制加入入口。 */
+/** PRD92 红线：锚冲突、已下架、审核未通过或尚未完成上架审核时抑制加入入口。 */
 export function joinEntrySuppressed(
   verification: StoreAnchorVerificationView | undefined,
   listing: StoreListingView | undefined,
@@ -92,7 +92,7 @@ export function joinEntrySuppressed(
   if (verification?.status === "conflict") {
     return true;
   }
-  if (listing?.status === "delisted") {
+  if (listing?.status === "delisted" || listing?.status === "rejected" || listing?.status === "imported") {
     return true;
   }
   return false;
@@ -107,6 +107,12 @@ export function joinSuppressionReason(
   }
   if (listing?.status === "delisted") {
     return "该秩序已下架：目录与搜索不可见，加入入口关闭；链上 plan 与既有订单不受影响。";
+  }
+  if (listing?.status === "rejected") {
+    return "该秩序的上架审核未通过：加入入口关闭，请等待 Store 运营方重新提交上架。";
+  }
+  if (listing?.status === "imported") {
+    return "该秩序已导入但尚未完成上架审核：审核通过前不开放加入。";
   }
   return undefined;
 }

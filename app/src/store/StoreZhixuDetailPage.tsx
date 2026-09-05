@@ -40,7 +40,7 @@ export function StoreZhixuDetailPage({
   readonly zhixuId: string;
   readonly onBack: () => void;
   readonly onOpenDocking: () => void;
-  readonly onOpenJoinForPlan: (planId: string) => void;
+  readonly onOpenJoinForPlan: (planId: string, zhixuId: string) => void;
 }) {
   const [state, setState] = useState<DetailState>({ status: "loading" });
   const [proofOpen, setProofOpen] = useState(false);
@@ -92,7 +92,15 @@ export function StoreZhixuDetailPage({
         <div className="store-suppression-banner" role="alert" data-testid="store-suppression-banner">
           <AlertTriangle />
           <div>
-            <strong>{overlay?.anchorVerification?.status === "conflict" ? "listing 与链上事实冲突" : "该秩序已下架"}</strong>
+            <strong>{
+              overlay?.anchorVerification?.status === "conflict"
+                ? "listing 与链上事实冲突"
+                : overlay?.listing?.status === "rejected"
+                  ? "该秩序上架审核未通过"
+                  : overlay?.listing?.status === "imported"
+                    ? "该秩序上架审核未完成"
+                    : "该秩序已下架"
+            }</strong>
             <p>{suppressionReason}</p>
           </div>
         </div>
@@ -102,7 +110,7 @@ export function StoreZhixuDetailPage({
         <section className="panel-card">
           <div className="panel-heading">
             <div>
-              <span className="store-section-kicker">跨境电商履约秩序</span>
+              <span className="store-section-kicker">秩序详情</span>
               <h2>{decorationTheme?.displayName ?? zhixu.title}</h2>
               <p>{decorationTheme?.description ?? zhixu.subtitle}</p>
             </div>
@@ -167,7 +175,7 @@ export function StoreZhixuDetailPage({
                 <div className={`store-role-matrix-row ${slotReviewTone(slot.capabilityReviewStatus)}`} key={slot.roleSlotId}>
                   <strong>{slot.performanceSlotLabel}</strong>
                   <span>{slot.capabilityReviewLabel}</span>
-                  <small>{slot.expectedEvidence.slice(0, 2).join("、") || "未声明凭证"}</small>
+                  <small>{slot.expectedEvidence.join("、") || "未声明凭证"}</small>
                 </div>
               ))}
             </div>
@@ -211,7 +219,7 @@ export function StoreZhixuDetailPage({
               planId={zhixu.planId}
               roleSlots={zhixu.roleSlots.map((slot) => ({ slotId: slot.roleSlotId, title: slot.title }))}
               stageIds={zhixu.stages.map((stage) => stage.stageId)}
-              onSubmitted={() => onOpenJoinForPlan(zhixu.planId)}
+              onSubmitted={() => onOpenJoinForPlan(zhixu.planId, zhixu.zhixuId)}
             />
           )}
 

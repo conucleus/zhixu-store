@@ -237,7 +237,7 @@ export function StoreSearchPage({
     try {
       const result = await onSubmitDraftReview(reviewDraft.draftId);
       setReviewDraft(result.data.draft);
-      setSchemaAction({ phase: "success", message: "Store 审核已通过，可以进入 StateMachine 发布流程。" });
+      setSchemaAction({ phase: "success", message: `已提交 Store 审核，当前草稿状态：${draftStatusLabel(result.data.draft.status)}；审核结论由服务端治理流程给出。` });
     } catch (error) {
       setSchemaAction({ phase: "error", message: readableStoreError(error, "提交审核失败") });
     }
@@ -556,10 +556,10 @@ function DraftGovernancePanel({
       <div className={`governance-state-note ${active ? "success" : "info"}`} data-testid="store-governance-state-note" data-state={draft.status}>
         {active ? <CheckCircle2 /> : <ClipboardCheck />}
         <div>
-          <strong>{active ? "Plan 已注册" : "等待发布"}</strong>
+          <strong>{active ? "版本已激活" : "等待发布"}</strong>
           <p data-testid="store-governance-description">
             {active
-              ? "索引器已确认 UVPStateMachine 的 PlanRegistered 事件，可以创建订单。"
+              ? "Store 投影显示该版本已激活、可创建订单；PlanRegistered 的最终索引状态以链上投影为准。"
               : "当前草稿仍处于 Store 工作流中；发布工具负责链上注册。"}
           </p>
         </div>
@@ -571,7 +571,7 @@ function DraftGovernancePanel({
             <CheckCircle2 />
             <div>
               <strong>标准信号容器已就绪</strong>
-              <p>PlanRegistered 已被索引，该版本可作为标准信号容器创建订单。</p>
+              <p>Store 投影显示该版本已激活，可作为标准信号容器创建订单；PlanRegistered 索引状态以链上投影为准。</p>
             </div>
           </div>
           {onRefreshCatalog ? (
@@ -846,7 +846,11 @@ function StoreSearchInfoPanel({
         <StoreBoundaryCard
           icon={<Layers3 />}
           title="当前目录"
-          text={`${result.summary.totalZhixus} 条秩序，${result.summary.runningOrders} 单运行订单，${result.summary.registeredSuppliers} 个已登记执行方。`}
+          text={
+            result.zhixus.every((zhixu) => zhixu.metricsStatus === "observed")
+              ? `${result.summary.totalZhixus} 条秩序，${result.summary.runningOrders} 单运行订单，${result.summary.registeredSuppliers} 个已登记执行方。`
+              : "目录指标尚未被投影观测（unknown），不显示占位数值。"
+          }
         />
         <StoreBoundaryCard
           icon={<ClipboardCheck />}
@@ -1044,6 +1048,8 @@ function parseSchemaText(
 }
 
 function confirmSchemaPluginsExplicit(schema: StoreProductSchemaDTO): StoreProductSchemaDTO {
+  // 只把 source 改为 explicit：槽位插件与顶层插件清单的成员关系保持原样，
+  // 不用槽位集合重建顶层清单（那会丢掉未挂在槽位上的顶层插件）。
   const roleSlots = schema.roleSlots.map((slot) => ({
     ...slot,
     capabilityPlugins: (slot.capabilityPlugins ?? []).map((plugin) => ({
@@ -1054,6 +1060,9 @@ function confirmSchemaPluginsExplicit(schema: StoreProductSchemaDTO): StoreProdu
   return {
     ...schema,
     roleSlots,
-    capabilityPlugins: roleSlots.flatMap((slot) => slot.capabilityPlugins ?? [])
+    capabilityPlugins: schema.capabilityPlugins.map((plugin) => ({
+      ...plugin,
+      source: "explicit" as const
+    }))
   };
 }

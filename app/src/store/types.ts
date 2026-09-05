@@ -283,10 +283,6 @@ export interface StoreDockingSessionDTO {
   readonly updatedAt: string;
 }
 
-export interface StoreDockingValidationInput {
-  readonly draftSignalMap: readonly StoreDraftSignalMapEntryDTO[];
-}
-
 // ---- PRD89-92：会话配对 / 上架锚核验 / 装修权限 / 加入闭环 ----
 
 export interface StoreAccountAddressView {

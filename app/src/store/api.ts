@@ -15,8 +15,6 @@ import type {
   StoreDecorationView,
   StoreDockingSessionCreateDTO,
   StoreDockingSessionDTO,
-  StoreDockingValidationInput,
-  StoreDraftSignalMapEntryDTO,
   StoreImportZhixuDraftInput,
   StoreJoinApplicationDetailView,
   StoreJoinApplicationSubmitInput,
@@ -96,14 +94,6 @@ export interface StoreApiClient {
   getDockingSession(
     sessionId: string,
   ): Promise<StoreApiResult<StoreDockingSessionDTO>>;
-  validateDockingSession(
-    sessionId: string,
-    input: StoreDockingValidationInput,
-  ): Promise<StoreApiResult<StoreDockingSessionDTO>>;
-  saveDockingDraftMap(
-    sessionId: string,
-    draftSignalMap: readonly StoreDraftSignalMapEntryDTO[],
-  ): Promise<StoreApiResult<StoreDockingSessionDTO>>;
   // ---- PRD89：钱包会话 ----
   authChallenge(
     input: { readonly address: string; readonly intent?: "login" | "anchor_address" },
@@ -117,7 +107,6 @@ export interface StoreApiClient {
   >;
   revokeAccountAddress(address: string): Promise<StoreApiResult<{ readonly accountId: string; readonly addresses: readonly { readonly address: string; readonly status: "active" | "revoked"; readonly anchoredAt: string }[] }>>;
   // ---- PRD91：装修与委托 ----
-  getDecoration(planId: string): Promise<StoreApiResult<StoreDecorationView>>;
   saveDecoration(planId: string, decoration: StoreDecorationDataView, note?: string): Promise<StoreApiResult<StoreDecorationView>>;
   restoreDecorationVersion(planId: string, version: number): Promise<StoreApiResult<StoreDecorationView>>;
   listDelegations(publisherAddress: string): Promise<StoreApiResult<{ readonly delegations: readonly StorePublisherDelegationView[] }>>;
@@ -164,6 +153,11 @@ export class StoreApiError extends Error {
     this.details = options.details;
   }
 }
+
+/** Store 读写在挂起时必须超时（与工作台读路径同口径），否则页面无限 loading。 */
+const STORE_FETCH_TIMEOUT_MS = Number(
+  (import.meta.env ?? {})?.VITE_UVP_STORE_FETCH_TIMEOUT_MS
+) || 6000;
 
 class StoreApiUnavailableError extends Error {
   readonly pathname: string;
@@ -270,31 +264,13 @@ export function readableStoreError(error: unknown, fallback: string): string {
     }
     if (error.status > 0) {
       if (error.status === 409) {
-        const candidates = ambiguousOrderCandidates(error.details);
-        if (candidates.length > 0) {
-          return `409：订单标识不唯一，请选择候选记录：${candidates.join("、")}`;
-        }
-        return `409：请求对应多个订单候选，请选择明确的订单记录后重试`;
+        return `409：请求与服务端当前状态冲突（${error.code ?? "conflict"}），请刷新后重试`;
       }
       return `${error.status}：${error.code ?? error.message}`;
     }
     return error.message;
   }
   return error instanceof Error ? error.message : fallback;
-}
-
-function ambiguousOrderCandidates(details: unknown): readonly string[] {
-  if (!isRecord(details) || !Array.isArray(details.candidates)) {
-    return [];
-  }
-  return details.candidates.flatMap((candidate) => {
-    if (!isRecord(candidate)) {
-      return [];
-    }
-    const orderId = stringValue(candidate.orderId);
-    const title = stringValue(candidate.title);
-    return orderId ? [title ? `${title}（${orderId}）` : orderId] : [];
-  });
 }
 
 class BrowserStoreApiClient implements StoreApiClient {
@@ -424,7 +400,14 @@ class BrowserStoreApiClient implements StoreApiClient {
       pathname,
       (response) => {
         const record = isRecord(response) ? response : {};
-        return record.productSchema as StoreProductSchemaDTO;
+        if (!isRecord(record.productSchema)) {
+          throw new StoreApiError(
+            pathname,
+            0,
+            "store_product_schema_response_invalid",
+          );
+        }
+        return record.productSchema as unknown as StoreProductSchemaDTO;
       },
     );
   }
@@ -459,13 +442,12 @@ class BrowserStoreApiClient implements StoreApiClient {
   ): Promise<StoreApiResult<StoreZhixuDraftReviewResultDTO>> {
     const pathname = `/store/zhixu-drafts/${encodeURIComponent(draftId)}/submit-review`;
     this.requireWriteAccess(pathname);
+    // 提交审核 ≠ 自审自批：不携带硬编码的批准结论，
+    // 由服务端治理审核流程给出结论（缺省 status=submitted）。
     return await this.realWrite<StoreZhixuDraftReviewResultDTO>(
       "POST",
       pathname,
-      {
-        status: "approved_for_broadcast",
-        publicSummary: "Store operator confirmed Product Schema Bundle.",
-      },
+      {},
     );
   }
 
@@ -534,32 +516,6 @@ class BrowserStoreApiClient implements StoreApiClient {
     }));
   }
 
-  async validateDockingSession(
-    sessionId: string,
-    input: StoreDockingValidationInput,
-  ): Promise<StoreApiResult<StoreDockingSessionDTO>> {
-    const pathname = `/store/docking-sessions/${encodeURIComponent(sessionId)}/validate`;
-    this.requireWriteAccess(pathname);
-    return await this.realWrite("POST", pathname, input).then((result) => ({
-      data: dockingSessionFromResponse(result.data),
-      source: result.source,
-    }));
-  }
-
-  async saveDockingDraftMap(
-    sessionId: string,
-    draftSignalMap: readonly StoreDraftSignalMapEntryDTO[],
-  ): Promise<StoreApiResult<StoreDockingSessionDTO>> {
-    const pathname = `/store/docking-sessions/${encodeURIComponent(sessionId)}/save-draft-map`;
-    this.requireWriteAccess(pathname);
-    return await this.realWrite("POST", pathname, { draftSignalMap }).then(
-      (result) => ({
-        data: dockingSessionFromResponse(result.data),
-        source: result.source,
-      }),
-    );
-  }
-
   // ---- PRD89：钱包会话 ----
 
   async authChallenge(
@@ -609,11 +565,6 @@ class BrowserStoreApiClient implements StoreApiClient {
   }
 
   // ---- PRD91：装修与委托 ----
-
-  async getDecoration(planId: string): Promise<StoreApiResult<StoreDecorationView>> {
-    const pathname = `/store/decoration/${encodeURIComponent(planId)}`;
-    return await this.withRead(pathname, async () => await this.requestJson<StoreDecorationView>("GET", pathname));
-  }
 
   async saveDecoration(planId: string, decoration: StoreDecorationDataView, note?: string): Promise<StoreApiResult<StoreDecorationView>> {
     const pathname = `/store/decoration/${encodeURIComponent(planId)}`;
@@ -802,14 +753,6 @@ class BrowserStoreApiClient implements StoreApiClient {
     }
   }
 
-  private requireAdminAccess(pathname: string): void {
-    if (!this.access.canAdmin) {
-      throw new StoreApiError(pathname, 403, "forbidden", {
-        code: "forbidden",
-      });
-    }
-  }
-
   private requireCapability(
     pathname: string,
     capability: StoreCapability,
@@ -847,8 +790,12 @@ async function fetchStoreJson<TResponse>(
       method: init.method,
       headers,
       ...(body !== undefined ? { body } : {}),
+      signal: AbortSignal.timeout(STORE_FETCH_TIMEOUT_MS),
     });
   } catch (error) {
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      throw new StoreApiUnavailableError(pathname, "请求超时");
+    }
     throw new StoreApiUnavailableError(
       pathname,
       error instanceof Error ? error.message : "network_error",
@@ -862,7 +809,17 @@ async function fetchStoreJson<TResponse>(
       details: parsed.details,
     });
   }
-  return (await response.json()) as TResponse;
+  try {
+    return (await response.json()) as TResponse;
+  } catch (error) {
+    // 2xx 但不是 JSON：归入统一错误链，而不是抛裸 SyntaxError。
+    throw new StoreApiError(
+      pathname,
+      0,
+      error instanceof Error ? error.message : "store_response_not_json",
+      { code: "store_response_not_json" },
+    );
+  }
 }
 
 async function readStoreError(
@@ -965,12 +922,18 @@ export function parseStoreRuntimeSummary(response: unknown): StoreRuntimeSummary
 }
 
 function storeSupplierFromResponse(value: unknown, pathname: string): StoreSupplierDTO {
-  const record = isRecord(value) ? value : {};
+  const record = isRecord(value) ? value : undefined;
+  if (!record) {
+    throw new StoreApiError(pathname, 0, "store_supplier_response_invalid");
+  }
   const supplierId =
     stringValue(record.supplierId) ??
     stringValue(record.supplierSubjectId) ??
-    stringValue(record.subjectId) ??
-    "unknown-supplier";
+    stringValue(record.subjectId);
+  if (!supplierId) {
+    // fail-closed：不伪造 "unknown-supplier" 兜底身份。
+    throw new StoreApiError(pathname, 0, "store_supplier_response_invalid");
+  }
   const supplierSubjectId =
     stringValue(record.supplierSubjectId) ??
     stringValue(record.subjectId) ??
@@ -1271,7 +1234,7 @@ function sessionFromResponse(
     ? (session.accountAddresses as readonly StoreAccountAddressView[])
     : undefined;
   return {
-    authenticated: Boolean(session.authenticated) || Boolean(principalId),
+    authenticated: session.authenticated === true,
     ...(principalId ? { principalId } : {}),
     accessLevel,
     roles,

@@ -36,12 +36,13 @@ describe("Store runtime DTO boundary", () => {
   });
 });
 
-describe("ambiguous Store order errors", () => {
-  it("surfaces 409 candidates instead of treating the response as empty", () => {
-    const error = new StoreApiError("/store/orders/abc", 409, "order_id_ambiguous", {
-      code: "order_id_ambiguous",
+describe("Store conflict errors", () => {
+  it("renders 409 with the server error code instead of order-domain copy the client cannot produce", () => {
+    const error = new StoreApiError("/store/zhixu-drafts/draft-1/submit-review", 409, "compile_failed", {
+      code: "compile_failed",
       details: { candidates: [{ orderId: "order-1", title: "订单一" }, { orderId: "order-2" }] }
     });
-    assert.equal(readableStoreError(error, "fallback"), "409：订单标识不唯一，请选择候选记录：订单一（order-1）、order-2");
+    // Store 客户端没有订单端点：409 一律按通用冲突话术呈现，不得套订单域文案。
+    assert.equal(readableStoreError(error, "fallback"), "409：请求与服务端当前状态冲突（compile_failed），请刷新后重试");
   });
 });

@@ -34,10 +34,11 @@ export function StoreListingPanel({ api }: { readonly api: StoreApiClient }) {
   }, [api]);
 
   useEffect(() => {
-    if (open && state.status === "loading") {
+    // 每次展开都重取列表：面板关闭重开不能停留在旧快照上。
+    if (open) {
       void reload();
     }
-  }, [open, state.status, reload]);
+  }, [open, reload]);
 
   async function run(action: () => Promise<unknown>, done: string, onSucceeded?: () => void): Promise<void> {
     if (busy) {
