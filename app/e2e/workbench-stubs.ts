@@ -201,7 +201,8 @@ export const stubPreparedSubmit = {
   taskId: stubTask.taskId,
   expiresAt: "2026-01-01T01:00:00.000Z",
   humanSummary: {
-    orderId: stubOrder.title,
+    orderId: stubOrder.orderId,
+    taskTitle: stubTask.title,
     stage: stubTask.stageName,
     action: "确认本阶段完成",
     payloadHash: stubEvidence.payloadHash,

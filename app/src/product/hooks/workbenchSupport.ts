@@ -126,7 +126,13 @@ export interface EvidenceFileMetadata {
 }
 
 function normalizeAcceptEntry(entry: string): string {
-  return entry.trim().toLowerCase();
+  const trimmed = entry.trim().toLowerCase();
+  if (trimmed.length === 0 || trimmed.startsWith(".") || trimmed.includes("/")) {
+    return trimmed;
+  }
+  // 无点前缀的裸扩展名（如 "pdf"）：补点，否则既匹配不到文件扩展名，
+  // 也绕过 %PDF- 首字节快检（accept=["pdf"] 的历史写法失效且不安全）。
+  return `.${trimmed}`;
 }
 
 function extensionOf(name: string): string {
@@ -171,12 +177,12 @@ export function formatAcceptLabel(accept: readonly string[]): string {
   return labels.join("、");
 }
 
-/** <input accept> 属性值；空 accept 返回 undefined 表示不限制。 */
+/** <input accept> 属性值（裸扩展名先归一化为带点形式）；空 accept 返回 undefined 表示不限制。 */
 export function acceptAttribute(accept: readonly string[]): string | undefined {
   if (accept.length === 0) {
     return undefined;
   }
-  return accept.join(",");
+  return accept.map(normalizeAcceptEntry).join(",");
 }
 
 export function acceptHint(accept: readonly string[]): string {
@@ -250,6 +256,15 @@ async function readHead(
 export type TaskEvidenceFieldValues = Readonly<Record<string, string>>;
 
 export const emptyTaskEvidenceFieldValues: TaskEvidenceFieldValues = {};
+
+/**
+ * 框架保留键命名空间：上传元数据 fields 与表单字段共用一层 Record，
+ * 凝结核 spec 可以声明任意 key（包括 notes/stage 这类通用词）。
+ * 框架自带的阶段名与通用备注必须加前缀，避免与 spec 键互相污染。
+ */
+export const FRAMEWORK_METADATA_PREFIX = "uvp_framework_";
+export const FRAMEWORK_STAGE_FIELD_KEY = `${FRAMEWORK_METADATA_PREFIX}stage`;
+export const FRAMEWORK_NOTES_FIELD_KEY = `${FRAMEWORK_METADATA_PREFIX}notes`;
 
 /**
  * 必填检查：文本/日期槽位按 key 检查字段值，文件槽位按上传结果检查。

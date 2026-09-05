@@ -1,7 +1,6 @@
 import {
   AlertTriangle,
   Bell,
-  Building2,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -23,13 +22,12 @@ import {
   Search,
   Send,
   ShieldCheck,
-  Truck,
   UploadCloud,
   User,
   UserCheck,
   WalletCards
 } from "lucide-react";
-import { useLayoutEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
+import { useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import type {
   ChainProofRowDTO,
   DockableModuleStatus,
@@ -65,6 +63,7 @@ import { useProductWorkbenchData } from "./product/hooks/useProductWorkbenchData
 import { useTaskSubmissionFlow } from "./product/hooks/useTaskSubmissionFlow";
 import { idleAction, type ActionState, type ProductView, type SubmitMachineState, type SubmitMachineStatus } from "./product/hooks/workbenchTypes";
 import {
+  FRAMEWORK_NOTES_FIELD_KEY,
   acceptAttribute,
   acceptHint,
   canCreateProductOrder,
@@ -132,12 +131,17 @@ export function ProductWorkbenchApp() {
     handleSaveDraft,
     handleSendInvite
   } = draftFlow;
+  // 订单启动后的"同步中"只做过渡桥：刷新落地即复位，绝不永久挂起。
+  const [awaitingOrderSync, setAwaitingOrderSync] = useState(false);
   const { registerDraftAction, handleRegisterDraft } = useOrderRegistrationFlow({
     api,
     ensureDraft,
     onRegistered: (nextDraft) => {
       draftFlow.setDraft(nextDraft);
-      void refreshWorkbench();
+      setAwaitingOrderSync(true);
+      void refreshWorkbench().finally(() => {
+        setAwaitingOrderSync(false);
+      });
       window.setTimeout(() => setView("order"), 500);
     }
   });
@@ -162,7 +166,11 @@ export function ProductWorkbenchApp() {
     Object.keys(evidenceBySlot)
   );
   // 上传后相关字段变更的槽位（指纹已分叉）与缺失槽位一样禁锁提交。
-  const canConfirmSubmit = missingEvidenceSlotLabels.length === 0 && staleSlotLabels.length === 0;
+  // 凭证核验异常（mismatch/missing_file）的隔离凭证不得作为有效业务凭证，同样禁锁。
+  const verificationFailedLabels = Object.entries(evidenceProofsBySlot)
+    .filter(([, proof]) => proof.verificationStatus === "mismatch" || proof.verificationStatus === "missing_file")
+    .map(([key]) => evidencePlan.slots.find((slot) => slot.key === key)?.label ?? key);
+  const canConfirmSubmit = missingEvidenceSlotLabels.length === 0 && staleSlotLabels.length === 0 && verificationFailedLabels.length === 0;
 
   async function handleNextParticipants(): Promise<void> {
     const currentDraft = await ensureDraft();
@@ -318,9 +326,9 @@ export function ProductWorkbenchApp() {
         {loadState.status === "ready" && view === "zhixu" && selectedZhixu ? <ZhixuDetailPage zhixu={selectedZhixu} onBack={() => setView("home")} onCreate={() => setView("create")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : null}
         {loadState.status === "ready" && view === "create" && selectedZhixu ? <CreateOrderPage zhixu={selectedZhixu} draft={draft} createAction={draftAction} saveAction={saveDraftAction} values={draftFormValues} onValuesChange={(patch) => setDraftFormValues((current) => ({ ...current, ...patch }))} onBack={() => setView("zhixu")} onCreate={(values) => void handleCreateDraft(values)} onSave={(values) => void handleSaveDraft(values)} onNext={handleNextParticipants} /> : null}
         {loadState.status === "ready" && view === "participants" ? <ParticipantsPage order={selectedOrder} draft={draft} draftParticipants={draftParticipants} draftParticipantsStatus={draftFlow.draftParticipantsStatus} draftParticipantsError={draftFlow.draftParticipantsError} inviteActions={inviteActions} registerAction={registerDraftAction} onBack={() => setView("create")} onInvite={handleSendInvite} onRegister={handleRegisterDraft} onOrder={() => setView("order")} /> : null}
-        {loadState.status === "ready" && view === "order" ? selectedOrder ? <OrderOverviewPage order={selectedOrder} syncing={data.syncState === "syncing" || registerDraftAction.phase === "success"} onBack={() => setView("home")} onTask={() => setView("task")} onDispute={() => setView("dispute")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : <EmptyState title="暂无进行中订单" desc="创建并启动订单后，这里会展示订单总览、当前待办和最近事件。" /> : null}
-        {loadState.status === "ready" && view === "task" ? activeTask ? <TaskPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} evidenceProofsBySlot={evidenceProofsBySlot} uploadAction={evidenceAction} canConfirm={canConfirmSubmit} missingEvidenceLabels={missingEvidenceSlotLabels} staleSlotLabels={staleSlotLabels} fieldValues={taskEvidenceFields} onFieldValuesChange={(patch) => setTaskEvidenceFields((current) => ({ ...current, ...patch }))} onBack={() => setView("order")} onUpload={(slotKey, file) => void handleUploadEvidence(slotKey, file)} onSubmit={() => setView("submit")} onDispute={() => setView("dispute")} /> : <EmptyState title="暂无待办" desc="当前没有需要你处理的任务。" /> : null}
-        {loadState.status === "ready" && view === "submit" ? activeTask ? <SubmitPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} submitMachine={submitMachine} canSubmit={canConfirmSubmit} staleSlotLabels={staleSlotLabels} onBack={() => setView("task")} onSubmit={() => void handleConfirmSubmit()} onOrder={() => setView("order")} /> : <EmptyState title="暂无可提交的待办" desc="待办完成凭证上传后，可在这里确认提交。" /> : null}
+        {loadState.status === "ready" && view === "order" ? selectedOrder ? <OrderOverviewPage order={selectedOrder} syncing={data.syncState === "syncing" || awaitingOrderSync} onBack={() => setView("home")} onTask={() => setView("task")} onDispute={() => setView("dispute")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : <EmptyState title="暂无进行中订单" desc="创建并启动订单后，这里会展示订单总览、当前待办和最近事件。" /> : null}
+        {loadState.status === "ready" && view === "task" ? activeTask ? <TaskPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} evidenceProofsBySlot={evidenceProofsBySlot} uploadAction={evidenceAction} canConfirm={canConfirmSubmit} missingEvidenceLabels={missingEvidenceSlotLabels} staleSlotLabels={staleSlotLabels} verificationFailedLabels={verificationFailedLabels} fieldValues={taskEvidenceFields} onFieldValuesChange={(patch) => setTaskEvidenceFields((current) => ({ ...current, ...patch }))} onBack={() => setView("order")} onUpload={(slotKey, file) => void handleUploadEvidence(slotKey, file)} onSubmit={() => setView("submit")} onDispute={() => setView("dispute")} /> : <EmptyState title="暂无待办" desc="当前没有需要你处理的任务。" /> : null}
+        {loadState.status === "ready" && view === "submit" ? activeTask ? <SubmitPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} submitMachine={submitMachine} canSubmit={canConfirmSubmit} staleSlotLabels={staleSlotLabels} verificationFailedLabels={verificationFailedLabels} onBack={() => setView("task")} onSubmit={() => void handleConfirmSubmit()} onOrder={() => setView("order")} /> : <EmptyState title="暂无可提交的待办" desc="待办完成凭证上传后，可在这里确认提交。" /> : null}
         {loadState.status === "ready" && view === "dispute" ? activeTask ? <DisputePage task={activeTask} action={disputeAction} onBack={() => setView("order")} onSave={handleDisputeSave} /> : <EmptyState title="暂无可争议事项" desc="订单出现可处理待办后，可以补充争议材料。" /> : null}
       </main>
     </div>
@@ -844,7 +852,7 @@ function ParticipantsPage({
               return (
               <div className="participant-row" data-testid="participant-row" data-uvp-participant-required={item.required ? "true" : "false"} data-uvp-participant-status={item.status} key={item.participantId}>
                 <div className="participant-role">
-                  <span className="role-icon">{roleSlotIcon(item.roleSlotId)}</span>
+                  <span className="role-icon"><PackageCheck /></span>
                   <strong>{item.roleLabel}</strong>
                 </div>
                 <p data-testid={`participant-contact-${item.participantId}`}>{item.required ? "关键参与方，需要确认职责" : "可选参与方，可稍后邀请"}；联系方式：{item.contact.trim() ? item.contact.trim() : "未填写"}</p>
@@ -975,6 +983,7 @@ function TaskPage({
   canConfirm,
   missingEvidenceLabels,
   staleSlotLabels,
+  verificationFailedLabels,
   fieldValues,
   onFieldValuesChange,
   onBack,
@@ -990,6 +999,7 @@ function TaskPage({
   canConfirm: boolean;
   missingEvidenceLabels: readonly string[];
   staleSlotLabels: readonly string[];
+  verificationFailedLabels: readonly string[];
   fieldValues: TaskEvidenceFieldValues;
   onFieldValuesChange: (patch: TaskEvidenceFieldValues) => void;
   onBack: () => void;
@@ -1002,14 +1012,6 @@ function TaskPage({
   const declaredEvidenceLabels = evidencePlan.mode === "fallback"
     ? evidencePlan.declaredLabels
     : evidencePlan.slots.map((slot) => slot.label);
-
-  function handleFileChange(slotKey: string, event: ChangeEvent<HTMLInputElement>) {
-    const file = event.currentTarget.files?.[0];
-    if (file) {
-      onUpload(slotKey, file);
-    }
-    event.currentTarget.value = "";
-  }
 
   return (
     <section className="page-shell" data-testid="task-detail-page">
@@ -1036,7 +1038,7 @@ function TaskPage({
             </div>
           ) : null}
           {fileSlots.length > 0 ? fileSlots.map((slot) => (
-            <EvidenceUploadZone key={slot.key} slot={slot} uploaded={evidenceBySlot[slot.key]} proof={evidenceProofsBySlot[slot.key]} onFileChange={(event) => handleFileChange(slot.key, event)} />
+            <EvidenceUploadZone key={slot.key} slot={slot} uploaded={evidenceBySlot[slot.key]} proof={evidenceProofsBySlot[slot.key]} onFileSelected={(file) => onUpload(slot.key, file)} />
           )) : <InlineEmpty text="本待办无需上传文件凭证" />}
           {staleSlotLabels.length > 0 ? (
             <div className="warning-box" data-testid="task-evidence-stale-warning">
@@ -1044,6 +1046,15 @@ function TaskPage({
               <div>
                 <strong>字段已变更，请重新上传以更新指纹</strong>
                 <p>以下凭证上传后相关字段又发生了变化：{staleSlotLabels.join("、")}。重新上传对应凭证之前无法提交。</p>
+              </div>
+            </div>
+          ) : null}
+          {verificationFailedLabels.length > 0 ? (
+            <div className="warning-box" data-testid="task-evidence-verification-warning" role="alert">
+              <AlertTriangle />
+              <div>
+                <strong>凭证核验异常，不能作为有效凭证提交</strong>
+                <p>以下凭证的核验结果为不一致或文件缺失：{verificationFailedLabels.join("、")}。请重新上传对应凭证后再提交。</p>
               </div>
             </div>
           ) : null}
@@ -1055,7 +1066,7 @@ function TaskPage({
               <Field key={slot.key} label={slot.label} required={slot.required} value={fieldValues[slot.key] ?? ""} onChange={(value) => onFieldValuesChange({ [slot.key]: value })} placeholder={`请输入${slot.label}`} testId={`task-field-${slot.key}`} />
             ))}
           </div>
-          <Textarea label="备注（选填）" value={fieldValues.notes ?? ""} onChange={(notes) => onFieldValuesChange({ notes })} placeholder="请输入备注信息（如有特殊说明可在此填写）" />        </Panel>
+          <Textarea label="备注（选填）" value={fieldValues[FRAMEWORK_NOTES_FIELD_KEY] ?? ""} onChange={(notes) => onFieldValuesChange({ [FRAMEWORK_NOTES_FIELD_KEY]: notes })} placeholder="请输入备注信息（如有特殊说明可在此填写）" />        </Panel>
         <aside className="side-card">
           <h2>责任确认</h2>
           {task.responsibilityStatements.map((statement) => (
@@ -1064,6 +1075,9 @@ function TaskPage({
           <button className={canConfirm ? "primary-button block" : "disabled-button block"} data-testid="task-confirm-button" onClick={canConfirm ? onSubmit : undefined} disabled={!canConfirm}>确认阶段完成</button>
           {!canConfirm && missingEvidenceLabels.length > 0 ? (
             <p className="side-note" data-testid="task-confirm-blocked-note"><HelpCircle /> 还需完成：{missingEvidenceLabels.join("、")}</p>
+          ) : null}
+          {!canConfirm && verificationFailedLabels.length > 0 ? (
+            <p className="side-note" data-testid="task-confirm-verification-blocked-note"><HelpCircle /> 凭证核验异常：{verificationFailedLabels.join("、")}</p>
           ) : null}
           <div className="split-actions">
             <button className="secondary-button" onClick={onDispute}>无法完成</button>
@@ -1080,18 +1094,32 @@ function EvidenceUploadZone({
   slot,
   uploaded,
   proof,
-  onFileChange
+  onFileSelected
 }: {
   slot: TaskEvidenceSlot;
   uploaded?: EvidenceObjectDTO | undefined;
   proof?: EvidenceProofDTO | undefined;
-  onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onFileSelected: (file: File) => void;
 }) {
   const acceptValue = acceptAttribute(slot.accept);
+  // 核验异常必须以异常态呈现：隔离凭证不能与正常上传一样显示成功色调。
+  const verification = proof?.verificationStatus;
+  const verificationAlert = verification === "mismatch" || verification === "missing_file";
   return (
     <div data-testid={`task-evidence-slot-${slot.key}`}>
       {slot.description ? <p className="page-subtitle">{slot.description}</p> : null}
-      <label className="upload-zone">
+      <label
+        className="upload-zone"
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={(event) => {
+          // 拖拽与点击选择走同一条上传校验路径。
+          event.preventDefault();
+          const file = event.dataTransfer.files?.[0];
+          if (file) {
+            onFileSelected(file);
+          }
+        }}
+      >
         <UploadCloud />
         <strong>{slot.label}</strong>
         <span>将文件拖拽到此处，或点击选择文件；{acceptHint(slot.accept)}，单个文件不超过 10MB</span>
@@ -1100,7 +1128,13 @@ function EvidenceUploadZone({
           type="file"
           data-testid={`task-file-input-${slot.key}`}
           {...(acceptValue ? { accept: acceptValue } : {})}
-          onChange={onFileChange}
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            if (file) {
+              onFileSelected(file);
+            }
+            event.currentTarget.value = "";
+          }}
         />
       </label>
       {uploaded ? (
@@ -1110,7 +1144,15 @@ function EvidenceUploadZone({
             <strong>{uploaded.fileName}</strong>
             <span>{formatBytes(uploaded.size)} · 指纹 {shortHash(uploaded.payloadHash)}</span>
           </div>
-          <StatusText tone="ok">{proof?.verificationStatus === "matched" ? "已绑定" : "已上传 · 已生成凭证指纹"}</StatusText>
+          {verification === "matched" ? (
+            <StatusText tone="ok">已绑定</StatusText>
+          ) : verificationAlert ? (
+            <StatusText tone="warn" testId="task-evidence-verification-alert">
+              {verification === "mismatch" ? "核验不一致：内容与指纹不符，需重新上传" : "核验失败：凭证文件缺失，需重新上传"}
+            </StatusText>
+          ) : (
+            <StatusText tone="ok">已上传 · 已生成凭证指纹</StatusText>
+          )}
         </div>
       ) : (
         <InlineEmpty text={`尚未上传「${slot.label}」`} />
@@ -1126,6 +1168,7 @@ function SubmitPage({
   submitMachine,
   canSubmit,
   staleSlotLabels,
+  verificationFailedLabels,
   onBack,
   onSubmit,
   onOrder
@@ -1136,6 +1179,7 @@ function SubmitPage({
   submitMachine: SubmitMachineState;
   canSubmit: boolean;
   staleSlotLabels: readonly string[];
+  verificationFailedLabels: readonly string[];
   onBack: () => void;
   onSubmit: () => void;
   onOrder: () => void;
@@ -1208,6 +1252,15 @@ function SubmitPage({
               </div>
             </div>
           ) : null}
+          {verificationFailedLabels.length > 0 ? (
+            <div className="warning-box" data-testid="submit-verification-warning" role="alert">
+              <AlertTriangle />
+              <div>
+                <strong>凭证核验异常，禁止提交</strong>
+                <p>以下凭证核验为不一致或文件缺失：{verificationFailedLabels.join("、")}。返回待办页重新上传对应凭证后再提交。</p>
+              </div>
+            </div>
+          ) : null}
           <button className="primary-button block" data-testid="submit-confirm-button" onClick={onSubmit} disabled={!canSubmit || pending}>
             {pending ? <Loader2 className="spin" /> : <WalletCards />} 确认并提交
           </button>
@@ -1268,11 +1321,9 @@ function DisputePage({
             <Field label="争议对象" value={`${task.stageName}阶段`} />
             <SelectField label="争议原因" required value="请选择争议原因" />
             <Textarea label="说明" required placeholder="请说明争议原因，例如凭证不清晰、信息不一致、未按时完成等" />
-            <label className="upload-zone small">
-              <UploadCloud />
-              <strong>点击上传或拖拽文件到此处</strong>
-              <span>支持 PDF、JPG、PNG 格式，单个文件不超过 20MB</span>
-            </label>
+            <p className="side-note">
+              <HelpCircle /> 争议材料上传将随争议通道一起开通；当前表单不接收文件，也不显示任何上传承诺。
+            </p>
           </div>
           <button className="primary-button align-right" onClick={onSave} disabled={action.phase === "pending"}>{action.phase === "pending" ? <Loader2 className="spin" /> : null}提交争议</button>
           <ActionNotice state={action} />
@@ -1390,7 +1441,7 @@ function RoleDockMap({ roleSlots }: { roleSlots: readonly RoleSlotDTO[] }) {
         {roleSlots.map((slot) => (
           <article className={`role-slot-card ${slot.tone}`} key={slot.title}>
             <div className="role-slot-head">
-              <span className="role-slot-icon">{roleSlotIcon(slot.slotId)}</span>
+              <span className="role-slot-icon"><PackageCheck /></span>
               <div>
                 <strong>{slot.title}</strong>
                 <p>{slot.label}</p>
@@ -1414,7 +1465,7 @@ function DockableModules({ modules }: { modules: readonly DockableZhixuModuleDTO
       {modules.map((module) => (
         <article className="dock-module-card" key={module.title}>
           <div className="dock-module-title">
-            <span>{dockableModuleIcon(module.moduleId)}</span>
+            <span><Layers3 /></span>
             <div>
               <strong>{module.title}</strong>
               <p>{module.desc}</p>
@@ -1733,8 +1784,8 @@ function Condition({ status, title, desc }: { status: "done" | "warn"; title: st
   );
 }
 
-function StatusText({ children, tone }: { children: ReactNode; tone: ProductTone }) {
-  return <span className={`status-text ${tone}`}>{children}</span>;
+function StatusText({ children, tone, testId }: { children: ReactNode; tone: ProductTone; testId?: string | undefined }) {
+  return <span className={`status-text ${tone}`} {...(testId ? { "data-testid": testId } : {})}>{children}</span>;
 }
 
 function ParticipantStatus({ text, active }: { text: string; active?: boolean }) {
@@ -1884,40 +1935,6 @@ function submitStatusTitle(status: SubmitMachineStatus): string {
       return "已确认阶段完成";
     case "failed":
       return "提交失败";
-  }
-}
-
-function roleSlotIcon(slotId: string): ReactNode {
-  switch (slotId) {
-    case "funds":
-      return <HandCoins />;
-    case "supply":
-      return <Building2 />;
-    case "delivery":
-      return <Truck />;
-    case "validation":
-      return <ShieldCheck />;
-    case "dispute":
-      return <ClipboardCheck />;
-    case "maintainer":
-      return <UserCheck />;
-    default:
-      return <PackageCheck />;
-  }
-}
-
-function dockableModuleIcon(moduleId: string): ReactNode {
-  switch (moduleId) {
-    case "funds-protection":
-      return <WalletCards />;
-    case "logistics-delivery":
-      return <Truck />;
-    case "inspection-acceptance":
-      return <ShieldCheck />;
-    case "dispute-resolution":
-      return <ClipboardCheck />;
-    default:
-      return <Layers3 />;
   }
 }
 

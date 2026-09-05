@@ -115,6 +115,15 @@ test.describe("Product Workbench browser smoke", () => {
 
   test("create order form reports missing required fields by name, then creates a draft", async ({ page }) => {
     await installWorkbenchRoutes(page);
+    // 捕获路由必须后于桩注册（后注册者优先）；fallback() 让请求继续走桩响应，
+    // continue() 会把请求发往桩 origin（127.0.0.1:9，不可达）。
+    const createBodies: Array<Record<string, unknown>> = [];
+    await page.route("**/product/order-drafts", async (route) => {
+      if (route.request().method() === "POST") {
+        createBodies.push(route.request().postDataJSON() as Record<string, unknown>);
+      }
+      await route.fallback();
+    });
     await page.goto("/app");
     await page.getByRole("button", { name: "查看秩序详情" }).first().click();
     await page.getByTestId("zhixu-create-order-button").click();
@@ -125,12 +134,20 @@ test.describe("Product Workbench browser smoke", () => {
 
     await page.getByLabel(/订单名称/).fill("e2e 受控表单订单");
     await page.getByLabel(/业务类型/).fill("车辆");
+    await page.getByLabel(/对象说明/).fill("品牌型号：e2e 测试车型");
     await page.getByLabel(/总金额/).fill("10000");
     await page.getByLabel("币种").selectOption("USDC");
+    await page.getByLabel(/备注/).fill("创建即随载荷上送的备注");
 
     await page.getByTestId("create-draft-button").click();
     await expect(page.getByText("订单草稿已创建")).toBeVisible();
     await expect(page.getByTestId("product-workbench")).not.toHaveAttribute("data-uvp-draft-id", "");
+
+    // 对象说明/备注不能在创建载荷里被静默丢弃
+    expect(createBodies.length).toBeGreaterThan(0);
+    const createBody = createBodies[createBodies.length - 1]!;
+    expect(createBody.goods).toContain("品牌型号：e2e 测试车型");
+    expect(createBody.notes).toBe("创建即随载荷上送的备注");
 
     await page.getByTestId("save-draft-button").click();
     await expect(page.getByText("草稿已保存")).toBeVisible();

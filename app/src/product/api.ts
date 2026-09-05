@@ -147,8 +147,10 @@ export interface CreateOrderDraftInput {
   readonly zhixuId: string;
   readonly title: string;
   readonly businessType: string;
+  readonly goods?: readonly string[];
   readonly totalAmount: string;
   readonly currency: string;
+  readonly notes?: string;
 }
 
 export type UpdateOrderDraftInput = Partial<
@@ -339,10 +341,9 @@ export class HttpProductApiClient implements ProductApiClient {
       throw new ApiMissingConfigError("/product/zhixus", "API base URL is not configured");
     }
 
-    const zhixusResponse = await fetchJsonWithTimeout<{ readonly zhixus: readonly ZhixuSummaryDTO[] }>(
+    const zhixusResponse = await fetchJson<{ readonly zhixus: readonly ZhixuSummaryDTO[] }>(
       this.baseUrl,
       "/product/zhixus",
-      UVP_WORKBENCH_FETCH_TIMEOUT_MS,
       {},
       this.fetchImpl
     );
@@ -362,12 +363,12 @@ export class HttpProductApiClient implements ProductApiClient {
       { path: "/product/tasks", label: "tasks" }
     ] as const;
     const [ordersSettled, tasksSettled, meSettled] = await Promise.allSettled([
-      fetchJsonWithTimeout<{ readonly orders: readonly ProductOrderApiDTO[] }>(this.baseUrl, "/product/orders", UVP_WORKBENCH_FETCH_TIMEOUT_MS, {}, this.fetchImpl),
-      fetchJsonWithTimeout<{ readonly tasks: readonly ProductTaskApiDTO[] }>(this.baseUrl, "/product/tasks", UVP_WORKBENCH_FETCH_TIMEOUT_MS, {}, this.fetchImpl),
-      fetchJsonWithTimeout<{
+      fetchJson<{ readonly orders: readonly ProductOrderApiDTO[] }>(this.baseUrl, "/product/orders", {}, this.fetchImpl),
+      fetchJson<{ readonly tasks: readonly ProductTaskApiDTO[] }>(this.baseUrl, "/product/tasks", {}, this.fetchImpl),
+      fetchJson<{
         readonly participant: ProductParticipantProfileDTO;
         readonly summary?: unknown;
-      }>(this.baseUrl, "/product/me", UVP_WORKBENCH_FETCH_TIMEOUT_MS, {}, this.fetchImpl)
+      }>(this.baseUrl, "/product/me", {}, this.fetchImpl)
     ]);
 
     const diagnostics = [
@@ -608,9 +609,11 @@ async function evidenceUploadBody(input: UploadEvidenceInput): Promise<Record<st
 
 async function fileToBase64(file: File): Promise<string> {
   const bytes = new Uint8Array(await file.arrayBuffer());
+  // 分块转换：10MB 文件逐字节拼接字符串是 O(n²) 级的重复拷贝。
+  const CHUNK_SIZE = 0x8000;
   let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
+  for (let offset = 0; offset < bytes.length; offset += CHUNK_SIZE) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + CHUNK_SIZE));
   }
   return btoa(binary);
 }
@@ -650,7 +653,8 @@ function preparedSubmitFromResponse(response: unknown): PreparedSubmitDTO {
     taskId: requiredString(prepared.taskId, "prepared_submit_response_invalid"),
     expiresAt: requiredString(prepared.expiresAt, "prepared_submit_response_invalid"),
     summary: {
-      orderTitle: requiredString(humanSummary.orderId, "prepared_submit_response_invalid"),
+      // 摘要标题用服务端的 taskTitle；orderId 是标识符不是可读标题。
+      orderTitle: requiredString(humanSummary.taskTitle, "prepared_submit_response_invalid"),
       stageName: requiredString(humanSummary.stage, "prepared_submit_response_invalid"),
       actionLabel: requiredString(humanSummary.action, "prepared_submit_response_invalid"),
       evidenceFingerprint: requiredString(humanSummary.payloadHash, "prepared_submit_response_invalid"),
@@ -795,24 +799,6 @@ const UVP_WORKBENCH_FETCH_TIMEOUT_MS = Number(
   (import.meta.env ?? {})?.VITE_UVP_WORKBENCH_FETCH_TIMEOUT_MS
 ) || 6000;
 
-async function fetchJsonWithTimeout<TResponse>(
-  baseUrl: string,
-  pathname: string,
-  timeoutMs: number,
-  init: { readonly method?: string; readonly body?: unknown } = {},
-  fetchImpl: typeof fetch = fetch.bind(globalThis)
-): Promise<TResponse> {
-  const fetchPromise = fetchJson<TResponse>(baseUrl, pathname, init, fetchImpl);
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    const timer = setTimeout(() => reject(new ApiNetworkError(pathname, "请求超时", 0)), timeoutMs);
-    // Node 测试环境（tsx --test）中避免未触发的超时定时器拖住进程退出；浏览器返回 number，无 unref。
-    if (typeof timer === "object" && timer !== null && "unref" in timer) {
-      timer.unref();
-    }
-  });
-  return await Promise.race([fetchPromise, timeoutPromise]);
-}
-
 async function fetchJson<TResponse>(
   baseUrl: string,
   pathname: string,
@@ -829,12 +815,18 @@ async function fetchJson<TResponse>(
   }
   let response: Response;
   try {
+    // 统一超时：详情/写路径/轮询与列表读同口径（默认 6s，可经
+    // VITE_UVP_WORKBENCH_FETCH_TIMEOUT_MS 覆盖），否则任一挂起请求会让工作台无限 loading。
     response = await fetchImpl(`${baseUrl}${pathname}`, {
       method: init.method ?? "GET",
       headers,
-      ...(body !== undefined ? { body } : {})
+      ...(body !== undefined ? { body } : {}),
+      signal: AbortSignal.timeout(UVP_WORKBENCH_FETCH_TIMEOUT_MS)
     });
   } catch (error) {
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      throw new ApiNetworkError(pathname, "请求超时", 0);
+    }
     throw new ApiNetworkError(pathname, error instanceof Error ? error.message : "network_error");
   }
   if (!response.ok) {
@@ -844,7 +836,12 @@ async function fetchJson<TResponse>(
     }
     throw new ApiRequestError(pathname, response.status, message);
   }
-  return await response.json() as TResponse;
+  try {
+    return await response.json() as TResponse;
+  } catch (error) {
+    // 2xx 但不是 JSON：归入统一错误链，而不是抛裸 SyntaxError。
+    throw new ApiRequestError(pathname, response.status, error instanceof Error ? error.message : "response_not_json");
+  }
 }
 
 async function readErrorMessage(response: Response): Promise<string> {

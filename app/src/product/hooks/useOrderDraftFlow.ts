@@ -154,12 +154,16 @@ export function useOrderDraftFlow(input: {
     }
     setDraftAction({ phase: "pending", message: "正在创建订单草稿" });
     try {
+      const goods = goodsFromValues(values);
+      const notes = values.notes.trim();
       const result = await api.createOrderDraft({
         zhixuId: selectedZhixu.zhixuId,
         title: values.title.trim(),
         businessType: values.businessType.trim(),
+        ...(goods.length > 0 ? { goods } : {}),
         totalAmount: values.totalAmount.trim(),
-        currency: values.currency.trim()
+        currency: values.currency.trim(),
+        ...(notes ? { notes } : {})
       });
       setDraft(result.data);
       setDraftAction({ phase: "success", message: "订单草稿已创建", source: result.source });

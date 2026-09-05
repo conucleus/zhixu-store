@@ -15,6 +15,7 @@ import {
 } from "../wallet";
 import { idleAction, type ActionState, type SubmitMachineState } from "./workbenchTypes";
 import {
+  FRAMEWORK_STAGE_FIELD_KEY,
   delay,
   evidenceMetadataSignature,
   isEvidenceSlotStale,
@@ -116,7 +117,8 @@ export function useTaskSubmissionFlow(input: {
     setEvidenceAction({ phase: "pending", message: "正在上传凭证并生成指纹" });
     try {
       const metadataFields: Record<string, string> = {
-        stage: activeTask.stageName
+        // 框架保留键带命名空间前缀，不与凝结核 spec 的任意 key 冲突。
+        [FRAMEWORK_STAGE_FIELD_KEY]: activeTask.stageName
       };
       // 字段 key 全部来自凝结核配置（spec）；fallback 模式只携带通用备注与
       // 原样声明的凭证要求文本，框架不携带任何业务字段名。
@@ -194,6 +196,18 @@ export function useTaskSubmissionFlow(input: {
       setSubmitMachine({
         status: "failed",
         message: `字段已变更，请重新上传以更新指纹：${staleLabels.join("、")}`
+      });
+      return;
+    }
+    // 凭证核验异常（mismatch/missing_file）的隔离凭证不得作为有效业务凭证：
+    // 提交门槛必须阻断，闭环"隔离凭证不可用"的前端契约。
+    const verificationFailedLabels = Object.entries(proofsBySlot)
+      .filter(([, proof]) => proof.verificationStatus === "mismatch" || proof.verificationStatus === "missing_file")
+      .map(([key]) => evidencePlan.slots.find((slot) => slot.key === key)?.label ?? key);
+    if (verificationFailedLabels.length > 0) {
+      setSubmitMachine({
+        status: "failed",
+        message: `凭证核验异常（内容与指纹不符或文件缺失），请重新上传：${verificationFailedLabels.join("、")}`
       });
       return;
     }
@@ -289,6 +303,18 @@ export function useTaskSubmissionFlow(input: {
         });
         return;
       }
+      if (result.data.status === "expired" || result.data.status === "replaced") {
+        // expired/replaced 是服务端记录的中间态：原提交可能仍在索引或已被
+        // 后续提交取代，绝不宣判"失败"，也不诱导重投。
+        setSubmitMachine({
+          status: "tx_pending",
+          message: `提交记录为 ${result.data.status}，仍在索引中；可稍后刷新查看最终状态，请勿重复提交（提交编号 ${submissionId}）`,
+          prepared,
+          submission: result.data,
+          source: result.source
+        });
+        continue;
+      }
       setSubmitMachine({
         status: "tx_pending",
         message: "提交处理中，等待确认",
@@ -300,9 +326,10 @@ export function useTaskSubmissionFlow(input: {
     if (taskScopeRef.current !== requestScopeKey) {
       return;
     }
+    // 轮询窗口耗尽 ≠ 失败：交易可能仍在索引，保持中间态，不诱导重投。
     setSubmitMachine({
-      status: "failed",
-      message: `链上确认超时，请凭提交编号 ${submissionId} 人工核对`,
+      status: "tx_pending",
+      message: `仍在索引中，暂未收到最终确认；可稍后刷新查看结果，请勿重复提交（提交编号 ${submissionId}）`,
       prepared,
       source
     });

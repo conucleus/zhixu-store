@@ -3,6 +3,9 @@ import { describe, it } from "node:test";
 import type { ProductTaskDTO } from "@uvp-eth/product-dto";
 import {
   EVIDENCE_MAX_FILE_BYTES,
+  FRAMEWORK_METADATA_PREFIX,
+  FRAMEWORK_NOTES_FIELD_KEY,
+  FRAMEWORK_STAGE_FIELD_KEY,
   acceptAllowsFile,
   acceptAttribute,
   acceptHint,
@@ -138,6 +141,14 @@ describe("evidence accept constraints", () => {
     assert.equal(acceptAllowsFile(["application/pdf"], { size: 10, name: "凭证.pdf", type: "application/pdf" }), true);
     assert.equal(acceptAllowsFile([".pdf"], { size: 10, name: "照片.jpg", type: "image/jpeg" }), false);
     assert.equal(acceptAllowsFile([], { size: 10, name: "任意.bin", type: "" }), true);
+  });
+
+  it("normalizes bare extension entries so accept=[\"pdf\"] no longer bypasses checks", () => {
+    // 历史写法 accept=["pdf"]（无点前缀）既匹配不到扩展名，也绕过 %PDF- 快检。
+    assert.equal(acceptAllowsFile(["pdf"], { size: 10, name: "凭证.pdf", type: "" }), true);
+    assert.equal(acceptAllowsFile(["pdf"], { size: 10, name: "照片.jpg", type: "" }), false);
+    assert.equal(acceptIncludesPdf(["pdf"]), true);
+    assert.equal(acceptAttribute(["pdf"]), ".pdf");
   });
 
   it("detects pdf-requiring accept lists for the magic-byte fast path", () => {
@@ -322,5 +333,27 @@ describe("evidence metadata snapshot staleness", () => {
   it("ignores whitespace-only differences, matching upload metadata semantics", () => {
     const snapshot = evidenceMetadataSignature({ port: "洋山港" });
     assert.equal(isEvidenceSlotStale(snapshot, { port: "  洋山港  " }), false);
+  });
+});
+
+describe("framework reserved keys are namespaced", () => {
+  it("keeps framework stage/notes keys out of the spec key space", () => {
+    // 凝结核 spec 可以声明任意 key（包括 notes/stage 这类通用词）；
+    // 框架保留键必须带命名空间前缀，不能与 spec 键互相污染。
+    assert.notEqual(FRAMEWORK_NOTES_FIELD_KEY, "notes");
+    assert.notEqual(FRAMEWORK_STAGE_FIELD_KEY, "stage");
+    assert.ok(FRAMEWORK_NOTES_FIELD_KEY.startsWith(FRAMEWORK_METADATA_PREFIX));
+    assert.ok(FRAMEWORK_STAGE_FIELD_KEY.startsWith(FRAMEWORK_METADATA_PREFIX));
+  });
+
+  it("lets a spec slot use the bare key \"notes\" without touching the framework note", () => {
+    const plan = planTaskEvidence({
+      evidenceSpec: [{ key: "notes", label: "结关备注", inputKind: "text", required: true }],
+      requiredEvidence: []
+    });
+    assert.equal(plan.slots[0]?.key, "notes");
+    const specSnapshot = evidenceMetadataSignature({ notes: "spec value" });
+    const frameworkSnapshot = evidenceMetadataSignature({ [FRAMEWORK_NOTES_FIELD_KEY]: "framework value" });
+    assert.notEqual(specSnapshot, frameworkSnapshot);
   });
 });
