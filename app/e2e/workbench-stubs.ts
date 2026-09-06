@@ -94,7 +94,6 @@ export const stubTask = {
   stageName: "出口报关",
   deadline: "2026-12-31",
   fundingImpact: "确认后释放本阶段付款",
-  requiredEvidence: ["报关单 PDF", "报关单号", "出口港口", "完成时间"],
   evidenceSpec: customsDemoTaskConfig.evidenceSpec,
   status: "open",
   participantRoleLabel: "报关物流",

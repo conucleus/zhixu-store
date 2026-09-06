@@ -37,7 +37,6 @@ function minimalTask(taskId: string): ProductTaskDTO {
     stageName: "阶段一",
     deadline: "2026-12-31",
     fundingImpact: "",
-    requiredEvidence: [],
     status: "open",
     responsibilityStatements: [],
     proofRows: []
