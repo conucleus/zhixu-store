@@ -4,6 +4,7 @@ import {
   type TaskEvidenceSpecDTO,
   type ZhixuSummaryDTO
 } from "@uvp-eth/product-dto";
+import type { ProductSubmissionStatus } from "../api";
 
 /**
  * Order creation follows the frozen lifecycle DTO.  Review approval alone is
@@ -336,4 +337,53 @@ export function resolveWorkbenchTask(
     ? tasks.find((task) => task.taskId === selectedTaskId)
     : undefined;
   return selected ?? fallback;
+}
+
+export type TaskSubmitIntent = "confirm_stage" | "reject_stage" | "raise_dispute" | "resolve_dispute";
+
+/**
+ * 提交 intent 以任务携带的 spec（addOnManifest 的 submit_signal 动作声明）驱动，
+ * 与订单工作台的 manifest 口径一致；spec 未声明 intent 时才回落 confirm_stage。
+ */
+export function taskSubmitIntent(
+  task: Pick<ProductTaskDTO, "addOnManifest">
+): TaskSubmitIntent {
+  const submitActions = (task.addOnManifest?.actions ?? [])
+    .filter((action) => action.actionKind === "submit_signal");
+  const primary = submitActions.find((action) => action.primary) ?? submitActions[0];
+  return primary?.intent ?? "confirm_stage";
+}
+
+export type SubmissionPollOutcome = "confirmed" | "terminal_failure" | "pending";
+
+/**
+ * 轮询判级：只有服务端给出的明确终态才允许判失败（failed/expired/replaced），
+ * 其余状态一律继续等待——交易可能仍在索引，误判失败会诱导重复提交。
+ */
+export function submissionPollOutcome(status: ProductSubmissionStatus): SubmissionPollOutcome {
+  switch (status) {
+    case "confirmed":
+      return "confirmed";
+    case "failed":
+    case "expired":
+    case "replaced":
+      return "terminal_failure";
+    default:
+      return "pending";
+  }
+}
+
+/** 终态失败文案：expired 可重投；replaced 强调以最新提交为准，不诱导盲目重投。 */
+export function submissionTerminalMessage(
+  status: ProductSubmissionStatus,
+  errorCode?: string | undefined
+): string {
+  switch (status) {
+    case "expired":
+      return "提交已过期未生效，可重新提交";
+    case "replaced":
+      return "该提交已被后续提交取代，请以最新提交记录为准，请勿盲目重投";
+    default:
+      return errorCode ?? "提交失败，可重试";
+  }
 }

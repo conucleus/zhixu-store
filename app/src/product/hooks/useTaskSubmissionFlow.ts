@@ -23,6 +23,9 @@ import {
   missingTaskEvidenceSlotLabels,
   planTaskEvidence,
   readableError,
+  submissionPollOutcome,
+  submissionTerminalMessage,
+  taskSubmitIntent,
   validateEvidenceFileForSlot,
   type TaskEvidenceFieldValues,
   type TaskEvidencePlan
@@ -221,7 +224,8 @@ export function useTaskSubmissionFlow(input: {
       const preparedResult = await api.prepareTaskSubmit(activeTask.taskId, {
         evidenceIds: uploadedEntries.map(([, value]) => value.evidenceId),
         walletAddress: account.address,
-        intent: "confirm_stage"
+        // intent 以任务 spec（addOnManifest 动作声明）驱动，不再按按钮硬编码。
+        intent: taskSubmitIntent(activeTask)
       });
       if (taskScopeRef.current !== requestScopeKey) {
         return;
@@ -280,11 +284,28 @@ export function useTaskSubmissionFlow(input: {
   async function pollSubmission(submissionId: string, prepared: PreparedSubmitDTO, source: ProductApiSource, requestScopeKey: string): Promise<void> {
     for (let attempt = 0; attempt < 4; attempt += 1) {
       await delay(1100);
-      const result = await api.getSubmission(submissionId);
+      let result: Awaited<ReturnType<typeof api.getSubmission>>;
+      try {
+        result = await api.getSubmission(submissionId);
+      } catch {
+        // 瞬时网络/超时错误不判失败：交易可能已确认，继续轮询；
+        // 窗口耗尽仍未知时按"结果未知"中间态收尾，绝不诱导重投。
+        if (taskScopeRef.current !== requestScopeKey) {
+          return;
+        }
+        setSubmitMachine({
+          status: "tx_pending",
+          message: "查询提交状态暂时失败，仍在等待确认；请勿重复提交",
+          prepared,
+          source
+        });
+        continue;
+      }
       if (taskScopeRef.current !== requestScopeKey) {
         return;
       }
-      if (result.data.status === "confirmed") {
+      const outcome = submissionPollOutcome(result.data.status);
+      if (outcome === "confirmed") {
         setSubmitMachine({
           status: "confirmed",
           message: "提交已确认，订单页稍后会同步最新状态",
@@ -295,40 +316,30 @@ export function useTaskSubmissionFlow(input: {
         onMutationSuccess?.();
         return;
       }
-      if (result.data.status === "failed") {
+      if (outcome === "terminal_failure") {
+        // failed/expired/replaced 是服务端记录的明确终态，才允许宣判失败；
+        // replaced 指向"已被后续提交取代"，文案不得诱导盲目重投。
         setSubmitMachine({
           status: "failed",
-          message: result.data.errorCode ?? "提交失败，可重试",
+          message: submissionTerminalMessage(result.data.status, result.data.errorCode),
           prepared,
           submission: result.data,
           source: result.source
         });
         return;
       }
-      if (result.data.status === "expired" || result.data.status === "replaced") {
-        // expired/replaced 是服务端记录的中间态：原提交可能仍在索引或已被
-        // 后续提交取代，绝不宣判"失败"，也不诱导重投。
-        setSubmitMachine({
-          status: "tx_pending",
-          message: `提交记录为 ${result.data.status}，仍在索引中；可稍后刷新查看最终状态，请勿重复提交（提交编号 ${submissionId}）`,
-          prepared,
-          submission: result.data,
-          source: result.source
-        });
-        continue;
-      }
       setSubmitMachine({
         status: "tx_pending",
         message: "提交处理中，等待确认",
         prepared,
         submission: result.data,
-        source
+        source: result.source
       });
     }
     if (taskScopeRef.current !== requestScopeKey) {
       return;
     }
-    // 轮询窗口耗尽 ≠ 失败：交易可能仍在索引，保持中间态，不诱导重投。
+    // 轮询窗口耗尽 ≠ 失败：交易可能仍在索引，保持"结果未知"中间态，不诱导重投。
     setSubmitMachine({
       status: "tx_pending",
       message: `仍在索引中，暂未收到最终确认；可稍后刷新查看结果，请勿重复提交（提交编号 ${submissionId}）`,

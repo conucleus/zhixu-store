@@ -18,6 +18,9 @@ import {
   missingTaskEvidenceSlotLabels,
   planTaskEvidence,
   resolveWorkbenchTask,
+  submissionPollOutcome,
+  submissionTerminalMessage,
+  taskSubmitIntent,
   validateEvidenceFileForSlot
 } from "./workbenchSupport";
 import { customsDemoTaskConfig } from "../demo/customs-demo-config";
@@ -356,5 +359,72 @@ describe("framework reserved keys are namespaced", () => {
     const specSnapshot = evidenceMetadataSignature({ notes: "spec value" });
     const frameworkSnapshot = evidenceMetadataSignature({ [FRAMEWORK_NOTES_FIELD_KEY]: "framework value" });
     assert.notEqual(specSnapshot, frameworkSnapshot);
+  });
+});
+
+describe("submission poll tiering", () => {
+  it("only server terminal states may resolve as failure", () => {
+    assert.equal(submissionPollOutcome("confirmed"), "confirmed");
+    assert.equal(submissionPollOutcome("failed"), "terminal_failure");
+    assert.equal(submissionPollOutcome("expired"), "terminal_failure");
+    assert.equal(submissionPollOutcome("replaced"), "terminal_failure");
+    for (const pending of ["prepared", "signature_received", "broadcasting", "submitted", "indexing"] as const) {
+      assert.equal(submissionPollOutcome(pending), "pending");
+    }
+  });
+
+  it("wording for replaced forbids blind resubmission", () => {
+    assert.match(submissionTerminalMessage("replaced"), /请以最新提交记录为准/u);
+    assert.match(submissionTerminalMessage("expired"), /可重新提交/u);
+    assert.equal(submissionTerminalMessage("failed", "signal_rejected"), "signal_rejected");
+    assert.equal(submissionTerminalMessage("failed"), "提交失败，可重试");
+  });
+});
+
+describe("spec-driven submit intent", () => {
+  it("falls back to confirm_stage when the task carries no manifest", () => {
+    assert.equal(taskSubmitIntent(minimalTask("task-1")), "confirm_stage");
+  });
+
+  it("takes the primary submit_signal action intent from the addOn manifest", () => {
+    const task: ProductTaskDTO = {
+      ...minimalTask("task-2"),
+      addOnManifest: {
+        schemaVersion: "participant-addon-manifest.v1",
+        manifestId: "manifest-1",
+        roleSlotId: "delivery",
+        addOnKind: "submit_signal",
+        title: "插件",
+        summary: "",
+        stageBindings: [],
+        pages: [],
+        actions: [
+          { actionId: "a-secondary", actionKind: "submit_signal", label: "次要", inputBindings: {}, intent: "reject_stage" },
+          { actionId: "a-primary", actionKind: "submit_signal", label: "主操作", primary: true, inputBindings: {}, intent: "resolve_dispute" }
+        ]
+      }
+    };
+    assert.equal(taskSubmitIntent(task), "resolve_dispute");
+  });
+
+  it("uses the first submit_signal action when none is marked primary", () => {
+    const task: ProductTaskDTO = {
+      ...minimalTask("task-3"),
+      addOnManifest: {
+        schemaVersion: "participant-addon-manifest.v1",
+        manifestId: "manifest-2",
+        roleSlotId: "delivery",
+        addOnKind: "submit_signal",
+        title: "插件",
+        summary: "",
+        stageBindings: [],
+        pages: [],
+        actions: [
+          { actionId: "a-1", actionKind: "submit_signal", label: "动作", inputBindings: {} },
+          { actionId: "a-2", actionKind: "stage_executor_patch", label: "补丁", inputBindings: {}, intent: "resolve_dispute" }
+        ]
+      }
+    };
+    assert.equal(taskSubmitIntent(task), "confirm_stage");
   });
 });
