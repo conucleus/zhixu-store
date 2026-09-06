@@ -9,13 +9,16 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
+    "test": "tsx --test \"src/**/*.test.ts\"",
     "test:e2e": "playwright test",
     "test:e2e:fixture": "playwright test e2e/product-workbench.smoke.spec.ts",
+    "test:e2e:docking": "UVP_PRODUCT_BROWSER_E2E_STORE_ACCESS_LEVEL=store_operator UVP_PRODUCT_BROWSER_E2E_PORT=4177 playwright test e2e/store-docking.spec.ts",
     "test:e2e:full": "playwright test e2e/product-workbench.full.spec.ts",
     "test:e2e:headed": "playwright test --headed"
   },
   "dependencies": {
     "@uvp-eth/product-dto": "workspace:*",
+    "@uvp-eth/protocol-bindings": "workspace:*",
     "lucide-react": "^1.7.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5"
@@ -26,6 +29,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.4.1",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.3",
     "viem": "^2.21.58",
     "vite": "^6.2.0"

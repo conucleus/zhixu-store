@@ -1,58 +1,79 @@
-import { AlertTriangle, ExternalLink, GitBranch, Loader2, PackageSearch, ShieldCheck, Store, Truck, Users } from "lucide-react";
+import { AlertTriangle, ExternalLink, GitBranch, KeyRound, Loader2, PackageSearch, ShieldCheck, Store, Truck, UserPlus, Users } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { accessFromStoreSession, createStoreApiClient, readableStoreError, StoreApiError } from "./api";
+import {
+  accessFromStoreSession,
+  createStoreApiClient,
+  readableStoreError,
+  readStoredStoreSessionToken,
+  storeStoreSessionToken,
+} from "./api";
+import { StoreAccountPage } from "./StoreAccountPage";
 import { StoreDockingPage } from "./StoreDockingPage";
+import { StoreJoinPage } from "./StoreJoinPage";
 import { StoreRuntimePage } from "./StoreRuntimePage";
 import { StoreSearchPage } from "./StoreSearchPage";
 import { StoreSupplierPage } from "./StoreSupplierPage";
 import { StoreZhixuDetailPage } from "./StoreZhixuDetailPage";
+import { loginStoreSessionWithWallet } from "./session";
 import type { StoreApiClient } from "./api";
-import type { StoreAccessState, StoreApiSource, StoreSearchInput, StoreZhixuSearchResultDTO } from "./types";
+import type { StoreApiSource, StoreSearchInput, StoreSessionDTO, StoreZhixuSearchResultDTO } from "./types";
+import { shortValue } from "../shared/frontend";
 
-type StoreView = "search" | "detail" | "suppliers" | "runtime" | "docking";
+type StoreView = "search" | "detail" | "suppliers" | "runtime" | "docking" | "account" | "join";
 
 type StoreLoadState =
   | { readonly status: "loading" }
   | { readonly status: "ready"; readonly data: StoreZhixuSearchResultDTO; readonly source: StoreApiSource }
   | { readonly status: "error"; readonly message: string };
 
-interface StoreConsoleE2EBridge {
-  readonly state: {
-    readonly accessLevel: string;
-    readonly canWrite: boolean;
-    readonly view: StoreView;
-    readonly loadStatus: StoreLoadState["status"];
-  };
-  attemptImportDraft(): Promise<{ readonly ok: boolean; readonly status: number; readonly message: string }>;
-}
-
-declare global {
-  interface Window {
-    __uvpStoreConsoleE2E?: StoreConsoleE2EBridge;
-  }
-}
-
 export function StoreApp({ productHref = "/app" }: { readonly productHref?: string | undefined }) {
-  const api = useMemo(() => createStoreApiClient(), []);
-  const [access, setAccess] = useState<StoreAccessState>(api.access);
+  // 会话 token 驱动 client 重建——登录/退出后 access 与能力随之刷新。
+  const [sessionToken, setSessionToken] = useState<string | undefined>(() => readStoredStoreSessionToken());
+  // env 只提供引导态（无会话时的缺省 access）；会话取回后 access 一律以
+  // 服务端 session 为准，UI 门控与 client 前置门共用同一份，消除两源不一致。
+  const baseAccess = useMemo(() => createStoreApiClient().access, []);
+  const [session, setSession] = useState<StoreSessionDTO | undefined>();
+
+  useEffect(() => {
+    const bootstrapClient = createStoreApiClient(baseAccess, sessionToken);
+    if (!bootstrapClient.baseUrl) {
+      return;
+    }
+    let cancelled = false;
+    void bootstrapClient.getSession().then((result) => {
+      if (!cancelled) {
+        setSession(result.data);
+      }
+    }).catch(() => {
+      // 会话不可得（未登录/接口失败）即回到 env 引导态，不猜权限。
+      if (!cancelled) {
+        setSession(undefined);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [baseAccess, sessionToken]);
+
+  const access = useMemo(
+    () => (session ? accessFromStoreSession(session, baseAccess) : baseAccess),
+    [session, baseAccess],
+  );
+  const api = useMemo(
+    () => createStoreApiClient(access, sessionToken),
+    [access, sessionToken],
+  );
   const [view, setView] = useState<StoreView>("search");
   const [selectedZhixuId, setSelectedZhixuId] = useState<string | undefined>();
+  const [joinPlanFilter, setJoinPlanFilter] = useState<string | undefined>();
+  const [joinZhixuFilter, setJoinZhixuFilter] = useState<string | undefined>();
   const [loadState, setLoadState] = useState<StoreLoadState>({ status: "loading" });
+  const [loginBusy, setLoginBusy] = useState(false);
+  const [loginMessage, setLoginMessage] = useState<string | undefined>();
 
   useEffect(() => {
     let cancelled = false;
-    if (api.baseUrl) {
-      void api.getSession().then((result) => {
-        if (!cancelled) {
-          setAccess(accessFromStoreSession(result.data, api.access));
-        }
-      }).catch(() => {
-        if (!cancelled) {
-          setAccess(api.access);
-        }
-      });
-    }
     void api.search().then((result) => {
       if (!cancelled) {
         setLoadState({ status: "ready", data: result.data, source: result.source });
@@ -71,8 +92,10 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
   const navItems: Array<{ readonly view: StoreView; readonly label: string; readonly icon: ReactNode }> = [
     { view: "search", label: "秩序检索", icon: <PackageSearch /> },
     { view: "suppliers", label: "供应商", icon: <Users /> },
+    { view: "join", label: "加入申请", icon: <UserPlus /> },
     { view: "runtime", label: "运行态", icon: <Truck /> },
-    { view: "docking", label: "试拼沙箱", icon: <GitBranch /> }
+    { view: "docking", label: "试拼沙箱", icon: <GitBranch /> },
+    { view: "account", label: "账号与地址", icon: <KeyRound /> }
   ];
 
   function openDetail(zhixuId: string): void {
@@ -87,41 +110,53 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
     return result.data;
   }
 
-  useEffect(() => {
-    if (!isStoreE2EBridgeEnabled()) {
+  function handleSessionChanged(token?: string | undefined): void {
+    if (token !== undefined) {
+      storeStoreSessionToken(token);
+      setSessionToken(token);
       return;
     }
-    window.__uvpStoreConsoleE2E = {
-      state: {
-        accessLevel: access.level,
-        canWrite: access.canWrite,
-        view,
-        loadStatus: loadState.status
-      },
-      async attemptImportDraft() {
-        try {
-          await api.importZhixuDraft({
-            sourceKind: "zhixu_yaml",
-            content: "name: e2e-unauthorized-import-probe\n",
-            title: "E2E unauthorized import probe"
-          });
-          return { ok: true, status: 200, message: "ok" };
-        } catch (error) {
-          return {
-            ok: false,
-            status: error instanceof StoreApiError ? error.status : 0,
-            message: readableStoreError(error, "Store write failed")
-          };
-        }
-      }
-    };
-    return () => {
-      delete window.__uvpStoreConsoleE2E;
-    };
-  }, [access.canWrite, access.level, api, loadState.status, view]);
+    // 退出：token 与会话态立即同步清除，权限门随 access 回到引导态。
+    storeStoreSessionToken(undefined);
+    setSession(undefined);
+    setSessionToken(undefined);
+  }
+
+  async function handleHeaderLogin(): Promise<void> {
+    if (loginBusy) {
+      return;
+    }
+    setLoginBusy(true);
+    setLoginMessage(undefined);
+    try {
+      const result = await loginStoreSessionWithWallet(api);
+      storeStoreSessionToken(result.verify.token);
+      setSessionToken(result.verify.token);
+      setLoginMessage(`已登录 ${shortValue(result.address)}`);
+    } catch (error) {
+      setLoginMessage(error instanceof Error ? error.message : "登录失败");
+    } finally {
+      setLoginBusy(false);
+    }
+  }
+
+  async function handleHeaderLogout(): Promise<void> {
+    if (loginBusy) {
+      return;
+    }
+    setLoginBusy(true);
+    try {
+      await api.authLogout();
+    } catch {
+      // token 已失效也按退出处理。
+    }
+    handleSessionChanged(undefined);
+    setLoginMessage("已退出会话");
+    setLoginBusy(false);
+  }
 
   return (
-    <section className="store-console-shell" data-testid="store-app" data-store-access={access.level}>
+    <section className="store-console-shell" data-testid="store-app" data-store-access={access.level} data-store-anchored={access.anchoredAddress ? "anchored" : "unanchored"}>
       <header className="store-console-head">
         <div className="store-console-brand">
           <span className="store-console-mark"><Store /></span>
@@ -137,7 +172,13 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
               aria-selected={view === item.view}
               className={`store-tab ${view === item.view ? "is-active" : ""}`}
               key={item.view}
-              onClick={() => setView(item.view)}
+              onClick={() => {
+                if (item.view === "join") {
+                  // 导航进入"加入申请"时清除上一详情页带来的 plan 过滤。
+                  setJoinPlanFilter(undefined);
+                }
+                setView(item.view);
+              }}
               role="tab"
             >
               {item.icon}
@@ -153,14 +194,22 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
             title={`${access.authMode} · ${access.capabilities.join(", ")}`}
           >
             <ShieldCheck /> {access.label}
+            {access.anchoredAddress ? <span className="store-anchored-chip" data-testid="store-anchored-chip">锚定 {shortValue(access.anchoredAddress)}</span> : null}
           </span>
+          {access.anchoredAddress ? (
+            <button className="secondary-button" onClick={() => void handleHeaderLogout()} disabled={loginBusy} data-testid="store-head-logout">
+              退出
+            </button>
+          ) : (
+            <button className="secondary-button" onClick={() => void handleHeaderLogin()} disabled={loginBusy} data-testid="store-head-login">
+              {loginBusy ? <Loader2 className="spin" /> : null} 钱包登录
+            </button>
+          )}
           <a className="secondary-button store-workbench-link" href={productHref}>前往订单工作台 <ExternalLink /></a>
         </div>
       </header>
 
-      {loadState.status === "ready" && loadState.source.kind === "mock" ? (
-        <StoreRuntimeBanner source={loadState.source} />
-      ) : null}
+      {loginMessage ? <p className="store-head-login-message" data-testid="store-login-message">{loginMessage}</p> : null}
 
       {loadState.status === "loading" ? (
         <StoreStatePanel icon={<Loader2 className="spin" />} title="正在加载秩序商店" desc="读取 Store 目录和链上投影摘要。" />
@@ -173,6 +222,7 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
       {loadState.status === "ready" && view === "search" ? (
         <StoreSearchPage
           access={access}
+          api={api}
           result={loadState.data}
           onSearch={handleSearch}
           onGoDocking={() => setView("docking")}
@@ -197,6 +247,11 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
           api={api}
           onBack={() => setView("search")}
           onOpenDocking={() => setView("docking")}
+          onOpenJoinForPlan={(planId, zhixuId) => {
+            setJoinPlanFilter(planId);
+            setJoinZhixuFilter(zhixuId);
+            setView("join");
+          }}
           zhixuId={selectedZhixuId}
         />
       ) : null}
@@ -217,23 +272,15 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
           zhixus={loadState.data.zhixus}
         />
       ) : null}
+
+      {view === "account" ? (
+        <StoreAccountPage access={access} api={api} onSessionToken={handleSessionChanged} />
+      ) : null}
+
+      {view === "join" ? (
+        <StoreJoinPage access={access} api={api} planIdFilter={joinPlanFilter} zhixuFilter={joinZhixuFilter} />
+      ) : null}
     </section>
-  );
-}
-
-function isStoreE2EBridgeEnabled(): boolean {
-  return import.meta.env.VITE_UVP_PRODUCT_E2E === "1" || !import.meta.env.PROD;
-}
-
-function StoreRuntimeBanner({ source }: { readonly source: Extract<StoreApiSource, { readonly kind: "mock" }> }) {
-  return (
-    <div className="runtime-banner is-mock">
-      <AlertTriangle />
-      <div>
-        <strong>Store 开发样例模式</strong>
-        <p>{source.reason}</p>
-      </div>
-    </div>
   );
 }
 

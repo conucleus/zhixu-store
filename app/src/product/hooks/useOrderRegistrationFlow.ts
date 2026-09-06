@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { PRODUCT_SUBMIT_DOMAIN_VERSION } from "@uvp-eth/protocol-bindings";
 import type { ProductApiClient, ProductOrderDraftDTO } from "../api";
 import { requestWalletAccount, signTypedData, WalletNotConnectedError, WalletRejectedError } from "../wallet";
 import { idleAction, type ActionState } from "./workbenchTypes";
@@ -6,14 +7,13 @@ import { readableError } from "./workbenchSupport";
 
 export function useOrderRegistrationFlow(input: {
   readonly api: ProductApiClient;
-  readonly allowMockWallet: boolean;
   readonly ensureDraft: () => Promise<ProductOrderDraftDTO | undefined>;
   readonly onRegistered: (draft: ProductOrderDraftDTO) => void;
 }): {
   readonly registerDraftAction: ActionState;
   readonly handleRegisterDraft: () => Promise<void>;
 } {
-  const { api, allowMockWallet, ensureDraft, onRegistered } = input;
+  const { api, ensureDraft, onRegistered } = input;
   const [registerDraftAction, setRegisterDraftAction] = useState<ActionState>(idleAction);
 
   async function handleRegisterDraft(): Promise<void> {
@@ -23,10 +23,18 @@ export function useOrderRegistrationFlow(input: {
     }
     try {
       setRegisterDraftAction({ phase: "pending", message: "正在准备订单启动签名" });
-      const account = await requestWalletAccount(allowMockWallet);
+      const account = await requestWalletAccount();
       const prepared = await api.prepareOrderTrigger(currentDraft.draftId, { walletAddress: account.address });
       setRegisterDraftAction({ phase: "pending", message: "等待钱包授权", source: prepared.source });
-      const signature = await signTypedData(account, prepared.data.typedData, { allowMock: allowMockWallet });
+      // 与 executor-kit 同边界：签名前校验启动签名对象的 primaryType、domain 和 submitter。
+      const signature = await signTypedData(account, prepared.data.typedData, {
+        primaryType: "UVPStateMachineTriggerOrderFromOutside",
+        domainName: "UVPStateMachine",
+        // 协议冻结面：domain.version 以 protocol-bindings 导出的常量为唯一来源。
+        domainVersion: PRODUCT_SUBMIT_DOMAIN_VERSION,
+        submitter: account.address,
+        preparedSubmitters: [prepared.data.submitter]
+      });
       const result = await api.triggerOrder(currentDraft.draftId, {
         prepareId: prepared.data.prepareId,
         signature,

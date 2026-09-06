@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+import { PRODUCT_SUBMIT_DOMAIN_VERSION } from "@uvp-eth/protocol-bindings";
 import type { ProductTaskDTO } from "@uvp-eth/product-dto";
 import type {
   EvidenceObjectDTO,
@@ -7,101 +8,250 @@ import type {
   ProductApiClient,
   ProductApiSource
 } from "../api";
-import { requestWalletAccount, signTypedData, WalletNotConnectedError, WalletRejectedError } from "../wallet";
+import {
+  requestWalletAccount,
+  signTypedData,
+  WalletNotConnectedError,
+  WalletRejectedError
+} from "../wallet";
 import { idleAction, type ActionState, type SubmitMachineState } from "./workbenchTypes";
-import { delay, readableError } from "./workbenchSupport";
+import {
+  FRAMEWORK_STAGE_FIELD_KEY,
+  delay,
+  evidenceMetadataSignature,
+  isEvidenceSlotStale,
+  missingTaskEvidenceSlotLabels,
+  planTaskEvidence,
+  readableError,
+  submissionPollOutcome,
+  submissionTerminalMessage,
+  taskSubmitIntent,
+  validateEvidenceFileForSlot,
+  type TaskEvidenceFieldValues,
+  type TaskEvidencePlan
+} from "./workbenchSupport";
+
+/** 已上传证据按槽位 key 归档；框架不预置任何业务槽位。 */
+export type EvidenceBySlot = Readonly<Record<string, EvidenceObjectDTO>>;
+export type EvidenceProofsBySlot = Readonly<Record<string, EvidenceProofDTO>>;
+/** 每个已上传槽位在上传时刻的元数据字段快照（JSON），用于检测后续字段变更。 */
+export type FieldSnapshotsBySlot = Readonly<Record<string, string>>;
 
 export function useTaskSubmissionFlow(input: {
   readonly api: ProductApiClient;
   readonly activeTask?: ProductTaskDTO | undefined;
-  readonly allowMockWallet: boolean;
+  /** 当前凭证字段值：上传时进入指纹快照，也是提交门槛与 stale 判定的实时依据。 */
+  readonly fieldValues: TaskEvidenceFieldValues;
+  /** 成功 mutation（上传/提交确认）后触发一次定向刷新；由调用方提供，钩子内部不循环调用。 */
+  readonly onMutationSuccess?: () => void;
 }): {
-  readonly evidence?: EvidenceObjectDTO | undefined;
-  readonly evidenceProof?: EvidenceProofDTO | undefined;
+  readonly evidencePlan: TaskEvidencePlan;
+  readonly evidenceBySlot: EvidenceBySlot;
+  readonly evidenceProofsBySlot: EvidenceProofsBySlot;
+  /** 上传后相关字段发生变更的槽位标签：存在 stale 槽位时禁止提交。 */
+  readonly staleSlotLabels: readonly string[];
   readonly evidenceAction: ActionState;
   readonly submitMachine: SubmitMachineState;
   readonly disputeAction: ActionState;
-  readonly handleUploadEvidence: (file: File) => Promise<void>;
-  readonly handleUploadDemoEvidence: () => Promise<void>;
-  readonly handleConfirmSubmit: (options?: { readonly rejectWallet?: boolean }) => Promise<void>;
+  readonly handleUploadEvidence: (slotKey: string, file: File) => Promise<void>;
+  readonly handleConfirmSubmit: () => Promise<void>;
   readonly handleDisputeSave: () => Promise<void>;
 } {
-  const { api, activeTask, allowMockWallet } = input;
-  const [evidence, setEvidence] = useState<EvidenceObjectDTO | undefined>();
-  const [evidenceProof, setEvidenceProof] = useState<EvidenceProofDTO | undefined>();
+  const { api, activeTask, fieldValues, onMutationSuccess } = input;
+  const evidencePlan = planTaskEvidence({
+    evidenceSpec: activeTask?.evidenceSpec
+  });
+  const [evidenceBySlot, setEvidenceBySlot] = useState<EvidenceBySlot>({});
+  const [proofsBySlot, setProofsBySlot] = useState<EvidenceProofsBySlot>({});
+  const [fieldSnapshotsBySlot, setFieldSnapshotsBySlot] = useState<FieldSnapshotsBySlot>({});
   const [evidenceAction, setEvidenceAction] = useState<ActionState>(idleAction);
   const [submitMachine, setSubmitMachine] = useState<SubmitMachineState>({
     status: "idle",
     message: "等待上传凭证并确认提交"
   });
   const [disputeAction, setDisputeAction] = useState<ActionState>(idleAction);
+  const taskScopeKey = activeTask
+    ? `${activeTask.orderId}:${activeTask.taskId}:${activeTask.stageId}`
+    : "none";
+  const taskScopeRef = useRef(taskScopeKey);
+  useLayoutEffect(() => {
+    taskScopeRef.current = taskScopeKey;
+    setEvidenceBySlot({});
+    setProofsBySlot({});
+    setFieldSnapshotsBySlot({});
+    setEvidenceAction(idleAction);
+    setSubmitMachine({ status: "idle", message: "等待上传凭证并确认提交" });
+    setDisputeAction(idleAction);
+  }, [taskScopeKey]);
+  // fail-closed：上传时把表单字段快照进指纹，之后任何相关字段变更都会让对应槽位过期。
+  const staleSlotLabels = Object.keys(evidenceBySlot)
+    .filter((key) => isEvidenceSlotStale(fieldSnapshotsBySlot[key], fieldValues))
+    .map((key) => evidencePlan.slots.find((slot) => slot.key === key)?.label ?? key);
 
-  async function handleUploadEvidence(file: File): Promise<void> {
-    if (!activeTask) {
+  async function handleUploadEvidence(
+    slotKey: string,
+    file: File
+  ): Promise<void> {
+    const requestScopeKey = taskScopeKey;
+    const slot = evidencePlan.slots.find((item) => item.key === slotKey);
+    if (!activeTask || !slot) {
       setEvidenceAction({ phase: "error", message: "暂无可处理的待办" });
+      return;
+    }
+    // 元数据会随上传进入指纹：必填的文本/日期字段缺失时在上传前拦截。
+    const uploadedKeys = Object.keys(evidenceBySlot);
+    const slotMissing = missingTaskEvidenceSlotLabels(
+      evidencePlan.slots.filter((item) => item.inputKind !== "file"),
+      fieldValues,
+      uploadedKeys
+    );
+    if (slotMissing.length > 0) {
+      setEvidenceAction({ phase: "error", message: `请填写必填字段：${slotMissing.join("、")}` });
+      return;
+    }
+    const fileError = await validateEvidenceFileForSlot(file, slot);
+    if (taskScopeRef.current !== requestScopeKey) {
+      return;
+    }
+    if (fileError) {
+      setEvidenceAction({ phase: "error", message: fileError });
       return;
     }
     setEvidenceAction({ phase: "pending", message: "正在上传凭证并生成指纹" });
     try {
+      const metadataFields: Record<string, string> = {
+        // 框架保留键带命名空间前缀，不与凝结核 spec 的任意 key 冲突。
+        [FRAMEWORK_STAGE_FIELD_KEY]: activeTask.stageName
+      };
+      // 字段 key 全部来自凝结核配置（spec），框架不携带任何业务字段名。
+      for (const [key, value] of Object.entries(fieldValues)) {
+        const trimmed = value.trim();
+        if (trimmed) {
+          metadataFields[key] = trimmed;
+        }
+      }
       const result = await api.uploadEvidence({
         file,
         orderId: activeTask.orderId,
         taskId: activeTask.taskId,
         stageIdentifier: activeTask.stageId,
-        documentType: "customs_declaration",
+        documentType: slot.key,
         metadata: {
-          businessLabel: "报关单",
-          documentType: "customs_declaration",
-          fields: {
-            stage: activeTask.stageName
-          }
+          businessLabel: slot.label,
+          documentType: slot.key,
+          fields: metadataFields
         }
       });
-      setEvidence(result.data);
+      // A task switch while the request was in flight must not repopulate the
+      // next task's evidence map with the previous task's evidence ID.
+      if (taskScopeRef.current !== requestScopeKey) {
+        return;
+      }
+      setEvidenceBySlot((current) => ({ ...current, [slot.key]: result.data }));
       const proofResult = await api.getEvidenceProof(result.data.evidenceId);
-      setEvidenceProof(proofResult.data);
+      if (taskScopeRef.current !== requestScopeKey) {
+        return;
+      }
+      // 证据核验态与上传归档统一按槽位 key 记录，渲染层按同一 key 读取。
+      setProofsBySlot((current) => ({ ...current, [slot.key]: proofResult.data }));
+      // 记录上传时刻的字段快照：指纹由这些字段参与生成，后续字段变更据此判 stale。
+      setFieldSnapshotsBySlot((current) => ({
+        ...current,
+        [slot.key]: evidenceMetadataSignature(fieldValues)
+      }));
       setEvidenceAction({ phase: "success", message: "凭证已上传，指纹已生成", source: result.source });
+      onMutationSuccess?.();
     } catch (error) {
+      if (taskScopeRef.current !== requestScopeKey) {
+        return;
+      }
       setEvidenceAction({ phase: "error", message: readableError(error, "凭证上传失败") });
     }
   }
 
-  async function handleUploadDemoEvidence(): Promise<void> {
-    await handleUploadEvidence(new File(["customs declaration demo"], "出口报关单_20260430.pdf", { type: "application/pdf" }));
-  }
-
-  async function handleConfirmSubmit(options: { readonly rejectWallet?: boolean | undefined } = {}): Promise<void> {
+  async function handleConfirmSubmit(): Promise<void> {
     if (!activeTask) {
       setSubmitMachine({ status: "failed", message: "暂无可提交的待办" });
       return;
     }
-    if (!evidence) {
-      setSubmitMachine({ status: "failed", message: "请先上传凭证并生成指纹" });
+    const requestScopeKey = taskScopeKey;
+    const uploadedEntries = Object.entries(evidenceBySlot);
+    // 提交门槛与确认页一致：必填槽位全部满足即可提交；
+    // 任务没有文件要求时允许纯字段确认提交（evidenceIds 可为空），不再硬性要求至少一份上传。
+    const missingRequired = missingTaskEvidenceSlotLabels(
+      evidencePlan.slots,
+      fieldValues,
+      uploadedEntries.map(([key]) => key)
+    );
+    if (missingRequired.length > 0) {
+      setSubmitMachine({ status: "failed", message: `请先补全必填项：${missingRequired.join("、")}` });
+      return;
+    }
+    // 上传后相关字段已变更：现有指纹不再代表当前表单内容，禁止提交。
+    const staleLabels = Object.keys(evidenceBySlot)
+      .filter((key) => isEvidenceSlotStale(fieldSnapshotsBySlot[key], fieldValues))
+      .map((key) => evidencePlan.slots.find((slot) => slot.key === key)?.label ?? key);
+    if (staleLabels.length > 0) {
+      setSubmitMachine({
+        status: "failed",
+        message: `字段已变更，请重新上传以更新指纹：${staleLabels.join("、")}`
+      });
+      return;
+    }
+    // 凭证核验异常（mismatch/missing_file）的隔离凭证不得作为有效业务凭证：
+    // 提交门槛必须阻断，闭环"隔离凭证不可用"的前端契约。
+    const verificationFailedLabels = Object.entries(proofsBySlot)
+      .filter(([, proof]) => proof.verificationStatus === "mismatch" || proof.verificationStatus === "missing_file")
+      .map(([key]) => evidencePlan.slots.find((slot) => slot.key === key)?.label ?? key);
+    if (verificationFailedLabels.length > 0) {
+      setSubmitMachine({
+        status: "failed",
+        message: `凭证核验异常（内容与指纹不符或文件缺失），请重新上传：${verificationFailedLabels.join("、")}`
+      });
       return;
     }
     try {
       setSubmitMachine({ status: "preparing", message: "正在准备签名前摘要" });
-      const account = await requestWalletAccount(allowMockWallet);
+      const account = await requestWalletAccount();
+      if (taskScopeRef.current !== requestScopeKey) {
+        return;
+      }
       const preparedResult = await api.prepareTaskSubmit(activeTask.taskId, {
-        evidenceIds: [evidence.evidenceId],
+        evidenceIds: uploadedEntries.map(([, value]) => value.evidenceId),
         walletAddress: account.address,
-        intent: "confirm_stage"
+        // intent 以任务 spec（addOnManifest 动作声明）驱动，不再按按钮硬编码。
+        intent: taskSubmitIntent(activeTask)
       });
+      if (taskScopeRef.current !== requestScopeKey) {
+        return;
+      }
       setSubmitMachine({
         status: "signature_pending",
         message: "等待钱包授权",
         prepared: preparedResult.data,
         source: preparedResult.source
       });
+      // 与 executor-kit 同边界：签名前校验 typedData 的 primaryType、domain 和 submitter，
+      // prepared 记录与 typedData 声明的提交方必须一致，防止换签名对象。
       const signature = await signTypedData(account, preparedResult.data.typedData, {
-        allowMock: allowMockWallet,
-        reject: options.rejectWallet
+        primaryType: "UVPStateMachineSignal",
+        domainName: "UVPStateMachine",
+        // 协议冻结面：domain.version 以 protocol-bindings 导出的常量为唯一来源。
+        domainVersion: PRODUCT_SUBMIT_DOMAIN_VERSION,
+        submitter: account.address,
+        preparedSubmitters: [preparedResult.data.summary.walletAddress]
       });
+      if (taskScopeRef.current !== requestScopeKey) {
+        return;
+      }
       const submissionResult = await api.submitTask(activeTask.taskId, {
         prepareId: preparedResult.data.prepareId,
         signature,
         walletAddress: account.address
       });
+      if (taskScopeRef.current !== requestScopeKey) {
+        return;
+      }
       setSubmitMachine({
         status: "tx_pending",
         message: "提交处理中，等待确认",
@@ -109,8 +259,11 @@ export function useTaskSubmissionFlow(input: {
         submission: submissionResult.data,
         source: submissionResult.source
       });
-      await pollSubmission(submissionResult.data.submissionId, preparedResult.data, submissionResult.source);
+      await pollSubmission(submissionResult.data.submissionId, preparedResult.data, submissionResult.source, requestScopeKey);
     } catch (error) {
+      if (taskScopeRef.current !== requestScopeKey) {
+        return;
+      }
       if (error instanceof WalletNotConnectedError) {
         setSubmitMachine({ status: "wallet_not_connected", message: "请连接浏览器钱包后再确认提交" });
         return;
@@ -123,11 +276,31 @@ export function useTaskSubmissionFlow(input: {
     }
   }
 
-  async function pollSubmission(submissionId: string, prepared: PreparedSubmitDTO, source: ProductApiSource): Promise<void> {
+  async function pollSubmission(submissionId: string, prepared: PreparedSubmitDTO, source: ProductApiSource, requestScopeKey: string): Promise<void> {
     for (let attempt = 0; attempt < 4; attempt += 1) {
       await delay(1100);
-      const result = await api.getSubmission(submissionId);
-      if (result.data.status === "confirmed") {
+      let result: Awaited<ReturnType<typeof api.getSubmission>>;
+      try {
+        result = await api.getSubmission(submissionId);
+      } catch {
+        // 瞬时网络/超时错误不判失败：交易可能已确认，继续轮询；
+        // 窗口耗尽仍未知时按"结果未知"中间态收尾，绝不诱导重投。
+        if (taskScopeRef.current !== requestScopeKey) {
+          return;
+        }
+        setSubmitMachine({
+          status: "tx_pending",
+          message: "查询提交状态暂时失败，仍在等待确认；请勿重复提交",
+          prepared,
+          source
+        });
+        continue;
+      }
+      if (taskScopeRef.current !== requestScopeKey) {
+        return;
+      }
+      const outcome = submissionPollOutcome(result.data.status);
+      if (outcome === "confirmed") {
         setSubmitMachine({
           status: "confirmed",
           message: "提交已确认，订单页稍后会同步最新状态",
@@ -135,12 +308,15 @@ export function useTaskSubmissionFlow(input: {
           submission: result.data,
           source: result.source
         });
+        onMutationSuccess?.();
         return;
       }
-      if (result.data.status === "failed") {
+      if (outcome === "terminal_failure") {
+        // failed/expired/replaced 是服务端记录的明确终态，才允许宣判失败；
+        // replaced 指向"已被后续提交取代"，文案不得诱导盲目重投。
         setSubmitMachine({
           status: "failed",
-          message: result.data.errorCode ?? "提交失败，可重试",
+          message: submissionTerminalMessage(result.data.status, result.data.errorCode),
           prepared,
           submission: result.data,
           source: result.source
@@ -152,25 +328,37 @@ export function useTaskSubmissionFlow(input: {
         message: "提交处理中，等待确认",
         prepared,
         submission: result.data,
-        source
+        source: result.source
       });
     }
+    if (taskScopeRef.current !== requestScopeKey) {
+      return;
+    }
+    // 轮询窗口耗尽 ≠ 失败：交易可能仍在索引，保持"结果未知"中间态，不诱导重投。
+    setSubmitMachine({
+      status: "tx_pending",
+      message: `仍在索引中，暂未收到最终确认；可稍后刷新查看结果，请勿重复提交（提交编号 ${submissionId}）`,
+      prepared,
+      source
+    });
   }
 
   async function handleDisputeSave(): Promise<void> {
-    setDisputeAction({ phase: "pending", message: "正在保存争议材料" });
-    await delay(600);
-    setDisputeAction({ phase: "success", message: "争议材料已保存，平台将继续处理" });
+    setDisputeAction({
+      phase: "error",
+      message: "争议提交未接入后端，未产生任何记录"
+    });
   }
 
   return {
-    evidence,
-    evidenceProof,
+    evidencePlan,
+    evidenceBySlot,
+    evidenceProofsBySlot: proofsBySlot,
+    staleSlotLabels,
     evidenceAction,
     submitMachine,
     disputeAction,
     handleUploadEvidence,
-    handleUploadDemoEvidence,
     handleConfirmSubmit,
     handleDisputeSave
   };

@@ -25,15 +25,24 @@ export function StoreDockingPage({
     () => zhixus.find((item) => item.zhixuId === initialSourceZhixuId) ?? zhixus[0],
     [initialSourceZhixuId, zhixus]
   );
-  const targetZhixu = useMemo(
-    () => zhixus.find((item) => item.zhixuId !== sourceZhixu?.zhixuId) ?? sourceZhixu,
-    [sourceZhixu, zhixus]
-  );
+  // 目标秩序必须由操作员显式选择：不再静默取“第一个非来源秩序”，
+  // 也不允许回落到来源秩序自身（自试拼没有意义且服务端暂不拒绝）。
+  const [selectedTargetZhixuId, setSelectedTargetZhixuId] = useState("");
+  const targetZhixu = zhixus.find((item) => item.zhixuId === selectedTargetZhixuId);
+  const sameAsSource = Boolean(targetZhixu && sourceZhixu && targetZhixu.zhixuId === sourceZhixu.zhixuId);
   const [state, setState] = useState<DockingState>({ status: "idle" });
 
   async function createSession(): Promise<void> {
-    if (!sourceZhixu || !targetZhixu) {
+    if (!sourceZhixu) {
       setState({ status: "error", message: "缺少可试拼的秩序版本" });
+      return;
+    }
+    if (!targetZhixu) {
+      setState({ status: "error", message: "请先选择目标秩序" });
+      return;
+    }
+    if (sameAsSource) {
+      setState({ status: "error", message: "目标秩序不能与来源秩序相同：试拼需要两个不同的秩序版本" });
       return;
     }
     setState({ status: "pending" });
@@ -56,7 +65,12 @@ export function StoreDockingPage({
           <p>只创建非发布草稿，用来检查两个秩序之间的信号接口是否能对齐。</p>
         </div>
         {access.canWrite ? (
-          <button className="primary-button" data-testid="store-create-docking-session-button" disabled={state.status === "pending"} onClick={createSession}>
+          <button
+            className="primary-button"
+            data-testid="store-create-docking-session-button"
+            disabled={state.status === "pending" || !targetZhixu || sameAsSource}
+            onClick={createSession}
+          >
             {state.status === "pending" ? <Loader2 className="spin" /> : <GitBranch />}
             创建试拼会话
           </button>
@@ -76,6 +90,36 @@ export function StoreDockingPage({
       <div className="store-docking-layout">
         <section className="panel-card store-docking-main">
           <div className="store-panel-label">3. 试拼沙箱</div>
+          <label className="field" style={{ marginBottom: "1rem" }}>
+            <span>目标秩序<em>*</em></span>
+            <div className="input-wrap">
+              <select
+                data-testid="store-docking-target-select"
+                value={selectedTargetZhixuId}
+                onChange={(event) => {
+                  setSelectedTargetZhixuId(event.currentTarget.value);
+                  setState({ status: "idle" });
+                }}
+              >
+                <option value="">请选择目标秩序</option>
+                {zhixus.map((zhixu) => (
+                  <option key={zhixu.zhixuId} value={zhixu.zhixuId}>
+                    {zhixu.title}（{zhixu.zhixuId}）
+                  </option>
+                ))}
+              </select>
+              <i aria-hidden="true">▾</i>
+            </div>
+          </label>
+          {targetZhixu && sameAsSource ? (
+            <div className="warning-box" data-testid="store-docking-same-target-warning" style={{ marginBottom: "1rem" }}>
+              <AlertTriangle />
+              <div>
+                <strong>目标秩序与来源秩序相同</strong>
+                <p>试拼需要两个不同的秩序版本，请重新选择目标秩序。</p>
+              </div>
+            </div>
+          ) : null}
           <div className="store-docking-pair">
             <div className="kpi-card">
               <span>来源秩序</span>
@@ -85,8 +129,8 @@ export function StoreDockingPage({
             <div className="store-docking-arrow" aria-hidden="true">→</div>
             <div className="kpi-card">
               <span>目标秩序</span>
-              <strong>{targetZhixu?.title ?? "暂无"}</strong>
-              <small>{targetZhixu?.versionLabel ?? "无版本"} · {targetZhixu?.planPublication.label ?? "无发布状态"}</small>
+              <strong>{targetZhixu?.title ?? "尚未选择"}</strong>
+              <small>{targetZhixu ? `${targetZhixu.versionLabel} · ${targetZhixu.planPublication.label}` : "从上方列表选择目标秩序"}</small>
             </div>
           </div>
           <div className="store-access-note compact">
@@ -117,7 +161,7 @@ export function StoreDockingPage({
           ) : (
             <div className="store-docking-result empty">
               <strong>尚未创建试拼会话</strong>
-              <p>创建后会显示候选映射、草稿映射和验证阻断项；结果只属于沙箱。</p>
+              <p>选择来源和目标秩序并创建会话后，这里会显示候选映射、草稿映射和验证阻断项；结果只属于沙箱。</p>
             </div>
           )}
         </aside>

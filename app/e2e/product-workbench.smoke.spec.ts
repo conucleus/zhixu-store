@@ -1,197 +1,487 @@
-import {
-  expect,
-  expectRecoverableTypedDataSignature,
-  mockWalletAccount,
-  smokeTypedData,
-  test,
-  writeRunScreenshot
-} from "./mock-wallet";
-import type { Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { assertOrdinaryPageCopy } from "./product-assertions";
+import { installWorkbenchRoutes, STUB_API_BASE, stubSpeclessTask, stubOrder, stubTask, stubZhixu, stubParticipant } from "./workbench-stubs";
 
 test.describe("Product Workbench browser smoke", () => {
-  test("fixture smoke renders catalog, order, and task pages without protocol jargon", async ({ page }, testInfo) => {
-    await page.goto("/app?demo=1");
+  test("renders catalog, order, and task pages against stubbed product API", async ({ page }, testInfo) => {
+    await installWorkbenchRoutes(page);
+    await page.goto("/app");
     await expect(page.getByTestId("participant-app-page")).toBeVisible();
     await expect(page.getByRole("heading", { name: "我的待办" })).toBeVisible();
     await expect(page.getByTestId("store-app")).toHaveCount(0);
     await page.getByRole("button", { name: "查看秩序库" }).click();
-    await expect(page.getByRole("heading", { name: "把跨境订单拆成每个人看得懂的待办" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "把秩序拆成每个人看得懂的待办" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "推荐秩序" })).toBeVisible();
-    await assertFixtureModeIfExpected(page);
     await assertOrdinaryPageCopy(page);
-    await writeRunScreenshot(page, testInfo, "catalog-list");
 
     await page.getByRole("button", { name: "查看秩序详情" }).first().click();
     await expect(page.getByRole("heading", { name: /跨境高价值货物/ })).toBeVisible();
     await assertOrdinaryPageCopy(page);
-    await writeRunScreenshot(page, testInfo, "zhixu-detail");
 
     await page.getByRole("button", { name: "用此秩序创建订单" }).first().click();
-    await expect(page.getByRole("heading", { name: "创建跨境订单" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "创建订单" })).toBeVisible();
     await assertOrdinaryPageCopy(page);
-    await writeRunScreenshot(page, testInfo, "create-order");
 
-    await page.getByRole("button", { name: "下一步" }).click();
-    await expect(page.getByRole("heading", { name: "邀请参与方确认职责" })).toBeVisible();
-    await assertOrdinaryPageCopy(page);
-    await writeRunScreenshot(page, testInfo, "invite-participants");
+    await page.getByTestId("next-participants-button").click();
+    await expect(page.getByText("请先在「订单信息」页填写并创建订单草稿")).toBeVisible();
 
     await page.getByRole("button", { name: /^订单$/ }).click();
-    await expect(page.getByRole("heading", { name: /A 公司采购 10 台车辆/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /测试采购订单/ })).toBeVisible();
     await expect(page.getByText("当前待办").first()).toBeVisible();
     await assertOrdinaryPageCopy(page);
-    await writeRunScreenshot(page, testInfo, "order-overview");
 
     await page.getByRole("button", { name: /待办/ }).first().click();
-    await expect(page.getByRole("heading", { name: "上传报关凭证" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "确认报关完成" })).toBeDisabled();
-    await assertOrdinaryPageCopy(page);
-    await writeRunScreenshot(page, testInfo, "task-detail");
+    await expect(page.getByRole("heading", { name: "上传阶段凭证" })).toBeVisible();
+    await expect(page.getByTestId("task-confirm-button")).toBeDisabled();
+    // 身份来自 /product/me 桩，页面展示确认后的身份而不是反推文案
+    await expect(page.getByText("测试报关行操作员").first()).toBeVisible();
   });
 
-  test("mock EIP-1193 wallet signs recoverable typed data and supports rejection modes", async ({ page, mockWallet }) => {
-    await page.goto("/app?demo=1");
-    const typedData = smokeTypedData(mockWallet.address);
-
-    const signature = await page.evaluate(
-      async ({ address, payload }) => await window.ethereum.request({
-        method: "eth_signTypedData_v4",
-        params: [address, JSON.stringify(payload)]
-      }) as string,
-      { address: mockWallet.address, payload: typedData }
-    );
-    await expectRecoverableTypedDataSignature(signature, typedData);
-
-    await mockWallet.setState({ chainId: "0x14a34" });
-    await expect(page.evaluate(async () => await window.ethereum.request({ method: "eth_chainId" }))).resolves.toBe("0x14a34");
-
-    await mockWallet.setState({ unauthorized: true });
-    await expect(page.evaluate(async () => await window.ethereum.request({ method: "eth_accounts" }))).resolves.toEqual([]);
-    await expectWalletError(page, "eth_signTypedData_v4", [mockWallet.address, JSON.stringify(typedData)], 4100);
-
-    await mockWallet.setState({
-      accounts: [mockWalletAccount.address],
-      rejectSignTypedData: true,
-      unauthorized: false
+  test("renders an unavailable funding adapter as unavailable, never as a green guarantee", async ({ page }) => {
+    await installWorkbenchRoutes(page, {
+      overrides: {
+        "/product/orders": {
+          body: { orders: [{ ...stubOrder, fundingStatus: "资金托管未接入本接口" }] }
+        }
+      }
     });
-    await expectWalletError(page, "eth_signTypedData_v4", [mockWallet.address, JSON.stringify(typedData)], 4001);
+    await page.goto("/app");
+    await page.getByRole("button", { name: "订单", exact: true }).click();
+
+    const fundingKpi = page.locator(".order-kpis .kpi-card").filter({ hasText: "资金状态" });
+    await expect(fundingKpi).toContainText("资金托管未接入本接口");
+    await expect(fundingKpi.locator("strong.success")).toHaveCount(0);
+    await expect(page.getByText("未接入时不会显示为已保障")).toBeVisible();
   });
 
-  test("fixture smoke uploads evidence, signs through mock wallet, and confirms submission", async ({ page, mockWallet }, testInfo) => {
-    await page.goto("/app?demo=1");
-    await page.getByRole("button", { name: /待办/ }).first().click();
+  test("opens each task card's own detail instead of always the projected active task", async ({ page }) => {
+    const secondTask = {
+      ...stubTask,
+      taskId: "task-2002",
+      title: "第二张待办：国际运输",
+      stageId: "stage-delivery",
+      stageName: "国际运输"
+    };
+    await installWorkbenchRoutes(page, {
+      overrides: {
+        "/product/tasks": { body: { tasks: [stubTask, secondTask] } }
+      }
+    });
+    await page.goto("/app");
+    await expect(page.getByTestId("participant-app-page")).toBeVisible();
 
-    await page.getByRole("button", { name: "上传开发样例凭证" }).click();
+    // 点第二张待办卡：打开的是该卡片自己的任务，而不是投影选中的第一个待办
+    await page.getByTestId("participant-task-open-task-2002").click();
+    await expect(page.getByTestId("task-detail-page")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "第二张待办：国际运输" })).toBeVisible();
+    await expect(page.getByTestId("product-workbench")).toHaveAttribute("data-uvp-task-id", "task-2002");
+  });
+
+  test("clears uploaded evidence and form fields before rendering a different task", async ({ page }) => {
+    const secondTask = {
+      ...stubTask,
+      taskId: "task-2002-isolated",
+      title: "第二张独立待办",
+      stageId: "stage-second",
+      stageName: "第二阶段"
+    };
+    await installWorkbenchRoutes(page, {
+      overrides: {
+        "/product/tasks": { body: { tasks: [stubTask, secondTask] } }
+      }
+    });
+    await page.goto("/app");
+    await page.getByTestId(`participant-task-open-${stubTask.taskId}`).click();
+
+    await page.getByTestId("task-field-customs_declaration_no").fill("scope-a");
+    await page.getByTestId("task-field-export_port").fill("scope-a-port");
+    await page.getByTestId("task-field-completion_date").fill("2026-09-04");
+    await page.getByTestId("task-file-input-customs_declaration_pdf").setInputFiles({
+      name: "scope-a.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("%PDF-1.4 scoped evidence")
+    });
+    await expect(page.getByTestId("product-workbench")).not.toHaveAttribute("data-uvp-evidence-id", "");
+
+    await page.getByRole("button", { name: "订单工作台", exact: true }).click();
+    await page.getByTestId("participant-task-open-task-2002-isolated").click();
+
+    await expect(page.getByRole("heading", { name: "第二张独立待办" })).toBeVisible();
+    await expect(page.getByTestId("product-workbench")).toHaveAttribute("data-uvp-evidence-id", "");
+    await expect(page.getByTestId("task-field-customs_declaration_no")).toHaveValue("");
+    await expect(page.getByTestId("task-confirm-button")).toBeDisabled();
+    await expect(page.getByTestId("submit-fingerprint-list")).toHaveCount(0);
+  });
+
+  test("create order form reports missing required fields by name, then creates a draft", async ({ page }) => {
+    await installWorkbenchRoutes(page);
+    // 捕获路由必须后于桩注册（后注册者优先）；fallback() 让请求继续走桩响应，
+    // continue() 会把请求发往桩 origin（127.0.0.1:9，不可达）。
+    const createBodies: Array<Record<string, unknown>> = [];
+    await page.route("**/product/order-drafts", async (route) => {
+      if (route.request().method() === "POST") {
+        createBodies.push(route.request().postDataJSON() as Record<string, unknown>);
+      }
+      await route.fallback();
+    });
+    await page.goto("/app");
+    await page.getByRole("button", { name: "查看秩序详情" }).first().click();
+    await page.getByTestId("zhixu-create-order-button").click();
+    await expect(page.getByRole("heading", { name: "创建订单" })).toBeVisible();
+
+    await page.getByTestId("create-draft-button").click();
+    await expect(page.getByText(`请填写必填字段：订单名称、业务类型、总金额、币种`)).toBeVisible();
+
+    await page.getByLabel(/订单名称/).fill("e2e 受控表单订单");
+    await page.getByLabel(/业务类型/).fill("车辆");
+    await page.getByLabel(/对象说明/).fill("品牌型号：e2e 测试车型");
+    await page.getByLabel(/总金额/).fill("10000");
+    await page.getByLabel("币种").selectOption("USDC");
+    await page.getByLabel(/备注/).fill("创建即随载荷上送的备注");
+
+    await page.getByTestId("create-draft-button").click();
+    await expect(page.getByText("订单草稿已创建")).toBeVisible();
+    await expect(page.getByTestId("product-workbench")).not.toHaveAttribute("data-uvp-draft-id", "");
+
+    // 对象说明/备注不能在创建载荷里被静默丢弃
+    expect(createBodies.length).toBeGreaterThan(0);
+    const createBody = createBodies[createBodies.length - 1]!;
+    expect(createBody.goods).toContain("品牌型号：e2e 测试车型");
+    expect(createBody.notes).toBe("创建即随载荷上送的备注");
+
+    await page.getByTestId("save-draft-button").click();
+    await expect(page.getByText("草稿已保存")).toBeVisible();
+  });
+
+  test("keeps registration locked when a successfully loaded participant list is empty", async ({ page }) => {
+    await installWorkbenchRoutes(page, {
+      overrides: {
+        "/product/orders/draft-3001/participants": { body: { participants: [] } }
+      }
+    });
+    await page.goto("/app");
+    await page.getByRole("button", { name: "查看秩序详情" }).first().click();
+    await page.getByTestId("zhixu-create-order-button").click();
+    await page.getByLabel(/订单名称/).fill("空参与方边界测试");
+    await page.getByLabel(/业务类型/).fill("通用业务");
+    await page.getByLabel(/总金额/).fill("10000");
+    await page.getByLabel("币种").selectOption("USDC");
+    await page.getByTestId("create-draft-button").click();
+    await page.getByTestId("next-participants-button").click();
+
+    await expect(page.getByTestId("participants-empty-state")).toBeVisible();
+    await expect(page.getByTestId("register-order-button")).toBeDisabled();
+  });
+
+  test("uploads real evidence file and fails closed when no browser wallet is connected", async ({ page }) => {
+    await installWorkbenchRoutes(page);
+    await page.goto("/app");
+    await page.getByRole("button", { name: /待办/ }).first().click();
+    await expect(page.getByTestId("task-detail-page")).toBeVisible();
+    await expect(page.getByText("尚未上传「报关单 PDF」")).toBeVisible();
+
+    // 未填必填字段时先拦截：凭证元数据会随上传进入指纹，缺字段不允许上传
+    await page.getByTestId("task-file-input-customs_declaration_pdf").setInputFiles({
+      name: "出口报关单.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("%PDF-1.4 e2e evidence")
+    });
+    await expect(page.getByText("请填写必填字段：报关单号、出口港口、完成时间")).toBeVisible();
+    await expect(page.getByText("尚未上传「报关单 PDF」")).toBeVisible();
+
+    // 字段来自凝结核配置（演示配置数据），框架不预置任何业务字段
+    await page.getByTestId("task-field-customs_declaration_no").fill("2026-001234");
+    await page.getByTestId("task-field-export_port").fill("洋山港");
+    await page.getByTestId("task-field-completion_date").fill("2026-08-01");
+
+    await page.getByTestId("task-file-input-customs_declaration_pdf").setInputFiles({
+      name: "出口报关单.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("%PDF-1.4 e2e evidence")
+    });
     await expect(page.getByText("凭证已上传，指纹已生成")).toBeVisible();
-    await assertOrdinaryPageCopy(page);
-    await writeRunScreenshot(page, testInfo, "evidence-upload");
 
-    await page.getByRole("button", { name: "确认报关完成" }).click();
-    await expect(page.getByRole("heading", { name: "确认报关完成 / 提交结果" })).toBeVisible();
-    await page.getByRole("button", { name: "确认并提交" }).click();
-    await expect(page.getByText("提交已确认，订单页稍后会同步最新状态")).toBeVisible({ timeout: 8_000 });
-
-    const walletMethods = (await mockWallet.requestLog()).map((entry) => entry.method);
-    expect(walletMethods).toContain("eth_requestAccounts");
-    expect(walletMethods).toContain("eth_signTypedData_v4");
+    await page.getByTestId("task-confirm-button").click();
+    await expect(page.getByRole("heading", { name: "确认阶段完成 / 提交结果" })).toBeVisible();
+    // 所见即所签：确认页列出全部已上传证据的槽位名与指纹
+    await expect(page.getByTestId("submit-fingerprint-list")).toContainText("报关单 PDF");
+    await page.getByTestId("submit-confirm-button").click();
+    // 无 ethereum provider 时必须 fail-closed：不生成提交记录
+    await expect(page.getByText("请连接浏览器钱包后再确认提交")).toBeVisible();
+    await expect(page.getByText(/提交记录待创建/)).toBeVisible();
     await assertOrdinaryPageCopy(page);
-    await writeRunScreenshot(page, testInfo, "submit-confirmed");
   });
 
-  test("full mode shows diagnostic panel when /product/tasks returns 500, /product/me 403", async ({ page }) => {
-    const apiBase = "http://127.0.0.1:9654";
-    await page.route(`${apiBase}/**`, async (route) => {
-      const pathname = new URL(route.request().url()).pathname;
-      if (pathname === "/product/zhixus") {
-        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ zhixus: [] }) });
-        return;
-      }
-      if (pathname === "/product/orders") {
-        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ orders: [] }) });
-        return;
-      }
-      if (pathname === "/product/tasks") {
-        await route.fulfill({
-          status: 500,
-          contentType: "application/json",
-          body: JSON.stringify({ error: "Authentication timed out", errorCode: "internal_server_error" })
-        });
-        return;
-      }
-      if (pathname === "/product/me") {
-        await route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ error: "forbidden" }) });
-        return;
-      }
-      await route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: "not_found" }) });
-    });
+  test("blocks submit after fields change post-upload until the evidence is re-uploaded", async ({ page }) => {
+    await installWorkbenchRoutes(page);
+    await page.goto("/app");
+    await page.getByRole("button", { name: /待办/ }).first().click();
+    await expect(page.getByTestId("task-detail-page")).toBeVisible();
 
-    await page.goto(`/app?productApiBase=${encodeURIComponent(apiBase)}`);
+    await page.getByTestId("task-field-customs_declaration_no").fill("2026-001234");
+    await page.getByTestId("task-field-export_port").fill("洋山港");
+    await page.getByTestId("task-field-completion_date").fill("2026-08-01");
+    const pdf = {
+      name: "出口报关单.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("%PDF-1.4 e2e evidence")
+    };
+    await page.getByTestId("task-file-input-customs_declaration_pdf").setInputFiles(pdf);
+    await expect(page.getByText("凭证已上传，指纹已生成")).toBeVisible();
+    await expect(page.getByTestId("task-confirm-button")).toBeEnabled();
+
+    // 上传后改动字段：指纹已分叉，fail-closed 禁止提交并显著提示
+    await page.getByTestId("task-field-export_port").fill("深圳港");
+    await expect(page.getByTestId("task-evidence-stale-warning")).toBeVisible();
+    await expect(page.getByTestId("task-confirm-button")).toBeDisabled();
+
+    // 重新上传刷新指纹后解锁
+    await page.getByTestId("task-file-input-customs_declaration_pdf").setInputFiles(pdf);
+    await expect(page.getByTestId("task-evidence-stale-warning")).toHaveCount(0);
+    await expect(page.getByTestId("task-confirm-button")).toBeEnabled();
+  });
+
+  test("rejects non-PDF, forged-PDF and oversized evidence files before upload", async ({ page }) => {
+    await installWorkbenchRoutes(page);
+    await page.goto("/app");
+    await page.getByRole("button", { name: /待办/ }).first().click();
+    await expect(page.getByTestId("task-detail-page")).toBeVisible();
+
+    await page.getByTestId("task-field-customs_declaration_no").fill("2026-001234");
+    await page.getByTestId("task-field-export_port").fill("洋山港");
+    await page.getByTestId("task-field-completion_date").fill("2026-08-01");
+
+    await page.getByTestId("task-file-input-customs_declaration_pdf").setInputFiles({
+      name: "现场照片.jpg",
+      mimeType: "image/jpeg",
+      buffer: Buffer.from("not a pdf")
+    });
+    await expect(page.getByText("仅支持 PDF 格式的凭证文件")).toBeVisible();
+
+    // STORE-02：MIME/扩展名伪造绕不过 %PDF- 首字节快检
+    await page.getByTestId("task-file-input-customs_declaration_pdf").setInputFiles({
+      name: "伪造.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("MZ fake pdf content")
+    });
+    await expect(page.getByText(/文件内容不是有效的 PDF/)).toBeVisible();
+
+    await page.getByTestId("task-file-input-customs_declaration_pdf").setInputFiles({
+      name: "超大报关单.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.alloc(10 * 1024 * 1024 + 1, 0)
+    });
+    await expect(page.getByText("凭证文件超过 10MB，请压缩或拆分后再上传")).toBeVisible();
+    await expect(page.getByText("尚未上传「报关单 PDF」")).toBeVisible();
+  });
+
+  test("renders no upload slots for spec-less tasks instead of a fabricated generic upload (F-06)", async ({ page }) => {
+    await installWorkbenchRoutes(page, {
+      overrides: {
+        "/product/tasks": {
+          body: { tasks: [stubSpeclessTask] }
+        }
+      }
+    });
+    await page.goto("/app");
+    await page.getByRole("button", { name: /待办/ }).first().click();
+    await expect(page.getByTestId("task-detail-page")).toBeVisible();
+
+    // 单轨口径：仅消费 evidenceSpec。无 spec 的任务不臆造通用槽位，
+    // 如实呈现"按业务约定提交凭证"。
+    await expect(page.getByText("本待办需要的凭证：按业务约定提交凭证")).toBeVisible();
+    await expect(page.getByText("本待办无需上传文件凭证")).toBeVisible();
+    await expect(page.getByTestId("task-file-input-task_evidence_generic")).toHaveCount(0);
+  });
+
+  test("submits a file-free task through pure field confirmation without requiring uploads", async ({ page }) => {
+    const textOnlyTask = {
+      ...stubTask,
+      taskId: "task-2003-textonly",
+      title: "纯字段待办：补充说明",
+      evidenceSpec: [
+        { key: "completion_date", label: "完成时间", inputKind: "date" as const, required: true },
+        { key: "remark", label: "备注说明", inputKind: "text" as const, required: false }
+      ]
+    };
+    await installWorkbenchRoutes(page, {
+      overrides: {
+        "/product/tasks": { body: { tasks: [textOnlyTask] } }
+      }
+    });
+    await page.goto("/app");
+    await page.getByRole("button", { name: /待办/ }).first().click();
+    await expect(page.getByTestId("task-detail-page")).toBeVisible();
+    await expect(page.getByText("本待办无需上传文件凭证")).toBeVisible();
+
+    // 必填字段未填时按钮仍锁，且如实提示缺什么
+    await expect(page.getByTestId("task-confirm-button")).toBeDisabled();
+    await expect(page.getByTestId("task-confirm-blocked-note")).toContainText("完成时间");
+
+    await page.getByTestId("task-field-completion_date").fill("2026-09-01");
+    await expect(page.getByTestId("task-confirm-button")).toBeEnabled();
+    await page.getByTestId("task-confirm-button").click();
+
+    // 确认页如实呈现纯字段提交：无文件凭证，不再要求指纹
+    await expect(page.getByTestId("submit-page")).toBeVisible();
+    await expect(page.getByText("无文件凭证（本次提交为纯字段确认）")).toBeVisible();
+    await expect(page.getByTestId("submit-confirm-button")).toBeEnabled();
+    await page.getByTestId("submit-confirm-button").click();
+    // 无钱包时仍 fail-closed：不产生提交记录
+    await expect(page.getByText("请连接浏览器钱包后再确认提交")).toBeVisible();
+  });
+
+  test("create-order form keeps unsaved values across view switches", async ({ page }) => {
+    await installWorkbenchRoutes(page);
+    await page.goto("/app");
+    await page.getByRole("button", { name: "查看秩序库" }).click();
+    await page.getByRole("button", { name: "查看秩序详情" }).first().click();
+    await page.getByTestId("zhixu-create-order-button").click();
+    await expect(page.getByRole("heading", { name: "创建订单" })).toBeVisible();
+
+    await page.getByLabel(/订单名称/).fill("切换视图不丢字段订单");
+    await page.getByLabel(/业务类型/).fill("车辆");
+    await page.getByLabel(/对象说明/).fill("Persisted object description");
+    await page.getByLabel(/备注/).fill("视图切换前录入的备注");
+
+    // 切走再切回：组件被卸载重建，未保存的输入必须保留
+    await page.getByRole("button", { name: /^订单$/ }).click();
+    await expect(page.getByRole("heading", { name: /测试采购订单/ })).toBeVisible();
+    await page.getByRole("button", { name: "秩序库" }).click();
+    await page.getByRole("button", { name: "查看秩序详情" }).first().click();
+    await page.getByTestId("zhixu-create-order-button").click();
+    await expect(page.getByRole("heading", { name: "创建订单" })).toBeVisible();
+
+    await expect(page.getByLabel(/订单名称/)).toHaveValue("切换视图不丢字段订单");
+    await expect(page.getByLabel(/业务类型/)).toHaveValue("车辆");
+    await expect(page.getByLabel(/对象说明/)).toHaveValue("Persisted object description");
+    await expect(page.getByLabel(/备注/)).toHaveValue("视图切换前录入的备注");
+  });
+
+  test("sends invites without synthesizing placeholder contacts", async ({ page }) => {
+    const inviteBodies: Array<{ readonly contact?: string }> = [];
+    await installWorkbenchRoutes(page);
+    // 后注册的路由优先：捕获邀请请求体后回落到通用桩
+    await page.route(`${STUB_API_BASE}/product/orders/*/invites`, async (route) => {
+      inviteBodies.push(route.request().postDataJSON() as { readonly contact?: string });
+      await route.fallback();
+    });
+    await page.goto("/app");
+    await page.getByRole("button", { name: "查看秩序详情" }).first().click();
+    await page.getByTestId("zhixu-create-order-button").click();
+    await page.getByLabel(/订单名称/).fill("邀请联系方式测试订单");
+    await page.getByLabel(/业务类型/).fill("车辆");
+    await page.getByLabel(/总金额/).fill("10000");
+    await page.getByLabel("币种").selectOption("USDC");
+    await page.getByTestId("create-draft-button").click();
+    await page.getByTestId("next-participants-button").click();
+    await expect(page.getByRole("heading", { name: "邀请参与方确认职责" })).toBeVisible();
+
+    // 桩数据里参与方没有联系方式：页面必须如实显示"未填写"
+    await expect(page.getByText("联系方式：未填写").first()).toBeVisible();
+
+    await page.getByRole("button", { name: "发送邀请" }).first().click();
+    await expect(page.getByText("邀请已生成；该参与方未填写联系方式").first()).toBeVisible();
+
+    // 请求体里不得出现编造的占位邮箱
+    expect(inviteBodies.length).toBeGreaterThan(0);
+    for (const body of inviteBodies) {
+      expect(body.contact ?? "").not.toContain("example.com");
+    }
+  });
+
+  test("dispute page presents the unopened channel honestly without fabricated SLA steps", async ({ page }) => {
+    await installWorkbenchRoutes(page);
+    await page.goto("/app");
+    await page.getByRole("button", { name: /^订单$/ }).click();
+    await expect(page.getByRole("heading", { name: /测试采购订单/ })).toBeVisible();
+    await page.getByRole("button", { name: "提出争议" }).first().click();
+    await expect(page.getByRole("heading", { name: /对出口报关凭证提出争议/ })).toBeVisible();
+
+    // 未接入的事实必须如实呈现
+    await expect(page.getByTestId("dispute-channel-status")).toBeVisible();
+    await expect(page.getByText("争议提交通道尚未开通").first()).toBeVisible();
+    const bodyText = await page.locator("body").innerText();
+    expect(bodyText).not.toContain("平台已通知");
+    expect(bodyText).not.toContain("平台裁定");
+    expect(bodyText).not.toContain("个工作日");
+    expect(bodyText).not.toContain("争议处理时间线");
+
+    // 提交仍 fail-closed：不产生任何记录
+    await page.getByRole("button", { name: "提交争议" }).click();
+    await expect(page.locator(".action-notice.error")).toContainText("争议提交未接入后端，未产生任何记录");
+  });
+
+  test("keeps the workbench usable when one zhixu detail fails while others succeed", async ({ page }) => {
+    const zhixuB = { ...stubZhixu, zhixuId: "zhixu-cross-border-high-value-b", title: "备用履约秩序" };
+    await installWorkbenchRoutes(page, {
+      overrides: {
+        // 失败的秩序详情 404；存活的详情显式给桩，避免被列表前缀覆盖
+        "/product/zhixus/zhixu-cross-border-high-value-b": {
+          status: 404,
+          body: { error: "not_found" }
+        },
+        "/product/zhixus/zhixu-cross-border-high-value": {
+          body: { zhixu: stubZhixu }
+        },
+        "/product/zhixus": {
+          body: {
+            zhixus: [stubZhixu, zhixuB]
+          }
+        }
+      }
+    });
+    await page.goto("/app");
+
+    // 整体不进入诊断错误页：待办、订单仍然可用
+    await expect(page.getByTestId("participant-app-page")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "我的待办" })).toBeVisible();
+    await expect(page.getByText(/1 个接口加载失败/)).toBeVisible();
+
+    // 存活的秩序详情仍可打开
+    await page.getByRole("button", { name: "查看秩序库" }).click();
+    await expect(page.getByRole("heading", { name: /跨境高价值货物/ })).toBeVisible();
+    await expect(page.getByText("备用履约秩序")).toHaveCount(0);
+  });
+
+  test("shows diagnostic panel when /product/tasks returns 500 and /product/me 403", async ({ page }) => {
+    await installWorkbenchRoutes(page, {
+      overrides: {
+        "/product/tasks": {
+          status: 500,
+          body: { error: "Authentication timed out", errorCode: "internal_server_error" }
+        },
+        "/product/me": {
+          status: 403,
+          body: { error: "forbidden" }
+        }
+      }
+    });
+    await page.goto("/app");
     await expect(page.getByTestId("workbench-diagnostic-panel")).toBeVisible();
     await expect(page.getByText("订单工作台无法加载")).toBeVisible();
     await expect(page.getByTestId("workbench-diagnostic-retry-button")).toBeVisible();
 
-    // /product/tasks diagnostic row
     await expect(page.getByTestId("workbench-diagnostic-product-tasks")).toBeVisible();
     await expect(page.getByTestId("workbench-diagnostic-product-tasks")).toHaveAttribute("data-diagnostic-status", "500");
     await expect(page.getByTestId("workbench-diagnostic-product-tasks")).toHaveAttribute("data-diagnostic-error-code", "internal_server_error");
 
-    // /product/me diagnostic row
     await expect(page.getByTestId("workbench-diagnostic-product-me")).toBeVisible();
     await expect(page.getByTestId("workbench-diagnostic-product-me")).toHaveAttribute("data-diagnostic-status", "403");
     await expect(page.getByTestId("workbench-diagnostic-product-me")).toHaveAttribute("data-diagnostic-error-code", "forbidden");
 
-    // product-workbench element shows real source even during failure state
     await expect(page.getByTestId("product-workbench")).toHaveAttribute("data-uvp-source", "real");
-    await expect(page.getByText("开发样例模式")).toHaveCount(0);
-
-    // no demo fallback visible
-    await expect(page.getByTestId("participant-app-page")).toHaveCount(0);
-  });
-
-  test("configured real API failures do not fall back to demo even when demo is selected", async ({ page }) => {
-    const apiBase = "http://127.0.0.1:9664";
-    await page.route(`${apiBase}/**`, async (route) => {
-      const pathname = new URL(route.request().url()).pathname;
-      if (pathname === "/product/zhixus") {
-        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ zhixus: [] }) });
-        return;
-      }
-      if (pathname === "/product/orders") {
-        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ orders: [] }) });
-        return;
-      }
-      if (pathname === "/product/tasks") {
-        await route.fulfill({
-          status: 500,
-          contentType: "application/json",
-          body: JSON.stringify({ error: "product_storage_unavailable" })
-        });
-        return;
-      }
-      if (pathname === "/product/me") {
-        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ participant: { participantId: "test", displayName: "测试", roleLabels: [], source: "mock" } }) });
-        return;
-      }
-      await route.abort();
-    });
-
-    await page.goto(`/app?demo=1&productApiBase=${encodeURIComponent(apiBase)}`);
-    await expect(page.getByTestId("workbench-diagnostic-panel")).toBeVisible();
-    await expect(page.getByTestId("product-workbench")).toHaveAttribute("data-uvp-source", "real");
-    await expect(page.getByText("开发样例模式")).toHaveCount(0);
     await expect(page.getByTestId("participant-app-page")).toHaveCount(0);
   });
 
   test("loading shell exposes product-workbench with real source before data arrives", async ({ page }) => {
-    const apiBase = "http://127.0.0.1:9655";
-    // hold all responses so loading state stays visible
     let releaseZhixus!: () => void;
     const zhixusGate = new Promise<void>((resolve) => { releaseZhixus = resolve; });
 
-    await page.route(`${apiBase}/**`, async (route) => {
+    await page.route(`${STUB_API_BASE}/product/**`, async (route) => {
       const pathname = new URL(route.request().url()).pathname;
       if (pathname === "/product/zhixus") {
+        // 挂起目录响应，保持 loading 状态可见
         await zhixusGate;
         await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ zhixus: [] }) });
         return;
@@ -199,23 +489,20 @@ test.describe("Product Workbench browser smoke", () => {
       await route.abort();
     });
 
-    await page.goto(`/app?productApiBase=${encodeURIComponent(apiBase)}`);
-    // loading shell must show product-workbench with real source immediately
+    await page.goto("/app");
     await expect(page.getByTestId("product-workbench")).toHaveAttribute("data-uvp-source", "real");
     await expect(page.getByText("正在加载订单工作台")).toBeVisible();
 
-    // release the gate to clean up
     releaseZhixus();
   });
 
   test("full mode shows diagnostic panel before a delayed /product/tasks response completes", async ({ page }) => {
     test.slow();
-    const apiBase = "http://127.0.0.1:9656";
     let delayedTasksResponseCompleted = false;
-    await page.route(`${apiBase}/**`, async (route) => {
+    await page.route(`${STUB_API_BASE}/product/**`, async (route) => {
       const pathname = new URL(route.request().url()).pathname;
       if (pathname === "/product/zhixus") {
-        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ zhixus: [] }) });
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ zhixus: [stubZhixu] }) });
         return;
       }
       if (pathname === "/product/orders") {
@@ -223,25 +510,25 @@ test.describe("Product Workbench browser smoke", () => {
         return;
       }
       if (pathname === "/product/tasks") {
-        // Delay longer than the client timeout. The assertion below checks the
-        // diagnostic renders before this delayed response is released, avoiding
-        // fragile wall-clock comparisons under parallel browser load.
+        // 延迟超过客户端 6s 超时：诊断面板应先于该响应出现
         await new Promise<void>((resolve) => setTimeout(resolve, 10000));
         delayedTasksResponseCompleted = true;
         await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ tasks: [] }) });
         return;
       }
       if (pathname === "/product/me") {
-        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ participant: { participantId: "test", displayName: "测试", roleLabels: [], source: "mock" } }) });
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ participant: stubParticipant })
+        });
         return;
       }
       await route.abort();
     });
 
     const start = Date.now();
-    await page.goto(`/app?productApiBase=${encodeURIComponent(apiBase)}`);
-    // Diagnostic panel must appear before the delayed route is fulfilled, which
-    // proves the 6s client timeout fired instead of waiting for the server.
+    await page.goto("/app");
     await expect(page.getByTestId("workbench-diagnostic-panel")).toBeVisible({ timeout: 9000 });
     expect(delayedTasksResponseCompleted).toBe(false);
     expect(Date.now() - start).toBeLessThan(10000);
@@ -252,87 +539,27 @@ test.describe("Product Workbench browser smoke", () => {
   });
 
   test("full mode surfaces 503 product_storage_unavailable as diagnostic error code", async ({ page }) => {
-    const apiBase = "http://127.0.0.1:9657";
-    await page.route(`${apiBase}/**`, async (route) => {
-      const pathname = new URL(route.request().url()).pathname;
-      if (pathname === "/product/zhixus") {
-        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ zhixus: [] }) });
-        return;
-      }
-      if (pathname === "/product/orders") {
-        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ orders: [] }) });
-        return;
-      }
-      if (pathname === "/product/tasks") {
-        await route.fulfill({
+    await installWorkbenchRoutes(page, {
+      overrides: {
+        "/product/tasks": {
           status: 503,
-          contentType: "application/json",
-          body: JSON.stringify({ error: "product_storage_unavailable", message: "Postgres connection refused", retryable: true })
-        });
-        return;
+          body: { error: "product_storage_unavailable", message: "Postgres connection refused", retryable: true }
+        }
       }
-      if (pathname === "/product/me") {
-        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ participant: { participantId: "test", displayName: "测试", roleLabels: [], source: "mock" } }) });
-        return;
-      }
-      await route.abort();
     });
-
-    await page.goto(`/app?productApiBase=${encodeURIComponent(apiBase)}`);
+    await page.goto("/app");
     await expect(page.getByTestId("workbench-diagnostic-panel")).toBeVisible();
     await expect(page.getByTestId("workbench-diagnostic-product-tasks")).toBeVisible();
     await expect(page.getByTestId("workbench-diagnostic-product-tasks")).toHaveAttribute("data-diagnostic-status", "503");
     await expect(page.getByTestId("workbench-diagnostic-product-tasks")).toHaveAttribute("data-diagnostic-error-code", "product_storage_unavailable");
-    // error code appears in the error-code column badge
     await expect(page.getByTestId("workbench-diagnostic-product-tasks").locator(".diagnostic-error-code")).toContainText("product_storage_unavailable");
   });
 
-  test("full mode shows error state for non-diagnostic failures (no base URL)", async ({ page }) => {
+  test("unrouted product requests fail closed with an explicit error state", async ({ page }) => {
+    // VITE_UVP_CHAIN_SERVICES_URL 指向不可达地址且无路由桩：网络失败必须显式报错，
+    // 不回退到任何本地样例数据。
     await page.goto("/app");
     await expect(page.getByTestId("workbench-diagnostic-panel")).toHaveCount(0);
     await expect(page.getByText("订单工作台加载失败")).toBeVisible();
   });
-
-  test("fixture smoke surfaces wallet signature rejection without creating a submission", async ({ page, mockWallet }) => {
-    await page.goto("/app?demo=1");
-    await page.getByRole("button", { name: /待办/ }).first().click();
-    await page.getByRole("button", { name: "上传开发样例凭证" }).click();
-    await expect(page.getByText("凭证已上传，指纹已生成")).toBeVisible();
-    await page.getByRole("button", { name: "确认报关完成" }).click();
-
-    await mockWallet.setState({ rejectSignTypedData: true });
-    await page.getByRole("button", { name: "确认并提交" }).click();
-    await expect(page.getByText("你取消了签名，可以重新提交")).toBeVisible();
-    await expect(page.getByText(/提交记录待创建/)).toBeVisible();
-    await assertOrdinaryPageCopy(page);
-  });
 });
-
-async function assertFixtureModeIfExpected(page: Page): Promise<void> {
-  const mode = process.env.UVP_PRODUCT_BROWSER_E2E_MODE ?? "fixture";
-  if (mode === "fixture" && !process.env.VITE_UVP_CHAIN_SERVICES_URL) {
-    await expect(page.getByText("开发样例模式", { exact: true })).toBeVisible();
-  }
-}
-
-async function expectWalletError(
-  page: Page,
-  method: string,
-  params: unknown[],
-  code: number
-): Promise<void> {
-  const result = await page.evaluate(async ({ requestMethod, requestParams }) => {
-    try {
-      await window.ethereum.request({ method: requestMethod, params: requestParams });
-      return { ok: true };
-    } catch (error) {
-      return {
-        ok: false,
-        code: typeof error === "object" && error !== null && "code" in error
-          ? (error as { readonly code: unknown }).code
-          : undefined
-      };
-    }
-  }, { requestMethod: method, requestParams: params });
-  expect(result).toEqual({ ok: false, code });
-}

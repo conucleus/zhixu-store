@@ -1,7 +1,6 @@
 import {
   AlertTriangle,
   Bell,
-  Building2,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -13,7 +12,6 @@ import {
   Copy,
   FileCheck2,
   FileText,
-  Fingerprint,
   HandCoins,
   HelpCircle,
   Layers3,
@@ -24,13 +22,12 @@ import {
   Search,
   Send,
   ShieldCheck,
-  Truck,
   UploadCloud,
   User,
   UserCheck,
   WalletCards
 } from "lucide-react";
-import { useMemo, useState, type ChangeEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   ChainProofRowDTO,
   DockableModuleStatus,
@@ -52,27 +49,52 @@ import {
   type DraftParticipantDTO,
   type EvidenceObjectDTO,
   type EvidenceProofDTO,
-  type ProductApiSource,
   type ProductInviteDTO,
   type ProductOrderDraftDTO,
   type ProductWorkbenchData
 } from "./product/api";
-import { useOrderDraftFlow } from "./product/hooks/useOrderDraftFlow";
+import {
+  emptyOrderDraftFormValues,
+  useOrderDraftFlow,
+  type OrderDraftFormValues
+} from "./product/hooks/useOrderDraftFlow";
 import { useOrderRegistrationFlow } from "./product/hooks/useOrderRegistrationFlow";
 import { useProductWorkbenchData } from "./product/hooks/useProductWorkbenchData";
-import {
-  useProductWorkbenchE2EBridge,
-  type ProductWorkbenchE2EState
-} from "./product/hooks/useProductWorkbenchE2EBridge";
 import { useTaskSubmissionFlow } from "./product/hooks/useTaskSubmissionFlow";
 import { idleAction, type ActionState, type ProductView, type SubmitMachineState, type SubmitMachineStatus } from "./product/hooks/workbenchTypes";
+import {
+  FRAMEWORK_NOTES_FIELD_KEY,
+  acceptAttribute,
+  acceptHint,
+  canCreateProductOrder,
+  delay,
+  emptyTaskEvidenceFieldValues,
+  missingTaskEvidenceSlotLabels,
+  resolveWorkbenchTask,
+  type TaskEvidenceFieldValues,
+  type TaskEvidencePlan,
+  type TaskEvidenceSlot
+} from "./product/hooks/workbenchSupport";
 import { shortHash } from "./shared/frontend";
 
 export function ProductWorkbenchApp() {
   const api = useMemo(() => createProductApiClient(), []);
-  const { loadState, reload: reloadWorkbench } = useProductWorkbenchData(api);
+  // reload：诊断页手动重试（整页回到加载态）；refresh：mutation 成功后的定向刷新（原地更新，失败保留现数据）。
+  const { loadState, reload: reloadWorkbench, refresh: refreshWorkbench } = useProductWorkbenchData(api);
   const [view, setView] = useState<ProductView>("app");
   const [proofOpen, setProofOpen] = useState(false);
+  // 每张待办卡片携带自己的 taskId：这里记录选中的任务，未选中时回退到投影的 activeTask。
+  const [selectedTaskId, setSelectedTaskId] = useState<string | undefined>(undefined);
+  // 订单信息与待办凭证表单状态提升到本组件：视图切换会卸载页面组件，
+  // 未保存的用户输入不能因为切换视图被静默清空。
+  const [draftFormValues, setDraftFormValues] = useState<OrderDraftFormValues>(emptyOrderDraftFormValues);
+  const [taskEvidenceFields, setTaskEvidenceFields] = useState<TaskEvidenceFieldValues>(emptyTaskEvidenceFieldValues);
+
+  /** 打开指定任务详情；不传 taskId 时沿用当前选中任务或投影 activeTask。 */
+  function openTask(taskId?: string): void {
+    setSelectedTaskId(taskId);
+    setView("task");
+  }
 
   const activeNav = useMemo(() => {
     if (view === "app") {
@@ -90,9 +112,15 @@ export function ProductWorkbenchApp() {
   const data = loadState.status === "ready" || loadState.status === "empty" ? loadState.data : undefined;
   const selectedZhixu = data?.zhixu;
   const selectedOrder = data?.order;
-  const activeTask = data?.activeTask;
-  const allowMockWallet = data?.source.kind === "mock";
-  const draftFlow = useOrderDraftFlow({ api, selectedZhixu });
+  const activeTask = resolveWorkbenchTask(data?.tasks ?? [], selectedTaskId, data?.activeTask);
+  const taskScopeKey = activeTask?.taskId ?? "none";
+  useLayoutEffect(() => {
+    // Evidence and field values belong to one task. Clearing the scope on an
+    // identity change prevents a previous task's evidence IDs from being
+    // submitted with the next task.
+    setTaskEvidenceFields(emptyTaskEvidenceFieldValues);
+  }, [taskScopeKey]);
+  const draftFlow = useOrderDraftFlow({ api, selectedZhixu, onMutationSuccess: refreshWorkbench });
   const {
     draft,
     draftParticipants,
@@ -104,26 +132,83 @@ export function ProductWorkbenchApp() {
     handleSaveDraft,
     handleSendInvite
   } = draftFlow;
+  // 订单启动后的"同步中"只做过渡桥：等订单投影落地（有界轮询）再跳转/清标志，
+  // 绝不永久挂起；索引迟迟未落地时保持"同步中"中间态，不把空订单页当"启动失败"
+  // 诱导重复触发。
+  const [awaitingOrderSync, setAwaitingOrderSync] = useState(false);
+  const awaitedOrderIdRef = useRef<string | undefined>(undefined);
+
+  function triggeredOrderProjected(loaded: ProductWorkbenchData | undefined): boolean {
+    const orderId = awaitedOrderIdRef.current;
+    if (!loaded) {
+      return false;
+    }
+    if (orderId) {
+      return loaded.orders.some((order) => order.orderId === orderId);
+    }
+    return loaded.order !== undefined;
+  }
+
+  async function waitForOrderProjection(): Promise<boolean> {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      if (attempt > 0) {
+        await delay(1200);
+      }
+      if (triggeredOrderProjected(await refreshWorkbench())) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   const { registerDraftAction, handleRegisterDraft } = useOrderRegistrationFlow({
     api,
-    allowMockWallet,
     ensureDraft,
     onRegistered: (nextDraft) => {
       draftFlow.setDraft(nextDraft);
-      window.setTimeout(() => setView("order"), 500);
+      awaitedOrderIdRef.current = nextDraft.triggeredOrderId;
+      setAwaitingOrderSync(true);
+      void waitForOrderProjection().then((projected) => {
+        setView("order");
+        if (projected) {
+          setAwaitingOrderSync(false);
+        }
+        // 窗口耗尽仍未落地：保持"同步中"过渡态，由后续刷新观察到订单时再复位。
+      });
     }
   });
   const {
-    evidence,
-    evidenceProof,
+    evidencePlan,
+    evidenceBySlot,
+    evidenceProofsBySlot,
+    staleSlotLabels,
     evidenceAction,
     submitMachine,
     disputeAction,
     handleUploadEvidence,
-    handleUploadDemoEvidence,
     handleConfirmSubmit,
     handleDisputeSave
-  } = useTaskSubmissionFlow({ api, activeTask, allowMockWallet });
+  } = useTaskSubmissionFlow({ api, activeTask, fieldValues: taskEvidenceFields, onMutationSuccess: refreshWorkbench });
+  // 轮询窗口耗尽后，任何一次后续投影刷新观察到订单即复位"同步中"过渡桥。
+  useEffect(() => {
+    if (awaitingOrderSync && triggeredOrderProjected(data)) {
+      setAwaitingOrderSync(false);
+    }
+  }, [awaitingOrderSync, data]);
+  const firstEvidence = Object.values(evidenceBySlot)[0];
+  // 提交门槛：必填证据槽位全部满足（文件已上传或该任务没有文件要求）即可提交；
+  // 纯 text/date 或无槽位任务允许零上传的纯字段确认提交。
+  const missingEvidenceSlotLabels = missingTaskEvidenceSlotLabels(
+    evidencePlan.slots,
+    taskEvidenceFields,
+    Object.keys(evidenceBySlot)
+  );
+  // 上传后相关字段变更的槽位（指纹已分叉）与缺失槽位一样禁锁提交。
+  // 凭证核验异常（mismatch/missing_file）的隔离凭证不得作为有效业务凭证，同样禁锁。
+  const verificationFailedLabels = Object.entries(evidenceProofsBySlot)
+    .filter(([, proof]) => proof.verificationStatus === "mismatch" || proof.verificationStatus === "missing_file")
+    .map(([key]) => evidencePlan.slots.find((slot) => slot.key === key)?.label ?? key);
+  const canConfirmSubmit = missingEvidenceSlotLabels.length === 0 && staleSlotLabels.length === 0 && verificationFailedLabels.length === 0;
 
   async function handleNextParticipants(): Promise<void> {
     const currentDraft = await ensureDraft();
@@ -132,30 +217,24 @@ export function ProductWorkbenchApp() {
     }
   }
 
-  const e2eState: ProductWorkbenchE2EState = {
+  const workbenchState = {
     mode: import.meta.env.MODE,
     view,
-    loadStatus: loadState.status,
     sourceKind: data?.source.kind ?? null,
-    apiBaseUrl: apiBaseUrlFromSource(data?.source),
+    apiBaseUrl: data?.source.baseUrl ?? null,
     syncState: data?.syncState ?? null,
     zhixuId: selectedZhixu?.zhixuId ?? null,
     draftId: draft?.draftId ?? null,
     orderId: draft?.triggeredOrderId ?? selectedOrder?.orderId ?? null,
     taskId: activeTask?.taskId ?? null,
-    evidenceId: evidence?.evidenceId ?? null,
+    evidenceId: firstEvidence?.evidenceId ?? null,
     submissionId: submitMachine.submission?.submissionId ?? null,
     triggerTxHash: draft?.triggerTxHash ?? null,
-    signalTxHash: submitMachine.submission?.txHash ?? evidence?.boundSignalTxHash ?? null
+    signalTxHash: submitMachine.submission?.txHash ?? firstEvidence?.boundSignalTxHash ?? null
   };
 
-  useProductWorkbenchE2EBridge({
-    state: e2eState,
-    acceptRequiredParticipants: draftFlow.acceptRequiredParticipants
-  });
-
   if (loadState.status === "loading") {
-    const loadingSource = api.baseUrl ? "real" : "mock";
+    const loadingSource = api.baseUrl ? "real" : "unconfigured";
     return (
       <div
         className="product-app"
@@ -198,13 +277,13 @@ export function ProductWorkbenchApp() {
       >
         <TopNav active={activeNav} onGo={setView} />
         <main className="product-main">
-          <RuntimeBanner source={loadState.source} syncing={false} />
+          <RuntimeBanner syncing={false} />
           <section className="page-shell" data-testid="workbench-diagnostic-panel">
             <div className="state-panel error">
               <span><AlertTriangle /></span>
               <div>
                 <h2>订单工作台无法加载</h2>
-                <p>部分后端接口返回异常，以下是各接口状态。当前未使用开发样例数据。</p>
+                <p>部分后端接口返回异常，以下是各接口状态。</p>
               </div>
             </div>
             <div className="panel-card" data-testid="workbench-diagnostic-table">
@@ -262,32 +341,36 @@ export function ProductWorkbenchApp() {
     <div
       className="product-app"
       data-testid="product-workbench"
-      data-uvp-api-base-url={e2eState.apiBaseUrl ?? ""}
-      data-uvp-draft-id={e2eState.draftId ?? ""}
-      data-uvp-evidence-id={e2eState.evidenceId ?? ""}
-      data-uvp-mode={e2eState.mode}
-      data-uvp-order-id={e2eState.orderId ?? ""}
-      data-uvp-trigger-tx-hash={e2eState.triggerTxHash ?? ""}
-      data-uvp-signal-tx-hash={e2eState.signalTxHash ?? ""}
-      data-uvp-source={e2eState.sourceKind ?? ""}
-      data-uvp-submission-id={e2eState.submissionId ?? ""}
-      data-uvp-sync-state={e2eState.syncState ?? ""}
-      data-uvp-task-id={e2eState.taskId ?? ""}
-      data-uvp-view={e2eState.view}
-      data-uvp-zhixu-id={e2eState.zhixuId ?? ""}
+      data-uvp-api-base-url={workbenchState.apiBaseUrl ?? ""}
+      data-uvp-draft-id={workbenchState.draftId ?? ""}
+      data-uvp-evidence-id={workbenchState.evidenceId ?? ""}
+      data-uvp-mode={workbenchState.mode}
+      data-uvp-order-id={workbenchState.orderId ?? ""}
+      data-uvp-trigger-tx-hash={workbenchState.triggerTxHash ?? ""}
+      data-uvp-signal-tx-hash={workbenchState.signalTxHash ?? ""}
+      data-uvp-source={workbenchState.sourceKind ?? ""}
+      data-uvp-submission-id={workbenchState.submissionId ?? ""}
+      data-uvp-sync-state={workbenchState.syncState ?? ""}
+      data-uvp-task-id={workbenchState.taskId ?? ""}
+      data-uvp-view={workbenchState.view}
+      data-uvp-zhixu-id={workbenchState.zhixuId ?? ""}
     >
-      <TopNav active={activeNav} onGo={setView} />
+      <TopNav active={activeNav} onGo={setView} participantName={data?.participant?.displayName} openTaskCount={data ? data.tasks.filter((task) => task.status === "open").length : undefined} />
       <main className="product-main">
-        <RuntimeBanner source={data.source} syncing={data.syncState === "syncing"} />
+        <RuntimeBanner syncing={data.syncState === "syncing"} degradedCount={data.diagnostics.length} />
         {loadState.status === "empty" ? <EmptyCatalogPage /> : null}
-        {loadState.status === "ready" && view === "app" ? <ParticipantAppPage data={data} onCatalog={() => setView("home")} onViewDetail={() => setView("zhixu")} onCreate={() => setView("create")} onOrder={() => setView("order")} onTask={() => setView("task")} /> : null}
-        {loadState.status === "ready" && view === "home" && selectedZhixu ? <CatalogPage zhixu={selectedZhixu} order={selectedOrder} task={activeTask} onViewDetail={() => setView("zhixu")} onCreate={() => setView("create")} onOrder={() => setView("order")} onTask={() => setView("task")} /> : null}
+        {loadState.status === "ready" && view === "app" ? <ParticipantAppPage data={data} onCatalog={() => setView("home")} onViewDetail={() => setView("zhixu")} onCreate={() => setView("create")} onOrder={() => setView("order")} onTask={(taskId) => openTask(taskId)} /> : null}
+        {loadState.status === "ready" && view === "home" && selectedZhixu ? <CatalogPage zhixu={selectedZhixu} order={selectedOrder} task={activeTask} onViewDetail={() => setView("zhixu")} onCreate={() => setView("create")} onOrder={() => setView("order")} onTask={(taskId) => openTask(taskId)} /> : null}
         {loadState.status === "ready" && view === "zhixu" && selectedZhixu ? <ZhixuDetailPage zhixu={selectedZhixu} onBack={() => setView("home")} onCreate={() => setView("create")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : null}
-        {loadState.status === "ready" && view === "create" && selectedZhixu ? <CreateOrderPage zhixu={selectedZhixu} draft={draft} createAction={draftAction} saveAction={saveDraftAction} onBack={() => setView("zhixu")} onCreate={handleCreateDraft} onSave={handleSaveDraft} onNext={handleNextParticipants} /> : null}
-        {loadState.status === "ready" && view === "participants" ? <ParticipantsPage order={selectedOrder} draft={draft} draftParticipants={draftParticipants} inviteActions={inviteActions} registerAction={registerDraftAction} onBack={() => setView("create")} onInvite={handleSendInvite} onRegister={handleRegisterDraft} onOrder={() => setView("order")} /> : null}
-        {loadState.status === "ready" && view === "order" ? selectedOrder ? <OrderOverviewPage order={selectedOrder} syncing={data.syncState === "syncing" || registerDraftAction.phase === "success"} onBack={() => setView("home")} onTask={() => setView("task")} onDispute={() => setView("dispute")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : <EmptyState title="暂无进行中订单" desc="创建并启动订单后，这里会展示订单总览、当前待办和最近事件。" /> : null}
-        {loadState.status === "ready" && view === "task" ? activeTask ? <TaskPage task={activeTask} evidence={evidence} evidenceProof={evidenceProof} uploadAction={evidenceAction} onBack={() => setView("order")} onUpload={handleUploadEvidence} onUploadDemo={handleUploadDemoEvidence} onSubmit={() => setView("submit")} onDispute={() => setView("dispute")} /> : <EmptyState title="暂无待办" desc="当前没有需要你处理的任务。" /> : null}
-        {loadState.status === "ready" && view === "submit" ? activeTask ? <SubmitPage task={activeTask} evidence={evidence} submitMachine={submitMachine} allowRejectSimulation={allowMockWallet} onBack={() => setView("task")} onSubmit={() => void handleConfirmSubmit()} onReject={() => void handleConfirmSubmit({ rejectWallet: true })} onOrder={() => setView("order")} /> : <EmptyState title="暂无可提交的待办" desc="待办完成凭证上传后，可在这里确认提交。" /> : null}
+        {loadState.status === "ready" && view === "create" && selectedZhixu ? <CreateOrderPage zhixu={selectedZhixu} draft={draft} createAction={draftAction} saveAction={saveDraftAction} values={draftFormValues} onValuesChange={(patch) => setDraftFormValues((current) => ({ ...current, ...patch }))} onBack={() => setView("zhixu")} onCreate={(values) => void handleCreateDraft(values)} onSave={(values) => void handleSaveDraft(values)} onNext={handleNextParticipants} /> : null}
+        {loadState.status === "ready" && view === "participants" ? <ParticipantsPage order={selectedOrder} draft={draft} draftParticipants={draftParticipants} draftParticipantsStatus={draftFlow.draftParticipantsStatus} draftParticipantsError={draftFlow.draftParticipantsError} inviteActions={inviteActions} registerAction={registerDraftAction} onBack={() => setView("create")} onInvite={handleSendInvite} onRegister={handleRegisterDraft} onOrder={() => setView("order")} /> : null}
+        {loadState.status === "ready" && view === "order" ? selectedOrder ? <OrderOverviewPage order={selectedOrder} syncing={data.syncState === "syncing" || awaitingOrderSync} onBack={() => setView("home")} onTask={() => setView("task")} onDispute={() => setView("dispute")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : awaitingOrderSync ? (
+          <section className="page-shell">
+            <StatePanel icon={<RefreshCw className="spin" />} title="订单状态同步中" desc="订单已启动，正在等待链上投影同步；请勿重复启动，稍后刷新即可查看订单总览。" tone="info" />
+          </section>
+        ) : <EmptyState title="暂无进行中订单" desc="创建并启动订单后，这里会展示订单总览、当前待办和最近事件。" /> : null}
+        {loadState.status === "ready" && view === "task" ? activeTask ? <TaskPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} evidenceProofsBySlot={evidenceProofsBySlot} uploadAction={evidenceAction} canConfirm={canConfirmSubmit} missingEvidenceLabels={missingEvidenceSlotLabels} staleSlotLabels={staleSlotLabels} verificationFailedLabels={verificationFailedLabels} fieldValues={taskEvidenceFields} onFieldValuesChange={(patch) => setTaskEvidenceFields((current) => ({ ...current, ...patch }))} onBack={() => setView("order")} onUpload={(slotKey, file) => void handleUploadEvidence(slotKey, file)} onSubmit={() => setView("submit")} onDispute={() => setView("dispute")} /> : <EmptyState title="暂无待办" desc="当前没有需要你处理的任务。" /> : null}
+        {loadState.status === "ready" && view === "submit" ? activeTask ? <SubmitPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} submitMachine={submitMachine} canSubmit={canConfirmSubmit} staleSlotLabels={staleSlotLabels} verificationFailedLabels={verificationFailedLabels} onBack={() => setView("task")} onSubmit={() => void handleConfirmSubmit()} onOrder={() => setView("order")} /> : <EmptyState title="暂无可提交的待办" desc="待办完成凭证上传后，可在这里确认提交。" /> : null}
         {loadState.status === "ready" && view === "dispute" ? activeTask ? <DisputePage task={activeTask} action={disputeAction} onBack={() => setView("order")} onSave={handleDisputeSave} /> : <EmptyState title="暂无可争议事项" desc="订单出现可处理待办后，可以补充争议材料。" /> : null}
       </main>
     </div>
@@ -296,16 +379,20 @@ export function ProductWorkbenchApp() {
 
 function TopNav({
   active,
-  onGo
+  onGo,
+  participantName,
+  openTaskCount
 }: {
   active: string;
   onGo: (view: ProductView) => void;
+  participantName?: string | undefined;
+  openTaskCount?: number | undefined;
 }) {
   const items: Array<{ label: string; view: ProductView; badge?: string }> = [
     { label: "订单工作台", view: "app" },
     { label: "秩序库", view: "home" },
     { label: "订单", view: "order" },
-    { label: "待办", view: "task", badge: "6" },
+    ...(openTaskCount === undefined ? [{ label: "待办", view: "task" as const }] : [{ label: "待办", view: "task" as const, badge: String(openTaskCount) }]),
     { label: "执行方", view: "participants" },
     { label: "帮助", view: "home" }
   ];
@@ -330,8 +417,12 @@ function TopNav({
       </nav>
       <div className="product-userbar">
         <button className="icon-button" aria-label="通知"><Bell /></button>
-        <span className="avatar">张</span>
-        <span className="user-name">张经理</span>
+        {participantName ? (
+          <>
+            <span className="avatar">{participantName.slice(0, 1)}</span>
+            <span className="user-name">{participantName}</span>
+          </>
+        ) : null}
         <ChevronDown className="chevron" />
       </div>
     </header>
@@ -351,14 +442,14 @@ function ParticipantAppPage({
   onViewDetail: () => void;
   onCreate: () => void;
   onOrder: () => void;
-  onTask: () => void;
+  onTask: (taskId: string) => void;
 }) {
   const openTasks = data.tasks.filter((task) => task.status === "open");
   const blockedTasks = data.tasks.filter((task) => task.status === "blocked");
   const completedTasks = data.tasks.filter((task) => task.status === "done" || task.status === "submitted");
   const primaryTask = openTasks[0] ?? data.activeTask;
   const zhixu = data.zhixu;
-  const canCreate = zhixu?.reviewStatus === "approved";
+  const canCreate = zhixu ? canCreateProductOrder(zhixu) : false;
 
   return (
     <section className="page-shell" data-testid="participant-app-page">
@@ -366,14 +457,14 @@ function ParticipantAppPage({
         <div className="hero-copy">
           <span className="eyebrow">普通履约者 App</span>
           <h1>我的待办</h1>
-          <p>买家、卖家、报关、物流和检验方都在这里处理自己被分配的任务。不同角色看到不同任务插件，但提交后都会留下可核对证明。</p>
+          <p>所有参与方都在这里处理自己被分配的任务。不同角色看到不同任务插件，但提交后都会留下可核对证明。</p>
           <div className="hero-actions">
-            {primaryTask ? <button className="primary-button" data-testid="participant-primary-task-button" onClick={onTask}><ClipboardCheck /> 处理当前待办</button> : null}
+            {primaryTask ? <button className="primary-button" data-testid="participant-primary-task-button" onClick={() => onTask(primaryTask.taskId)}><ClipboardCheck /> 处理当前待办</button> : null}
             {data.order ? <button className="secondary-button" data-testid="participant-order-room-button" onClick={onOrder}><FileText /> 打开订单房间</button> : null}
           </div>
         </div>
         <div className="hero-side">
-          <SideMetric icon={<UserCheck />} label="当前身份" value={data.participant.displayName} />
+          <SideMetric icon={<UserCheck />} label="当前身份" value={data.participant?.displayName ?? "身份未确认"} />
           <SideMetric icon={<ClipboardCheck />} label="待处理" value={`${openTasks.length} 个待办`} />
           <SideMetric icon={<Clock3 />} label="阻塞中" value={`${blockedTasks.length} 个`} />
         </div>
@@ -385,7 +476,7 @@ function ParticipantAppPage({
             <div className="panel-heading">
               <div>
                 <h2>待办队列</h2>
-                <p>{data.participant.roleLabels.length > 0 ? `当前角色：${data.participant.roleLabels.join("、")}` : "连接钱包或接受邀请后，只展示你能处理的任务。"}</p>
+                <p>{data.participant && data.participant.roleLabels.length > 0 ? `当前角色：${data.participant.roleLabels.join("、")}` : "身份未确认：连接钱包或接受邀请后，只展示你能处理的任务。"}</p>
               </div>
               <button className="secondary-button" onClick={onCatalog}>查看秩序库</button>
             </div>
@@ -402,7 +493,7 @@ function ParticipantAppPage({
                     </div>
                     <div className="catalog-facts">
                       <FactRow icon={<Layers3 />} label="任务插件" value={pluginKindLabel(task.capabilityPlugin?.pluginKind)} />
-                      <FactRow icon={<FileCheck2 />} label="需要凭证" value={task.requiredEvidence.join("、")} />
+                      <FactRow icon={<FileCheck2 />} label="需要凭证" value={(task.evidenceSpec ?? []).map((slot) => slot.label).join("、") || "按业务约定提交凭证"} />
                       <FactRow icon={<HandCoins />} label="付款影响" value={task.fundingImpact} />
                     </div>
                     {task.settlementPreview ? (
@@ -418,7 +509,12 @@ function ParticipantAppPage({
                   <div className="catalog-card-actions">
                     <strong>{task.primaryActionLabel ?? "处理待办"}</strong>
                     <small>{task.deadline}</small>
-                    <button className={task.status === "open" ? "primary-button block" : "secondary-button block"} onClick={onTask} disabled={task.status === "blocked"}>{task.status === "open" ? "进入处理" : "查看详情"}</button>
+                    <button
+                      className={task.status === "open" ? "primary-button block" : "secondary-button block"}
+                      data-testid={`participant-task-open-${task.taskId}`}
+                      onClick={() => onTask(task.taskId)}
+                      disabled={task.status === "blocked"}
+                    >{task.status === "open" ? "进入处理" : "查看详情"}</button>
                   </div>
                 </article>
               )) : <InlineEmpty text="当前钱包暂无待办" />}
@@ -463,16 +559,18 @@ function CatalogPage({
   onViewDetail: () => void;
   onCreate: () => void;
   onOrder: () => void;
-  onTask: () => void;
+  onTask: (taskId: string) => void;
 }) {
-  const canCreate = zhixu.reviewStatus === "approved";
+  const canCreate = canCreateProductOrder(zhixu);
+  const catalogFilters = [...new Set(["全部", ...zhixu.applicableBusiness])];
+  const roleSummary = zhixu.roleSlots.slice(0, 3).map((slot) => slot.title).join("、") || "各参与角色";
   return (
     <section className="page-shell" data-testid="catalog-page">
       <section className="store-hero">
         <div>
           <StatusBadge icon={<ShieldCheck />} tone="success">共同秩序审核</StatusBadge>
-          <h1>把跨境订单拆成每个人看得懂的待办</h1>
-          <p>选择审核过的秩序，邀请买家、卖家、物流、检验方按同一套规则协作。每次确认都会留下可核对的证明，方便后续付款、验收和争议处理。</p>
+          <h1>把秩序拆成每个人看得懂的待办</h1>
+          <p>选择已发布的秩序，邀请 {roleSummary} 按同一套规则协作。每次确认都会留下可核对的证明，方便后续处理与复核。</p>
           <div className="button-row">
             <button className={canCreate ? "primary-button" : "disabled-button"} data-testid="catalog-create-order-button" onClick={canCreate ? onCreate : undefined} disabled={!canCreate}>创建订单</button>
             <button className="secondary-button" data-testid="catalog-detail-button" onClick={onViewDetail}>查看秩序详情</button>
@@ -488,10 +586,10 @@ function CatalogPage({
       <div className="catalog-toolbar">
         <label className="catalog-search">
           <Search />
-          <input placeholder="搜索业务、角色或凭证，例如：车辆、报关、验收" />
+          <input placeholder="搜索业务、角色或凭证" />
         </label>
         <div className="catalog-filter-row">
-          {["全部", "平行出口车", "工业设备", "高价值货物"].map((item, index) => (
+          {catalogFilters.map((item, index) => (
             <button className={`filter-chip ${index === 0 ? "is-active" : ""}`} key={item}>{item}</button>
           ))}
         </div>
@@ -540,7 +638,7 @@ function CatalogPage({
           </SidePanel>
           <SidePanel title="我的待办">
             {task ? (
-              <button className="quick-order-card" onClick={onTask}>
+              <button className="quick-order-card" data-testid="catalog-task-card" onClick={() => onTask(task.taskId)}>
                 <strong>{task.title}</strong>
                 <span>{task.assigneeRole} · {task.deadline}</span>
                 <small>{task.fundingImpact}</small>
@@ -573,7 +671,7 @@ function ZhixuDetailPage({
   proofOpen: boolean;
   setProofOpen: (value: boolean) => void;
 }) {
-  const canCreate = zhixu.reviewStatus === "approved";
+  const canCreate = canCreateProductOrder(zhixu);
   return (
     <section className="page-shell" data-testid="zhixu-detail-page">
       <BackLine onClick={onBack}>返回秩序库</BackLine>
@@ -582,7 +680,7 @@ function ZhixuDetailPage({
           <h1>{zhixu.title}</h1>
           <p>{zhixu.subtitle}</p>
         </div>
-        <StatusBadge icon={<ShieldCheck />} tone={zhixu.reviewStatus === "approved" ? "success" : "warning"}>{zhixu.reviewLabel}</StatusBadge>
+        <StatusBadge icon={<ShieldCheck />} tone={canCreate ? "success" : "warning"}>{zhixu.reviewLabel}</StatusBadge>
       </div>
 
       <div className="notice-grid">
@@ -606,7 +704,7 @@ function ZhixuDetailPage({
             <div className="panel-heading">
               <div>
                 <h2>可扩展协作模块</h2>
-                <p>可按业务需要接入资金保障、物流、验收和争议处理模块。</p>
+                <p>可按秩序配置接入协作模块；模块状态以当前秩序数据为准。</p>
               </div>
             </div>
             <DockableModules modules={zhixu.dockableModules} />
@@ -651,6 +749,8 @@ function CreateOrderPage({
   draft,
   createAction,
   saveAction,
+  values,
+  onValuesChange,
   onBack,
   onCreate,
   onSave,
@@ -660,41 +760,39 @@ function CreateOrderPage({
   draft?: ProductOrderDraftDTO | undefined;
   createAction: ActionState;
   saveAction: ActionState;
+  values: OrderDraftFormValues;
+  onValuesChange: (patch: Partial<OrderDraftFormValues>) => void;
   onBack: () => void;
-  onCreate: () => void;
-  onSave: () => void;
+  onCreate: (values: OrderDraftFormValues) => void;
+  onSave: (values: OrderDraftFormValues) => void;
   onNext: () => void;
 }) {
-  const canCreate = zhixu.reviewStatus === "approved";
+  const canCreate = canCreateProductOrder(zhixu);
+
   return (
     <section className="page-shell" data-testid="create-order-page">
       <BackLine onClick={onBack}>返回秩序详情</BackLine>
-      <h1>创建跨境订单</h1>
-      <StepBar current={2} steps={["确认秩序", "订单信息", "参与方", "付款条件", "预览并发起"]} />
-      {!canCreate ? <StatePanel icon={<AlertTriangle />} title="该秩序当前不可创建新订单" desc="请换用已审核且未撤销的秩序。" tone="error" /> : null}
+      <h1>创建订单</h1>
+      <StepBar current={2} steps={["确认秩序", "订单信息", "参与方", "订单条件", "预览并发起"]} />
+      {!canCreate ? <StatePanel icon={<AlertTriangle />} title="该秩序当前不可创建新订单" desc="请使用已审核且已发布的秩序。" tone="error" /> : null}
       <div className="content-layout">
         <Panel>
           <h2>订单信息</h2>
           <div className="form-grid">
-            <Field label="订单名称" required value="A 公司采购 10 台车辆" />
-            <ChoiceGroup label="标的物类型" options={["车辆", "工业设备", "其他高价值货物"]} active="车辆" />
-            <Field label="VIN" required value="JTDBE40K903012345" />
-            <Field label="品牌型号" required value="Toyota Land Cruiser 300 VX-R" />
-            <Field label="数量" required value="10" suffix="台" />
-            <Field label="总金额" required value="10,000" />
-            <SelectField label="币种" required value="USDC" />
-            <SelectField label="出口国家/地区" required value="日本" />
-            <SelectField label="目的国家/地区" required value="阿联酋" />
-            <Field label="预计完成日期" required value="2026-07-31" icon={<CalendarDays />} />
-            <Textarea label="备注" value="请按合同约定的分阶段交付计划执行。" />
+            <Field label="订单名称" required value={values.title} onChange={(title) => onValuesChange({ title })} placeholder="请输入订单名称" />
+            <Field label="业务类型" required value={values.businessType} onChange={(businessType) => onValuesChange({ businessType })} placeholder="按秩序配置填写" />
+            <Textarea label="对象说明（可选）" value={values.goodsText} onChange={(goodsText) => onValuesChange({ goodsText })} placeholder="填写秩序要求的对象或交付说明，每行一项" />
+            <Field label="总金额" required value={values.totalAmount} onChange={(totalAmount) => onValuesChange({ totalAmount })} placeholder="请输入总金额" />
+            <SelectField label="币种" required value={values.currency} onChange={(currency) => onValuesChange({ currency })} options={[...new Set([values.currency.trim(), ...zhixu.supportedPaymentMethods].filter((item) => item.length > 0))]} />
+            <Textarea label="备注" value={values.notes} onChange={(notes) => onValuesChange({ notes })} placeholder="请输入备注（如有特殊说明可在此填写）" />
           </div>
         </Panel>
         <aside className="side-card">
           <h2>订单摘要</h2>
           <SideMetric label="使用秩序" value={zhixu.title} />
-          <SideMetric label="审核状态" value={<StatusBadge icon={<ShieldCheck />} tone={zhixu.reviewStatus === "approved" ? "success" : "warning"}>{zhixu.reviewLabel}</StatusBadge>} />
+          <SideMetric label="审核状态" value={<StatusBadge icon={<ShieldCheck />} tone={canCreate ? "success" : "warning"}>{zhixu.reviewLabel}</StatusBadge>} />
           <SideMetric label="阶段数" value={String(zhixu.stageCount)} />
-          <SideMetric label="当前还需要" value="邀请买家、卖家、报关行、物流、检验方" />
+          <SideMetric label="当前还需要" value="邀请所有关键参与方确认职责" />
           <SideMetric label="草稿状态" value={draft ? draftStatusLabel(draft.status) : "尚未创建"} />
           <NoticeCard icon={<ShieldCheck />} tone="success" title={`适用业务：${zhixu.applicableBusiness.join("、")}`} />
           <ActionNotice state={createAction} />
@@ -703,8 +801,8 @@ function CreateOrderPage({
       </div>
       <BottomActions>
         <button className="secondary-button" onClick={onBack}>上一步</button>
-        <button className="secondary-button" data-testid="save-draft-button" onClick={onSave} disabled={!canCreate || saveAction.phase === "pending"}>{saveAction.phase === "pending" ? <Loader2 className="spin" /> : null}保存草稿</button>
-        <button className="secondary-button" data-testid="create-draft-button" onClick={onCreate} disabled={!canCreate || createAction.phase === "pending"}>{createAction.phase === "pending" ? <Loader2 className="spin" /> : null}{draft ? "重新创建草稿" : "创建订单"}</button>
+        <button className="secondary-button" data-testid="save-draft-button" onClick={() => onSave(values)} disabled={!canCreate || !draft || saveAction.phase === "pending"}>{saveAction.phase === "pending" ? <Loader2 className="spin" /> : null}保存草稿</button>
+        <button className="secondary-button" data-testid="create-draft-button" onClick={() => onCreate(values)} disabled={!canCreate || createAction.phase === "pending"}>{createAction.phase === "pending" ? <Loader2 className="spin" /> : null}{draft ? "重新创建草稿" : "创建订单"}</button>
         <button className="primary-button" data-testid="next-participants-button" onClick={onNext} disabled={!canCreate || createAction.phase === "pending"}>下一步</button>
       </BottomActions>
     </section>
@@ -715,6 +813,8 @@ function ParticipantsPage({
   order,
   draft,
   draftParticipants,
+  draftParticipantsStatus,
+  draftParticipantsError,
   inviteActions,
   registerAction,
   onBack,
@@ -725,6 +825,8 @@ function ParticipantsPage({
   order?: ProductOrderDTO | undefined;
   draft?: ProductOrderDraftDTO | undefined;
   draftParticipants: readonly DraftParticipantDTO[];
+  draftParticipantsStatus: "unknown" | "loading" | "ready" | "error";
+  draftParticipantsError?: string | undefined;
   inviteActions: Readonly<Record<string, ActionState & { readonly invite?: ProductInviteDTO | undefined }>>;
   registerAction: ActionState;
   onBack: () => void;
@@ -740,9 +842,12 @@ function ParticipantsPage({
       </section>
     );
   }
-  const requiredReady = draftParticipants.filter((item) => item.required).every((item) =>
-    item.status === "accepted"
-  );
+  const requiredParticipants = draftParticipants.filter((item) => item.required);
+  // Empty/unknown participant data is not proof that all required parties
+  // agreed. Require a successful, non-empty response and explicit acceptance.
+  const requiredReady = draftParticipantsStatus === "ready" &&
+    requiredParticipants.length > 0 &&
+    requiredParticipants.every((item) => item.status === "accepted");
   return (
     <section className="page-shell">
       <BackLine onClick={onBack}>返回订单信息</BackLine>
@@ -756,6 +861,25 @@ function ParticipantsPage({
       <div className="content-layout">
         <Panel>
           <h2>参与方及职责</h2>
+          {draftParticipantsStatus === "loading" ? <div className="inline-empty">正在加载参与方清单…</div> : null}
+          {draftParticipantsStatus === "error" ? (
+            <div className="warning-box" role="alert" data-testid="participants-load-error">
+              <AlertTriangle />
+              <div>
+                <strong>参与方清单加载失败</strong>
+                <p>{draftParticipantsError ?? "无法确认参与方状态，请稍后重试。"}</p>
+              </div>
+            </div>
+          ) : null}
+          {draftParticipantsStatus === "ready" && draftParticipants.length === 0 ? (
+            <div className="warning-box" role="alert" data-testid="participants-empty-state">
+              <AlertTriangle />
+              <div>
+                <strong>参与方清单为空</strong>
+                <p>尚未收到任何参与方记录，无法确认启动条件。</p>
+              </div>
+            </div>
+          ) : null}
           <div className="participant-table">
             <div className="participant-head">
               <span>角色</span>
@@ -770,10 +894,10 @@ function ParticipantsPage({
               return (
               <div className="participant-row" data-testid="participant-row" data-uvp-participant-required={item.required ? "true" : "false"} data-uvp-participant-status={item.status} key={item.participantId}>
                 <div className="participant-role">
-                  <span className="role-icon">{roleSlotIcon(item.roleSlotId)}</span>
+                  <span className="role-icon"><PackageCheck /></span>
                   <strong>{item.roleLabel}</strong>
                 </div>
-                <p>{item.required ? "关键参与方，需要确认职责" : "可选参与方，可稍后邀请"}</p>
+                <p data-testid={`participant-contact-${item.participantId}`}>{item.required ? "关键参与方，需要确认职责" : "可选参与方，可稍后邀请"}；联系方式：{item.contact.trim() ? item.contact.trim() : "未填写"}</p>
                 <div className="evidence-list"><span><FileText />职责确认</span></div>
                 <StatusText tone={draftParticipantTone(item.status)}>{draftParticipantStatusLabel(item.status)}</StatusText>
                 <div className="row-actions">
@@ -789,7 +913,7 @@ function ParticipantsPage({
           <button className={requiredReady ? "primary-button block" : "disabled-button block"} data-testid="register-order-button" onClick={requiredReady ? onRegister : undefined} disabled={!requiredReady || registerAction.phase === "pending"}>
             {registerAction.phase === "pending" ? <Loader2 className="spin" /> : <LockKeyhole />} 全部关键方确认后启动订单
           </button>
-          <p className="center-note">仅当所有启动条件满足后，启动按钮才会可用。</p>
+          <p className="center-note">仅当参与方清单已成功加载且所有关键参与方满足条件后，启动按钮才会可用。</p>
           <ActionNotice state={registerAction} />
         </Panel>
         <aside className="side-card">
@@ -845,7 +969,7 @@ function OrderOverviewPage({
       {syncing ? <StatePanel icon={<RefreshCw className="spin" />} title="订单状态同步中" desc="提交已发出，订单页正在等待后端投影更新。" tone="info" /> : null}
       <div className="order-kpis">
         <Kpi label="总金额" value={order.totalAmount.display} />
-        <Kpi label="付款条件" value={order.fundingStatus} icon={<ShieldCheck />} tone="success" />
+        <Kpi label="资金状态" value={fundingStatusDisplay(order.fundingStatus)} icon={<AlertTriangle />} />
         <Kpi label="当前阶段" value={order.currentStageName} icon={<Layers3 />} tone="success" />
       </div>
       <div className="content-layout">
@@ -857,8 +981,6 @@ function OrderOverviewPage({
               <h2>{order.currentTaskTitle}</h2>
               <dl className="task-facts">
                 <div><dt>负责人</dt><dd>{currentAssignee(order)}</dd></div>
-                <div><dt>截止时间</dt><dd>2026-05-03 18:00 <strong>剩余 2 天 6 小时</strong></dd></div>
-                <div><dt>需要凭证</dt><dd>报关单 PDF、报关单号、出口港口、完成时间</dd></div>
                 <div><dt>订单影响</dt><dd>{order.currentTaskSummary}</dd></div>
               </dl>
               <div className="button-row">
@@ -877,23 +999,17 @@ function OrderOverviewPage({
         <aside className="right-stack">
           <SidePanel title="参与方状态">
             {order.participants.map((item) => (
-              <ParticipantStatus key={item.participantId} active={item.participantId === "customs"} text={`${item.role} ${participantStatusLabel(item.status)}`} />
+              <ParticipantStatus key={item.participantId} active={item.participantId === firstJoinedParticipantId(order)} text={`${item.role} ${participantStatusLabel(item.status)}`} />
             ))}
           </SidePanel>
-          <SidePanel title="付款条件">
+          <SidePanel title="资金信息">
             <MoneyRow label="订单金额" value={order.totalAmount.display} />
-            <MoneyRow label="已满足条件" value="5,000 USDC（50%）" />
-            <MoneyRow label="待满足条件" value="5,000 USDC（50%）" />
-            <MoneyRow label="保障确认" value={order.fundingStatus} success />
-            <span className="text-button as-label">付款条件来自订单状态</span>
+            <MoneyRow label="资金状态" value={fundingStatusDisplay(order.fundingStatus)} />
+            <span className="text-button as-label">资金状态来自订单 DTO；未接入时不会显示为已保障。</span>
           </SidePanel>
           <SidePanel title="最近事件" action="查看全部">
             {order.recentEvents.map((event) => <EventLine key={event.eventId} text={event.text} time={event.time} />)}
           </SidePanel>
-          <div className="warning-box">
-            <AlertTriangle />
-            <p>距离报关完成截止时间不足 3 天，请及时跟进，避免影响后续付款条件。</p>
-          </div>
         </aside>
       </div>
     </section>
@@ -902,31 +1018,40 @@ function OrderOverviewPage({
 
 function TaskPage({
   task,
-  evidence,
-  evidenceProof,
+  evidencePlan,
+  evidenceBySlot,
+  evidenceProofsBySlot,
   uploadAction,
+  canConfirm,
+  missingEvidenceLabels,
+  staleSlotLabels,
+  verificationFailedLabels,
+  fieldValues,
+  onFieldValuesChange,
   onBack,
   onUpload,
-  onUploadDemo,
   onSubmit,
   onDispute
 }: {
   task: ProductTaskDTO;
-  evidence?: EvidenceObjectDTO | undefined;
-  evidenceProof?: EvidenceProofDTO | undefined;
+  evidencePlan: TaskEvidencePlan;
+  evidenceBySlot: Readonly<Record<string, EvidenceObjectDTO>>;
+  evidenceProofsBySlot: Readonly<Record<string, EvidenceProofDTO>>;
   uploadAction: ActionState;
+  canConfirm: boolean;
+  missingEvidenceLabels: readonly string[];
+  staleSlotLabels: readonly string[];
+  verificationFailedLabels: readonly string[];
+  fieldValues: TaskEvidenceFieldValues;
+  onFieldValuesChange: (patch: TaskEvidenceFieldValues) => void;
   onBack: () => void;
-  onUpload: (file: File) => void;
-  onUploadDemo: () => void;
+  onUpload: (slotKey: string, file: File) => void;
   onSubmit: () => void;
   onDispute: () => void;
 }) {
-  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.currentTarget.files?.[0];
-    if (file) {
-      onUpload(file);
-    }
-  }
+  const fileSlots = evidencePlan.slots.filter((slot) => slot.inputKind === "file");
+  const inputSlots = evidencePlan.slots.filter((slot) => slot.inputKind !== "file");
+  const declaredEvidenceLabels = evidencePlan.slots.map((slot) => slot.label);
 
   return (
     <section className="page-shell" data-testid="task-detail-page">
@@ -941,69 +1066,153 @@ function TaskPage({
       </div>
       <div className="content-layout">
         <Panel>
-          <h2>上传报关凭证</h2>
-          <p>请上传报关单 PDF，并填写以下信息。</p>
-          <label className="upload-zone">
-            <UploadCloud />
-            <strong>将文件拖拽到此处，或点击选择文件</strong>
-            <span>仅支持 PDF 格式，单个文件不超过 50MB</span>
-            <input className="sr-only" type="file" accept=".pdf,.jpg,.jpeg,.png,.json,application/pdf,image/*,application/json" onChange={handleFileChange} />
-          </label>
-          <button className="secondary-button" data-testid="upload-demo-evidence-button" onClick={onUploadDemo} disabled={uploadAction.phase === "pending"}>{uploadAction.phase === "pending" ? <Loader2 className="spin" /> : <UploadCloud />} 上传开发样例凭证</button>
-          <ActionNotice state={uploadAction} />
-          {evidence ? (
-            <div className="uploaded-file">
-              <FileText />
+          <h2>上传阶段凭证</h2>
+          <p>本待办需要的凭证：{declaredEvidenceLabels.length > 0 ? declaredEvidenceLabels.join("、") : "按业务约定提交凭证"}。请按以下槽位上传文件并填写信息。</p>
+          {fileSlots.length > 0 ? fileSlots.map((slot) => (
+            <EvidenceUploadZone key={slot.key} slot={slot} uploaded={evidenceBySlot[slot.key]} proof={evidenceProofsBySlot[slot.key]} onFileSelected={(file) => onUpload(slot.key, file)} />
+          )) : <InlineEmpty text="本待办无需上传文件凭证" />}
+          {staleSlotLabels.length > 0 ? (
+            <div className="warning-box" data-testid="task-evidence-stale-warning">
+              <AlertTriangle />
               <div>
-                <strong>{evidence.fileName}</strong>
-                <span>{formatBytes(evidence.size)} · 指纹 {shortHash(evidence.payloadHash)}</span>
+                <strong>字段已变更，请重新上传以更新指纹</strong>
+                <p>以下凭证上传后相关字段又发生了变化：{staleSlotLabels.join("、")}。重新上传对应凭证之前无法提交。</p>
               </div>
-              <StatusText tone="ok">{evidenceProof?.verificationStatus === "matched" ? "已绑定" : "已上传 · 已生成凭证指纹"}</StatusText>
             </div>
-          ) : (
-            <InlineEmpty text="尚未上传凭证" />
-          )}
+          ) : null}
+          {verificationFailedLabels.length > 0 ? (
+            <div className="warning-box" data-testid="task-evidence-verification-warning" role="alert">
+              <AlertTriangle />
+              <div>
+                <strong>凭证核验异常，不能作为有效凭证提交</strong>
+                <p>以下凭证的核验结果为不一致或文件缺失：{verificationFailedLabels.join("、")}。请重新上传对应凭证后再提交。</p>
+              </div>
+            </div>
+          ) : null}
+          <ActionNotice state={uploadAction} />
           <div className="two-col">
-            <Field label="填写报关单号" required placeholder="请输入报关单号" />
-            <SelectField label="选择出口港口" required value="请选择出口港口" />
-            <Field label="填写完成时间" required value="选择完成时间" icon={<CalendarDays />} />
+            {inputSlots.map((slot) => slot.inputKind === "date" ? (
+              <Field key={slot.key} label={slot.label} required={slot.required} type="date" value={fieldValues[slot.key] ?? ""} onChange={(value) => onFieldValuesChange({ [slot.key]: value })} icon={<CalendarDays />} testId={`task-field-${slot.key}`} />
+            ) : (
+              <Field key={slot.key} label={slot.label} required={slot.required} value={fieldValues[slot.key] ?? ""} onChange={(value) => onFieldValuesChange({ [slot.key]: value })} placeholder={`请输入${slot.label}`} testId={`task-field-${slot.key}`} />
+            ))}
           </div>
-          <Textarea label="备注（选填）" placeholder="请输入备注信息（如有特殊说明可在此填写）" />
-        </Panel>
+          <Textarea label="备注（选填）" value={fieldValues[FRAMEWORK_NOTES_FIELD_KEY] ?? ""} onChange={(notes) => onFieldValuesChange({ [FRAMEWORK_NOTES_FIELD_KEY]: notes })} placeholder="请输入备注信息（如有特殊说明可在此填写）" />        </Panel>
         <aside className="side-card">
           <h2>责任确认</h2>
           {task.responsibilityStatements.map((statement) => (
             <CheckStatement key={statement.title} title={statement.title} desc={statement.desc} />
           ))}
-          <button className={evidence ? "primary-button block" : "disabled-button block"} data-testid="task-confirm-button" onClick={evidence ? onSubmit : undefined} disabled={!evidence}>确认报关完成</button>
+          <button className={canConfirm ? "primary-button block" : "disabled-button block"} data-testid="task-confirm-button" onClick={canConfirm ? onSubmit : undefined} disabled={!canConfirm}>确认阶段完成</button>
+          {!canConfirm && missingEvidenceLabels.length > 0 ? (
+            <p className="side-note" data-testid="task-confirm-blocked-note"><HelpCircle /> 还需完成：{missingEvidenceLabels.join("、")}</p>
+          ) : null}
+          {!canConfirm && verificationFailedLabels.length > 0 ? (
+            <p className="side-note" data-testid="task-confirm-verification-blocked-note"><HelpCircle /> 凭证核验异常：{verificationFailedLabels.join("、")}</p>
+          ) : null}
           <div className="split-actions">
             <button className="secondary-button" onClick={onDispute}>无法完成</button>
             <button className="secondary-button" onClick={onDispute}>提出争议</button>
           </div>
-          <p className="side-note"><HelpCircle /> 如需帮助，请联系平台运营或查看帮助中心。</p>
+          <p className="side-note"><HelpCircle /> 如需帮助，请查看帮助中心。</p>
         </aside>
       </div>
     </section>
   );
 }
 
+function EvidenceUploadZone({
+  slot,
+  uploaded,
+  proof,
+  onFileSelected
+}: {
+  slot: TaskEvidenceSlot;
+  uploaded?: EvidenceObjectDTO | undefined;
+  proof?: EvidenceProofDTO | undefined;
+  onFileSelected: (file: File) => void;
+}) {
+  const acceptValue = acceptAttribute(slot.accept);
+  // 核验异常必须以异常态呈现：隔离凭证不能与正常上传一样显示成功色调。
+  const verification = proof?.verificationStatus;
+  const verificationAlert = verification === "mismatch" || verification === "missing_file";
+  return (
+    <div data-testid={`task-evidence-slot-${slot.key}`}>
+      {slot.description ? <p className="page-subtitle">{slot.description}</p> : null}
+      <label
+        className="upload-zone"
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={(event) => {
+          // 拖拽与点击选择走同一条上传校验路径。
+          event.preventDefault();
+          const file = event.dataTransfer.files?.[0];
+          if (file) {
+            onFileSelected(file);
+          }
+        }}
+      >
+        <UploadCloud />
+        <strong>{slot.label}</strong>
+        <span>将文件拖拽到此处，或点击选择文件；{acceptHint(slot.accept)}，单个文件不超过 10MB</span>
+        <input
+          className="sr-only"
+          type="file"
+          data-testid={`task-file-input-${slot.key}`}
+          {...(acceptValue ? { accept: acceptValue } : {})}
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            if (file) {
+              onFileSelected(file);
+            }
+            event.currentTarget.value = "";
+          }}
+        />
+      </label>
+      {uploaded ? (
+        <div className="uploaded-file">
+          <FileText />
+          <div>
+            <strong>{uploaded.fileName}</strong>
+            <span>{formatBytes(uploaded.size)} · 指纹 {shortHash(uploaded.payloadHash)}</span>
+          </div>
+          {verification === "matched" ? (
+            <StatusText tone="ok">已绑定</StatusText>
+          ) : verificationAlert ? (
+            <StatusText tone="warn" testId="task-evidence-verification-alert">
+              {verification === "mismatch" ? "核验不一致：内容与指纹不符，需重新上传" : "核验失败：凭证文件缺失，需重新上传"}
+            </StatusText>
+          ) : (
+            <StatusText tone="ok">已上传 · 已生成凭证指纹</StatusText>
+          )}
+        </div>
+      ) : (
+        <InlineEmpty text={`尚未上传「${slot.label}」`} />
+      )}
+    </div>
+  );
+}
+
 function SubmitPage({
   task,
-  evidence,
+  evidencePlan,
+  evidenceBySlot,
   submitMachine,
-  allowRejectSimulation,
+  canSubmit,
+  staleSlotLabels,
+  verificationFailedLabels,
   onBack,
   onSubmit,
-  onReject,
   onOrder
 }: {
   task: ProductTaskDTO;
-  evidence?: EvidenceObjectDTO | undefined;
+  evidencePlan: TaskEvidencePlan;
+  evidenceBySlot: Readonly<Record<string, EvidenceObjectDTO>>;
   submitMachine: SubmitMachineState;
-  allowRejectSimulation: boolean;
+  canSubmit: boolean;
+  staleSlotLabels: readonly string[];
+  verificationFailedLabels: readonly string[];
   onBack: () => void;
   onSubmit: () => void;
-  onReject: () => void;
   onOrder: () => void;
 }) {
   const [proofOpen, setProofOpen] = useState(false);
@@ -1015,21 +1224,40 @@ function SubmitPage({
     submitMachine.status === "wallet_not_connected" ||
     submitMachine.status === "wallet_rejected";
   const proofRows = submitMachine.submission?.proofRows ?? task.proofRows;
+  const declaredEvidenceLabels = evidencePlan.slots.map((slot) => slot.label);
+  // 所见即所签：确认页列出全部已上传证据（签名覆盖的 evidenceIds 与之一一对应），
+  // 每条带槽位名与指纹；纯字段任务没有文件凭证时如实说明。
+  const uploadedEvidence = evidencePlan.slots
+    .map((slot) => ({ slot, evidence: evidenceBySlot[slot.key] }))
+    .filter((entry): entry is { slot: TaskEvidenceSlot; evidence: EvidenceObjectDTO } => Boolean(entry.evidence));
   return (
     <section className="page-shell" data-testid="submit-page">
       <BackLine onClick={onBack}>返回待办详情</BackLine>
-      <h1>确认报关完成 / 提交结果</h1>
+      <h1>确认阶段完成 / 提交结果</h1>
       <p className="page-subtitle">请确认凭证指纹和责任声明，钱包授权后会进入提交中状态。</p>
       <div className="submit-layout">
         <Panel>
           <StatusBadge tone="info">确认提交</StatusBadge>
-          <h2>确认报关完成</h2>
+          <h2>确认阶段完成</h2>
           <p>请确认你将代表 {task.assigneeRole} 提交本阶段完成确认。</p>
           <ul className="confirm-list">
             <li><strong>订单：</strong>{task.orderTitle}</li>
             <li><strong>阶段：</strong>{task.stageName}</li>
-            <li><strong>提交凭证：</strong>{task.requiredEvidence.join("、")}</li>
-            <li><strong>凭证指纹：</strong>{evidence ? shortHash(evidence.payloadHash) : "待上传"}</li>
+            <li><strong>提交凭证：</strong>{declaredEvidenceLabels.length > 0 ? declaredEvidenceLabels.join("、") : "按业务约定提交凭证"}</li>
+            <li>
+              <strong>凭证指纹：</strong>
+              {uploadedEvidence.length > 0 ? (
+                <span className="confirm-fingerprint-list" data-testid="submit-fingerprint-list">
+                  {uploadedEvidence.map(({ slot, evidence }) => (
+                    <span className="confirm-fingerprint-item" key={evidence.evidenceId}>
+                      {slot.label}：<code>{shortHash(evidence.payloadHash)}</code>
+                    </span>
+                  ))}
+                </span>
+              ) : (
+                <span>无文件凭证（本次提交为纯字段确认）</span>
+              )}
+            </li>
             <li><strong>影响：</strong>{task.fundingImpact}</li>
             <li><strong>责任提示：</strong><em>提交后不可删除，只能追加更正或进入争议</em></li>
           </ul>
@@ -1044,20 +1272,37 @@ function SubmitPage({
               <CheckCircle2 />
             </div>
           </div>
-          <button className="primary-button block" data-testid="submit-confirm-button" onClick={onSubmit} disabled={!evidence || pending}>
+          {staleSlotLabels.length > 0 ? (
+            <div className="warning-box" data-testid="submit-stale-warning">
+              <AlertTriangle />
+              <div>
+                <strong>字段已变更，请重新上传以更新指纹</strong>
+                <p>以下凭证上传后相关字段又发生了变化：{staleSlotLabels.join("、")}。返回待办页重新上传对应凭证后再提交。</p>
+              </div>
+            </div>
+          ) : null}
+          {verificationFailedLabels.length > 0 ? (
+            <div className="warning-box" data-testid="submit-verification-warning" role="alert">
+              <AlertTriangle />
+              <div>
+                <strong>凭证核验异常，禁止提交</strong>
+                <p>以下凭证核验为不一致或文件缺失：{verificationFailedLabels.join("、")}。返回待办页重新上传对应凭证后再提交。</p>
+              </div>
+            </div>
+          ) : null}
+          <button className="primary-button block" data-testid="submit-confirm-button" onClick={onSubmit} disabled={!canSubmit || pending}>
             {pending ? <Loader2 className="spin" /> : <WalletCards />} 确认并提交
           </button>
-          {allowRejectSimulation ? <button className="secondary-button block" onClick={onReject} disabled={!evidence || pending}>模拟钱包拒绝</button> : null}
         </Panel>
         <Panel tone={confirmed ? "success" : "muted"}>
           <StatusBadge tone={confirmed ? "success" : failed ? "warning" : "info"}>{submitStatusLabel(submitMachine.status)}</StatusBadge>
           <div className="success-hero">
             <span className={failed ? "danger" : ""}>{confirmed ? <Check /> : pending ? <Loader2 className="spin" /> : failed ? <AlertTriangle /> : <Clock3 />}</span>
-            <h2>{confirmed ? "已确认报关完成" : submitStatusTitle(submitMachine.status)}</h2>
+            <h2>{confirmed ? "已确认阶段完成" : submitStatusTitle(submitMachine.status)}</h2>
             <p>{submitMachine.message}</p>
           </div>
           <ul className="success-list">
-            <li><CheckCircle2 /> 凭证指纹{evidence ? "已生成" : "待生成"}</li>
+            <li><CheckCircle2 /> 凭证指纹{uploadedEvidence.length > 0 ? `已生成（${uploadedEvidence.length} 份）` : "待生成"}</li>
             <li>{submitMachine.prepared ? <CheckCircle2 /> : <Circle />} 签名前摘要{submitMachine.prepared ? "已生成" : "待生成"}</li>
             <li>{submitMachine.submission ? <CheckCircle2 /> : <Circle />} 提交记录{submitMachine.submission ? submitMachine.submission.statusLabel : "待创建"}</li>
             <li>{confirmed ? <CheckCircle2 /> : <Clock3 />} 下一步：等待订单页同步</li>
@@ -1071,7 +1316,9 @@ function SubmitPage({
               <div className="proof-box-title"><ShieldCheck /> 高级链上证明</div>
               {proofRows.map((row) => <MoneyRow key={row.label} label={row.label} value={row.value} />)}
               {submitMachine.submission?.txHash ? <MoneyRow label="交易编号" value={submitMachine.submission.txHash} /> : null}
-              {evidence ? <MoneyRow label="凭证指纹" value={evidence.payloadHash} /> : null}
+              {uploadedEvidence.map(({ slot, evidence }) => (
+                <MoneyRow key={evidence.evidenceId} label={`凭证指纹 · ${slot.label}`} value={evidence.payloadHash} />
+              ))}
             </div>
           ) : null}
         </Panel>
@@ -1095,7 +1342,7 @@ function DisputePage({
     <section className="page-shell">
       <BackLine onClick={onBack}>返回订单</BackLine>
       <h1>对{task.stageName}凭证提出争议</h1>
-      <p className="page-subtitle">当您认为“{task.stageName}”凭证存在问题时，可发起争议。发起后将进入争议处理，由平台裁定并同步双方。</p>
+      <p className="page-subtitle">当您认为“{task.stageName}”凭证存在问题时，可以先在这里记录争议说明。当前版本的争议提交通道尚未开通，提交不会产生任何记录，也不会通知对方或进入裁定流程。</p>
       <div className="dispute-grid">
         <Panel>
           <h2>争议信息</h2>
@@ -1103,64 +1350,57 @@ function DisputePage({
             <Field label="争议对象" value={`${task.stageName}阶段`} />
             <SelectField label="争议原因" required value="请选择争议原因" />
             <Textarea label="说明" required placeholder="请说明争议原因，例如凭证不清晰、信息不一致、未按时完成等" />
-            <label className="upload-zone small">
-              <UploadCloud />
-              <strong>点击上传或拖拽文件到此处</strong>
-              <span>支持 PDF、JPG、PNG 格式，单个文件不超过 20MB</span>
-            </label>
+            <p className="side-note">
+              <HelpCircle /> 争议材料上传将随争议通道一起开通；当前表单不接收文件，也不显示任何上传承诺。
+            </p>
           </div>
           <button className="primary-button align-right" onClick={onSave} disabled={action.phase === "pending"}>{action.phase === "pending" ? <Loader2 className="spin" /> : null}提交争议</button>
           <ActionNotice state={action} />
         </Panel>
         <Panel>
           <h2>相关事实</h2>
-          <FactRow icon={<Clock3 />} label="报关行提交时间" value="2026-05-16 14:32:08" />
-          <FactRow icon={<FileText />} label="已提交凭证" value="报关单.pdf、出口发票.pdf、营业执照副本.pdf" />
-          <FactRow icon={<Fingerprint />} label="凭证指纹" value="a4b7c3d9e1f2a0b8c6d4e7f1a3b9c2d5" />
-          <FactRow icon={<User />} label="负责人" value="上海捷通报关有限公司｜李建国" />
-          <FactRow icon={<HandCoins />} label="付款影响" value="争议期间第 2 阶段付款条件暂停" danger />
-          <div className="warning-box">
-            <AlertTriangle />
-            <p>在争议处理完成前，该阶段付款条件将处于暂停状态。</p>
-          </div>
+          <InlineEmpty text="暂无可核对的事实数据：争议提交未接入后端，未产生任何记录。" />
         </Panel>
       </div>
       <Panel>
-        <h2>争议处理时间线</h2>
-        <div className="dispute-timeline">
-          {["提出争议", "等待对方回应", "补充凭证", "裁定中", "已处理"].map((label, index) => (
-            <div className={`dispute-step ${index === 0 ? "is-current" : ""}`} key={label}>
-              <span>{index + 1}</span>
-              <strong>{label}</strong>
-              <p>{index === 0 ? "您已提交争议，等待对方回应" : index === 1 ? "平台已通知报关行，请在 2 个工作日内回应" : index === 2 ? "如有需要，双方可补充凭证" : index === 3 ? "平台裁定并通知双方，预计 1-3 个工作日" : "争议已完成并归档"}</p>
-            </div>
-          ))}
+        <h2>争议处理状态</h2>
+        <div className="state-panel warning" data-testid="dispute-channel-status">
+          <span><AlertTriangle /></span>
+          <div>
+            <h2>争议提交通道尚未开通</h2>
+            <p>当前版本未接入后端争议处理：提交争议不会创建任何记录，也不存在对方回应或裁定的时间承诺。如需协商，请先通过订单房间与对方沟通，待通道开通后再正式提交。</p>
+          </div>
         </div>
       </Panel>
     </section>
   );
 }
 
-function RuntimeBanner({ source, syncing }: { source: ProductApiSource; syncing: boolean }) {
-  if (source.kind === "real" && !syncing) {
-    return null;
-  }
-  return (
-    <div className={`runtime-banner ${source.kind === "mock" ? "is-mock" : "is-syncing"}`}>
-      {source.kind === "mock" ? <AlertTriangle /> : <RefreshCw className="spin" />}
-      <div>
-        <strong>{source.kind === "mock" ? "开发样例模式" : "订单状态同步中"}</strong>
-        <p>{source.kind === "mock" ? source.reason : "后端正在同步最新确认结果，页面会展示当前可用状态。"}</p>
+function RuntimeBanner({ syncing, degradedCount = 0 }: { syncing: boolean; degradedCount?: number | undefined }) {
+  if (syncing) {
+    return (
+      <div className="runtime-banner is-syncing">
+        <RefreshCw className="spin" />
+        <div>
+          <strong>订单状态同步中</strong>
+          <p>后端正在同步最新确认结果，页面会展示当前可用状态。</p>
+        </div>
       </div>
-    </div>
-  );
-}
-
-function apiBaseUrlFromSource(source: ProductApiSource | undefined): string | null {
-  if (!source) {
-    return null;
+    );
   }
-  return source.kind === "real" ? source.baseUrl : source.baseUrl ?? null;
+  if (degradedCount > 0) {
+    // 部分接口失败但整体可用：如实提示降级，不装作数据完整。
+    return (
+      <div className="runtime-banner is-mock" data-testid="workbench-degraded-banner">
+        <AlertTriangle />
+        <div>
+          <strong>部分接口返回异常</strong>
+          <p>{degradedCount} 个接口加载失败，相关秩序或列表可能暂不可用；其余功能不受影响，可稍后重新加载。</p>
+        </div>
+      </div>
+    );
+  }
+  return null;
 }
 
 function EmptyCatalogPage() {
@@ -1214,7 +1454,6 @@ function ActionNotice({ state, compact }: { state: ActionState; compact?: boolea
     <div className={`action-notice ${state.phase} ${compact ? "compact" : ""}`}>
       {icon}
       <span>{state.message}</span>
-      {state.source?.kind === "mock" ? <small>开发样例</small> : null}
     </div>
   );
 }
@@ -1231,7 +1470,7 @@ function RoleDockMap({ roleSlots }: { roleSlots: readonly RoleSlotDTO[] }) {
         {roleSlots.map((slot) => (
           <article className={`role-slot-card ${slot.tone}`} key={slot.title}>
             <div className="role-slot-head">
-              <span className="role-slot-icon">{roleSlotIcon(slot.slotId)}</span>
+              <span className="role-slot-icon"><PackageCheck /></span>
               <div>
                 <strong>{slot.title}</strong>
                 <p>{slot.label}</p>
@@ -1255,7 +1494,7 @@ function DockableModules({ modules }: { modules: readonly DockableZhixuModuleDTO
       {modules.map((module) => (
         <article className="dock-module-card" key={module.title}>
           <div className="dock-module-title">
-            <span>{dockableModuleIcon(module.moduleId)}</span>
+            <span><Layers3 /></span>
             <div>
               <strong>{module.title}</strong>
               <p>{module.desc}</p>
@@ -1369,23 +1608,35 @@ function StepBar({ steps, current }: { steps: string[]; current: number }) {
 function Field({
   label,
   value,
+  onChange,
   required,
   suffix,
   placeholder,
-  icon
+  type,
+  icon,
+  testId
 }: {
   label: string;
   value?: string | undefined;
+  onChange?: ((value: string) => void) | undefined;
   required?: boolean | undefined;
   suffix?: string | undefined;
   placeholder?: string | undefined;
+  type?: "text" | "date" | undefined;
   icon?: ReactNode | undefined;
+  testId?: string | undefined;
 }) {
+  const controlled = Boolean(onChange);
   return (
     <label className="field">
       <span>{label}{required ? <em>*</em> : null}</span>
       <div className="input-wrap">
-        <input defaultValue={value} placeholder={placeholder} />
+        <input
+          type={type}
+          {...(controlled ? { value: value ?? "", onChange: (event) => onChange?.(event.currentTarget.value) } : { defaultValue: value })}
+          placeholder={placeholder}
+          {...(testId ? { "data-testid": testId } : {})}
+        />
         {suffix ? <b>{suffix}</b> : null}
         {icon ? <i>{icon}</i> : null}
       </div>
@@ -1393,34 +1644,61 @@ function Field({
   );
 }
 
-function SelectField({ label, value, required }: { label: string; value: string; required?: boolean | undefined }) {
+function SelectField({ label, value, onChange, options, required }: {
+  label: string;
+  value: string;
+  onChange?: ((value: string) => void) | undefined;
+  options?: readonly string[] | undefined;
+  required?: boolean | undefined;
+}) {
+  const choices = options && options.length > 0 ? options : [value];
   return (
     <label className="field">
       <span>{label}{required ? <em>*</em> : null}</span>
       <div className="input-wrap">
-        <input defaultValue={value} />
+        <select
+          value={value}
+          disabled={!onChange}
+          onChange={onChange ? (event) => onChange(event.currentTarget.value) : undefined}
+        >
+          {choices.map((option) => <option key={option} value={option}>{option || "请选择"}</option>)}
+        </select>
         <i><ChevronDown /></i>
       </div>
     </label>
   );
 }
 
-function Textarea({ label, value, placeholder, required }: { label: string; value?: string | undefined; placeholder?: string | undefined; required?: boolean | undefined }) {
+function Textarea({ label, value, onChange, placeholder, required }: {
+  label: string;
+  value?: string | undefined;
+  onChange?: ((value: string) => void) | undefined;
+  placeholder?: string | undefined;
+  required?: boolean | undefined;
+}) {
+  const controlled = Boolean(onChange);
   return (
     <label className="field span-2">
       <span>{label}{required ? <em>*</em> : null}</span>
-      <textarea defaultValue={value} placeholder={placeholder} />
+      <textarea
+        {...(controlled ? { value: value ?? "", onChange: (event) => onChange?.(event.currentTarget.value) } : { defaultValue: value })}
+        placeholder={placeholder}
+      />
     </label>
   );
 }
 
-function ChoiceGroup({ label, options, active }: { label: string; options: string[]; active: string }) {
+function ChoiceGroup({ label, options, active, onSelect }: { label: string; options: readonly string[]; active: string; onSelect?: ((value: string) => void) | undefined }) {
   return (
     <div className="field span-2">
       <span>{label}<em>*</em></span>
       <div className="choice-row">
         {options.map((option) => (
-          <button className={`choice-button ${option === active ? "is-active" : ""}`} key={option}>
+          <button
+            className={`choice-button ${option === active ? "is-active" : ""}`}
+            key={option}
+            onClick={onSelect ? () => onSelect(option) : undefined}
+          >
             <Circle /> {option}
           </button>
         ))}
@@ -1506,6 +1784,10 @@ function Kpi({ label, value, icon, tone }: { label: string; value: string; icon?
   );
 }
 
+function fundingStatusDisplay(value: string): string {
+  return value.trim() || "未接入";
+}
+
 function SummaryItem({ icon, label, title, tone }: { icon: ReactNode; label?: string | undefined; title: string; tone?: "success" | undefined }) {
   return (
     <div className={`summary-item ${tone ?? ""}`}>
@@ -1531,8 +1813,8 @@ function Condition({ status, title, desc }: { status: "done" | "warn"; title: st
   );
 }
 
-function StatusText({ children, tone }: { children: ReactNode; tone: ProductTone }) {
-  return <span className={`status-text ${tone}`}>{children}</span>;
+function StatusText({ children, tone, testId }: { children: ReactNode; tone: ProductTone; testId?: string | undefined }) {
+  return <span className={`status-text ${tone}`} {...(testId ? { "data-testid": testId } : {})}>{children}</span>;
 }
 
 function ParticipantStatus({ text, active }: { text: string; active?: boolean }) {
@@ -1679,43 +1961,9 @@ function submitStatusTitle(status: SubmitMachineStatus): string {
     case "tx_pending":
       return "提交处理中";
     case "confirmed":
-      return "已确认报关完成";
+      return "已确认阶段完成";
     case "failed":
       return "提交失败";
-  }
-}
-
-function roleSlotIcon(slotId: string): ReactNode {
-  switch (slotId) {
-    case "funds":
-      return <HandCoins />;
-    case "supply":
-      return <Building2 />;
-    case "delivery":
-      return <Truck />;
-    case "validation":
-      return <ShieldCheck />;
-    case "dispute":
-      return <ClipboardCheck />;
-    case "maintainer":
-      return <UserCheck />;
-    default:
-      return <PackageCheck />;
-  }
-}
-
-function dockableModuleIcon(moduleId: string): ReactNode {
-  switch (moduleId) {
-    case "funds-protection":
-      return <WalletCards />;
-    case "logistics-delivery":
-      return <Truck />;
-    case "inspection-acceptance":
-      return <ShieldCheck />;
-    case "dispute-resolution":
-      return <ClipboardCheck />;
-    default:
-      return <Layers3 />;
   }
 }
 
@@ -1757,7 +2005,12 @@ function participantStatusLabel(status: ParticipantStatus): string {
 }
 
 function currentAssignee(order: ProductOrderDTO): string {
-  return order.participants.find((participant) => participant.participantId === "customs")?.role ?? "待确认执行方";
+  const joined = order.participants.find((participant) => participant.status === "joined");
+  return joined?.role ?? order.participants[0]?.role ?? "待确认执行方";
+}
+
+function firstJoinedParticipantId(order: ProductOrderDTO): string | undefined {
+  return order.participants.find((participant) => participant.status === "joined")?.participantId;
 }
 
 function diagEndpointKey(endpoint: string): string {

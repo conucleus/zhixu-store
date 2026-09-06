@@ -16,6 +16,6 @@ export async function assertOrdinaryPageCopy(page: Page): Promise<void> {
   }
 }
 
-export async function expectWorkbenchSource(page: Page, source: "mock" | "real"): Promise<void> {
+export async function expectWorkbenchSource(page: Page, source: "real"): Promise<void> {
   await expect(page.getByTestId("product-workbench")).toHaveAttribute("data-uvp-source", source);
 }

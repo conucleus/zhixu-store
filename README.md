@@ -5,6 +5,11 @@ Store and workbench product boundary.
 This domain is for the nucleus/operator side of UVP: designing, organizing,
 maintaining, and running Zhixu orders through chain-backed Product DTOs.
 
+Scope, staged goals, and anti-drift boundaries for this repository are defined
+in [STORE-CHARTER.md](./STORE-CHARTER.md). Agent orientation and debugging
+boundaries are in [AGENTS.md](./AGENTS.md). New features must be classified
+against the charter before implementation.
+
 - `app/`: current Store and order workbench frontend.
 
 ## Development Topology
@@ -20,6 +25,6 @@ local workspace.
 The Store consumes Product API projections. It must not treat local metadata,
 frontend fallback data, or cached API responses as chain authority.
 
-Before the five public repositories are created, Store follows PRD109 as the
-single convergence contract for Product Schema v1 authoring, selector bindings,
-resource requirements, docking drafts, versioning, and review state.
+Store keeps Product Schema v1 authoring, selector bindings, resource
+requirements, docking drafts, versioning, and review state aligned with the
+frozen `@uvp-eth/product-dto` convergence surfaces.
