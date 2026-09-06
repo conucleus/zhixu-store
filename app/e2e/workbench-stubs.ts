@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { PRODUCT_SUBMIT_DOMAIN_VERSION } from "@uvp-eth/protocol-bindings";
 import { customsDemoTaskConfig } from "../src/product/demo/customs-demo-config";
 
 /**
@@ -214,7 +215,7 @@ export const stubPreparedSubmit = {
   typedData: {
     domain: {
       name: "UVPStateMachine",
-      version: "0.9",
+      version: PRODUCT_SUBMIT_DOMAIN_VERSION,
       chainId: 31337,
       verifyingContract: "0x0000000000000000000000000000000000000001"
     },
@@ -317,7 +318,7 @@ export async function installWorkbenchRoutes(page: Page, options: WorkbenchStubO
           typedData: {
             domain: {
               name: "UVPStateMachine",
-              version: "0.9",
+              version: PRODUCT_SUBMIT_DOMAIN_VERSION,
               chainId: 31337,
               verifyingContract: "0x0000000000000000000000000000000000000001"
             },

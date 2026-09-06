@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { PRODUCT_SUBMIT_DOMAIN_VERSION } from "@uvp-eth/protocol-bindings";
 import type { ProductApiClient, ProductOrderDraftDTO } from "../api";
 import { requestWalletAccount, signTypedData, WalletNotConnectedError, WalletRejectedError } from "../wallet";
 import { idleAction, type ActionState } from "./workbenchTypes";
@@ -29,7 +30,8 @@ export function useOrderRegistrationFlow(input: {
       const signature = await signTypedData(account, prepared.data.typedData, {
         primaryType: "UVPStateMachineTriggerOrderFromOutside",
         domainName: "UVPStateMachine",
-        domainVersion: "0.9",
+        // 协议冻结面：domain.version 以 protocol-bindings 导出的常量为唯一来源。
+        domainVersion: PRODUCT_SUBMIT_DOMAIN_VERSION,
         submitter: account.address,
         preparedSubmitters: [prepared.data.submitter]
       });

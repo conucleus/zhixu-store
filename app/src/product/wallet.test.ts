@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { PRODUCT_SUBMIT_DOMAIN_VERSION } from "@uvp-eth/protocol-bindings";
 import { signTypedData, TypedDataMismatchError, validateTypedDataForSigning } from "./wallet";
 
 const WALLET = "0xAbC0000000000000000000000000000000000001";
@@ -7,7 +8,7 @@ const WALLET = "0xAbC0000000000000000000000000000000000001";
 const validSubmitTypedData = {
   domain: {
     name: "UVPStateMachine",
-    version: "0.9",
+    version: PRODUCT_SUBMIT_DOMAIN_VERSION,
     chainId: 31337,
     verifyingContract: "0x0000000000000000000000000000000000000001"
   },
@@ -21,7 +22,7 @@ const validSubmitTypedData = {
 const submitExpectation = {
   primaryType: "UVPStateMachineSignal",
   domainName: "UVPStateMachine",
-  domainVersion: "0.9",
+  domainVersion: PRODUCT_SUBMIT_DOMAIN_VERSION,
   submitter: WALLET
 } as const;
 
@@ -166,7 +167,7 @@ describe("pre-signature typed data validation", () => {
     validateTypedDataForSigning(triggerTypedData, {
       primaryType: "UVPStateMachineTriggerOrderFromOutside",
       domainName: "UVPStateMachine",
-      domainVersion: "0.9",
+      domainVersion: PRODUCT_SUBMIT_DOMAIN_VERSION,
       submitter: WALLET,
       preparedSubmitters: [WALLET]
     }, WALLET);

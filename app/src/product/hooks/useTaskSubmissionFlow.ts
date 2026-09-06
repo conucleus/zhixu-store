@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
+import { PRODUCT_SUBMIT_DOMAIN_VERSION } from "@uvp-eth/protocol-bindings";
 import type { ProductTaskDTO } from "@uvp-eth/product-dto";
 import type {
   EvidenceObjectDTO,
@@ -236,7 +237,8 @@ export function useTaskSubmissionFlow(input: {
       const signature = await signTypedData(account, preparedResult.data.typedData, {
         primaryType: "UVPStateMachineSignal",
         domainName: "UVPStateMachine",
-        domainVersion: "0.9",
+        // 协议冻结面：domain.version 以 protocol-bindings 导出的常量为唯一来源。
+        domainVersion: PRODUCT_SUBMIT_DOMAIN_VERSION,
         submitter: account.address,
         preparedSubmitters: [preparedResult.data.summary.walletAddress]
       });
