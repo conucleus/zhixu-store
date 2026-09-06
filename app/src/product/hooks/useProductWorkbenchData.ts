@@ -19,10 +19,11 @@ export function useProductWorkbenchData(api: ProductApiClient): {
   readonly reload: () => Promise<void>;
   /**
    * 定向刷新：mutation 成功后原地重新拉取投影。
-   * 成功时原地更新数据；失败时保留最后一次成功加载的数据（不把用户打回加载/诊断态），
-   * 因此只会在成功回调里触发一次，不会形成循环。
+   * 成功时原地更新数据并返回本次加载的投影（调用方可用它判断链上投影是否
+   * 已落地）；失败时保留最后一次成功加载的数据（不把用户打回加载/诊断态）
+   * 并返回 undefined。只在成功回调里触发一次，不会形成循环。
    */
-  readonly refresh: () => Promise<void>;
+  readonly refresh: () => Promise<ProductWorkbenchData | undefined>;
 } {
   const [loadState, setLoadState] = useState<ProductWorkbenchLoadState>({ status: "loading" });
 
@@ -50,15 +51,17 @@ export function useProductWorkbenchData(api: ProductApiClient): {
     }
   }, [api]);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<ProductWorkbenchData | undefined> => {
     try {
       const loaded = await api.loadWorkbenchData();
       setLoadState({
         status: loaded.zhixus.length === 0 ? "empty" : "ready",
         data: loaded
       });
+      return loaded;
     } catch {
       // 刷新失败保留当前投影：页面继续展示最后一次成功加载的数据。
+      return undefined;
     }
   }, [api]);
 

@@ -27,7 +27,7 @@ import {
   UserCheck,
   WalletCards
 } from "lucide-react";
-import { useLayoutEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   ChainProofRowDTO,
   DockableModuleStatus,
@@ -67,6 +67,7 @@ import {
   acceptAttribute,
   acceptHint,
   canCreateProductOrder,
+  delay,
   emptyTaskEvidenceFieldValues,
   missingTaskEvidenceSlotLabels,
   resolveWorkbenchTask,
@@ -131,18 +132,49 @@ export function ProductWorkbenchApp() {
     handleSaveDraft,
     handleSendInvite
   } = draftFlow;
-  // 订单启动后的"同步中"只做过渡桥：刷新落地即复位，绝不永久挂起。
+  // 订单启动后的"同步中"只做过渡桥：等订单投影落地（有界轮询）再跳转/清标志，
+  // 绝不永久挂起；索引迟迟未落地时保持"同步中"中间态，不把空订单页当"启动失败"
+  // 诱导重复触发。
   const [awaitingOrderSync, setAwaitingOrderSync] = useState(false);
+  const awaitedOrderIdRef = useRef<string | undefined>(undefined);
+
+  function triggeredOrderProjected(loaded: ProductWorkbenchData | undefined): boolean {
+    const orderId = awaitedOrderIdRef.current;
+    if (!loaded) {
+      return false;
+    }
+    if (orderId) {
+      return loaded.orders.some((order) => order.orderId === orderId);
+    }
+    return loaded.order !== undefined;
+  }
+
+  async function waitForOrderProjection(): Promise<boolean> {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      if (attempt > 0) {
+        await delay(1200);
+      }
+      if (triggeredOrderProjected(await refreshWorkbench())) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   const { registerDraftAction, handleRegisterDraft } = useOrderRegistrationFlow({
     api,
     ensureDraft,
     onRegistered: (nextDraft) => {
       draftFlow.setDraft(nextDraft);
+      awaitedOrderIdRef.current = nextDraft.triggeredOrderId;
       setAwaitingOrderSync(true);
-      void refreshWorkbench().finally(() => {
-        setAwaitingOrderSync(false);
+      void waitForOrderProjection().then((projected) => {
+        setView("order");
+        if (projected) {
+          setAwaitingOrderSync(false);
+        }
+        // 窗口耗尽仍未落地：保持"同步中"过渡态，由后续刷新观察到订单时再复位。
       });
-      window.setTimeout(() => setView("order"), 500);
     }
   });
   const {
@@ -157,6 +189,12 @@ export function ProductWorkbenchApp() {
     handleConfirmSubmit,
     handleDisputeSave
   } = useTaskSubmissionFlow({ api, activeTask, fieldValues: taskEvidenceFields, onMutationSuccess: refreshWorkbench });
+  // 轮询窗口耗尽后，任何一次后续投影刷新观察到订单即复位"同步中"过渡桥。
+  useEffect(() => {
+    if (awaitingOrderSync && triggeredOrderProjected(data)) {
+      setAwaitingOrderSync(false);
+    }
+  }, [awaitingOrderSync, data]);
   const firstEvidence = Object.values(evidenceBySlot)[0];
   // 提交门槛：必填证据槽位全部满足（文件已上传或该任务没有文件要求）即可提交；
   // 纯 text/date 或无槽位任务允许零上传的纯字段确认提交。
@@ -326,7 +364,11 @@ export function ProductWorkbenchApp() {
         {loadState.status === "ready" && view === "zhixu" && selectedZhixu ? <ZhixuDetailPage zhixu={selectedZhixu} onBack={() => setView("home")} onCreate={() => setView("create")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : null}
         {loadState.status === "ready" && view === "create" && selectedZhixu ? <CreateOrderPage zhixu={selectedZhixu} draft={draft} createAction={draftAction} saveAction={saveDraftAction} values={draftFormValues} onValuesChange={(patch) => setDraftFormValues((current) => ({ ...current, ...patch }))} onBack={() => setView("zhixu")} onCreate={(values) => void handleCreateDraft(values)} onSave={(values) => void handleSaveDraft(values)} onNext={handleNextParticipants} /> : null}
         {loadState.status === "ready" && view === "participants" ? <ParticipantsPage order={selectedOrder} draft={draft} draftParticipants={draftParticipants} draftParticipantsStatus={draftFlow.draftParticipantsStatus} draftParticipantsError={draftFlow.draftParticipantsError} inviteActions={inviteActions} registerAction={registerDraftAction} onBack={() => setView("create")} onInvite={handleSendInvite} onRegister={handleRegisterDraft} onOrder={() => setView("order")} /> : null}
-        {loadState.status === "ready" && view === "order" ? selectedOrder ? <OrderOverviewPage order={selectedOrder} syncing={data.syncState === "syncing" || awaitingOrderSync} onBack={() => setView("home")} onTask={() => setView("task")} onDispute={() => setView("dispute")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : <EmptyState title="暂无进行中订单" desc="创建并启动订单后，这里会展示订单总览、当前待办和最近事件。" /> : null}
+        {loadState.status === "ready" && view === "order" ? selectedOrder ? <OrderOverviewPage order={selectedOrder} syncing={data.syncState === "syncing" || awaitingOrderSync} onBack={() => setView("home")} onTask={() => setView("task")} onDispute={() => setView("dispute")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : awaitingOrderSync ? (
+          <section className="page-shell">
+            <StatePanel icon={<RefreshCw className="spin" />} title="订单状态同步中" desc="订单已启动，正在等待链上投影同步；请勿重复启动，稍后刷新即可查看订单总览。" tone="info" />
+          </section>
+        ) : <EmptyState title="暂无进行中订单" desc="创建并启动订单后，这里会展示订单总览、当前待办和最近事件。" /> : null}
         {loadState.status === "ready" && view === "task" ? activeTask ? <TaskPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} evidenceProofsBySlot={evidenceProofsBySlot} uploadAction={evidenceAction} canConfirm={canConfirmSubmit} missingEvidenceLabels={missingEvidenceSlotLabels} staleSlotLabels={staleSlotLabels} verificationFailedLabels={verificationFailedLabels} fieldValues={taskEvidenceFields} onFieldValuesChange={(patch) => setTaskEvidenceFields((current) => ({ ...current, ...patch }))} onBack={() => setView("order")} onUpload={(slotKey, file) => void handleUploadEvidence(slotKey, file)} onSubmit={() => setView("submit")} onDispute={() => setView("dispute")} /> : <EmptyState title="暂无待办" desc="当前没有需要你处理的任务。" /> : null}
         {loadState.status === "ready" && view === "submit" ? activeTask ? <SubmitPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} submitMachine={submitMachine} canSubmit={canConfirmSubmit} staleSlotLabels={staleSlotLabels} verificationFailedLabels={verificationFailedLabels} onBack={() => setView("task")} onSubmit={() => void handleConfirmSubmit()} onOrder={() => setView("order")} /> : <EmptyState title="暂无可提交的待办" desc="待办完成凭证上传后，可在这里确认提交。" /> : null}
         {loadState.status === "ready" && view === "dispute" ? activeTask ? <DisputePage task={activeTask} action={disputeAction} onBack={() => setView("order")} onSave={handleDisputeSave} /> : <EmptyState title="暂无可争议事项" desc="订单出现可处理待办后，可以补充争议材料。" /> : null}
