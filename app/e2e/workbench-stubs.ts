@@ -105,12 +105,11 @@ export const stubTask = {
   proofRows: [{ label: "任务记录", value: "task-2001" }]
 };
 
-/** 无结构化配置的降级任务：商店必须按通用槽位渲染，不得拒绝或丢弃声明。 */
-export const stubFallbackTask = {
+/** 无结构化配置的任务：单轨口径下没有证据槽位，按业务约定提交。 */
+export const stubSpeclessTask = {
   ...stubTask,
-  taskId: "task-2002-fallback",
-  title: "提交阶段凭证（无结构化配置）",
-  requiredEvidence: ["质检单", "物流回单"],
+  taskId: "task-2002-specless",
+  title: "确认阶段完成（无结构化凭证配置）",
   evidenceSpec: undefined
 };
 

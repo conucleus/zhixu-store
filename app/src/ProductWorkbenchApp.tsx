@@ -493,7 +493,7 @@ function ParticipantAppPage({
                     </div>
                     <div className="catalog-facts">
                       <FactRow icon={<Layers3 />} label="任务插件" value={pluginKindLabel(task.capabilityPlugin?.pluginKind)} />
-                      <FactRow icon={<FileCheck2 />} label="需要凭证" value={task.requiredEvidence.join("、")} />
+                      <FactRow icon={<FileCheck2 />} label="需要凭证" value={(task.evidenceSpec ?? []).map((slot) => slot.label).join("、") || "按业务约定提交凭证"} />
                       <FactRow icon={<HandCoins />} label="付款影响" value={task.fundingImpact} />
                     </div>
                     {task.settlementPreview ? (
@@ -1051,9 +1051,7 @@ function TaskPage({
 }) {
   const fileSlots = evidencePlan.slots.filter((slot) => slot.inputKind === "file");
   const inputSlots = evidencePlan.slots.filter((slot) => slot.inputKind !== "file");
-  const declaredEvidenceLabels = evidencePlan.mode === "fallback"
-    ? evidencePlan.declaredLabels
-    : evidencePlan.slots.map((slot) => slot.label);
+  const declaredEvidenceLabels = evidencePlan.slots.map((slot) => slot.label);
 
   return (
     <section className="page-shell" data-testid="task-detail-page">
@@ -1070,15 +1068,6 @@ function TaskPage({
         <Panel>
           <h2>上传阶段凭证</h2>
           <p>本待办需要的凭证：{declaredEvidenceLabels.length > 0 ? declaredEvidenceLabels.join("、") : "按业务约定提交凭证"}。请按以下槽位上传文件并填写信息。</p>
-          {evidencePlan.mode === "fallback" ? (
-            <div className="plain-help-box">
-              <FileText />
-              <div>
-                <strong>本待办没有结构化证据配置</strong>
-                <p>以上声明按通用凭证上传（不限格式），并会随元数据原样保留，不会丢失或被拒绝。</p>
-              </div>
-            </div>
-          ) : null}
           {fileSlots.length > 0 ? fileSlots.map((slot) => (
             <EvidenceUploadZone key={slot.key} slot={slot} uploaded={evidenceBySlot[slot.key]} proof={evidenceProofsBySlot[slot.key]} onFileSelected={(file) => onUpload(slot.key, file)} />
           )) : <InlineEmpty text="本待办无需上传文件凭证" />}
@@ -1235,9 +1224,7 @@ function SubmitPage({
     submitMachine.status === "wallet_not_connected" ||
     submitMachine.status === "wallet_rejected";
   const proofRows = submitMachine.submission?.proofRows ?? task.proofRows;
-  const declaredEvidenceLabels = evidencePlan.mode === "fallback"
-    ? evidencePlan.declaredLabels
-    : evidencePlan.slots.map((slot) => slot.label);
+  const declaredEvidenceLabels = evidencePlan.slots.map((slot) => slot.label);
   // 所见即所签：确认页列出全部已上传证据（签名覆盖的 evidenceIds 与之一一对应），
   // 每条带槽位名与指纹；纯字段任务没有文件凭证时如实说明。
   const uploadedEvidence = evidencePlan.slots

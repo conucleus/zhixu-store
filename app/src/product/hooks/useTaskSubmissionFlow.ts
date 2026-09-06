@@ -59,8 +59,7 @@ export function useTaskSubmissionFlow(input: {
 } {
   const { api, activeTask, fieldValues, onMutationSuccess } = input;
   const evidencePlan = planTaskEvidence({
-    evidenceSpec: activeTask?.evidenceSpec,
-    requiredEvidence: activeTask?.requiredEvidence ?? []
+    evidenceSpec: activeTask?.evidenceSpec
   });
   const [evidenceBySlot, setEvidenceBySlot] = useState<EvidenceBySlot>({});
   const [proofsBySlot, setProofsBySlot] = useState<EvidenceProofsBySlot>({});
@@ -124,16 +123,12 @@ export function useTaskSubmissionFlow(input: {
         // 框架保留键带命名空间前缀，不与凝结核 spec 的任意 key 冲突。
         [FRAMEWORK_STAGE_FIELD_KEY]: activeTask.stageName
       };
-      // 字段 key 全部来自凝结核配置（spec）；fallback 模式只携带通用备注与
-      // 原样声明的凭证要求文本，框架不携带任何业务字段名。
+      // 字段 key 全部来自凝结核配置（spec），框架不携带任何业务字段名。
       for (const [key, value] of Object.entries(fieldValues)) {
         const trimmed = value.trim();
         if (trimmed) {
           metadataFields[key] = trimmed;
         }
-      }
-      if (evidencePlan.mode === "fallback" && evidencePlan.declaredLabels.length > 0) {
-        metadataFields.declared_requirements = evidencePlan.declaredLabels.join(", ");
       }
       const result = await api.uploadEvidence({
         file,

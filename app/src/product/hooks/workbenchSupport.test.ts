@@ -12,7 +12,6 @@ import {
   canCreateProductOrder,
   acceptIncludesPdf,
   evidenceMetadataSignature,
-  FALLBACK_EVIDENCE_SLOT_KEY,
   formatAcceptLabel,
   isEvidenceSlotStale,
   missingTaskEvidenceSlotLabels,
@@ -80,8 +79,7 @@ describe("frozen zhixu lifecycle gates", () => {
 describe("task evidence plan (schema-driven)", () => {
   it("builds slots from the nucleation-core-carried evidenceSpec", () => {
     const plan = planTaskEvidence({
-      evidenceSpec: customsDemoTaskConfig.evidenceSpec,
-      requiredEvidence: ["报关单 PDF", "报关单号", "出口港口", "完成时间"]
+      evidenceSpec: customsDemoTaskConfig.evidenceSpec
     });
     assert.equal(plan.mode, "spec");
     assert.deepEqual(plan.slots.map((slot) => slot.key), [
@@ -96,45 +94,24 @@ describe("task evidence plan (schema-driven)", () => {
     assert.equal(fileSlot?.required, true);
     assert.equal(plan.slots[1]?.inputKind, "text");
     assert.equal(plan.slots[3]?.inputKind, "date");
-    // 声明文本原样保留，不静默丢弃
-    assert.deepEqual(plan.declaredLabels, ["报关单 PDF", "报关单号", "出口港口", "完成时间"]);
   });
 
   it("defaults inputKind to file and required to true when the spec omits them", () => {
     const plan = planTaskEvidence({
-      requiredEvidence: [],
       evidenceSpec: [{ key: "report", label: "报告", accept: ["application/pdf"] }]
     });
     assert.equal(plan.mode, "spec");
     assert.deepEqual(plan.slots, [
-      { key: "report", label: "报告", inputKind: "file", accept: ["application/pdf"], required: true, source: "spec" }
+      { key: "report", label: "报告", inputKind: "file", accept: ["application/pdf"], required: true }
     ]);
   });
 
-  it("degrades missing-spec declarations into one generic upload slot without dropping them", () => {
-    const plan = planTaskEvidence({ requiredEvidence: ["质检单", "物流回单"] });
-    assert.equal(plan.mode, "fallback");
-    assert.equal(plan.slots.length, 1);
-    const slot = plan.slots[0];
-    assert.equal(slot?.key, FALLBACK_EVIDENCE_SLOT_KEY);
-    assert.equal(slot?.source, "fallback");
-    assert.deepEqual(slot?.accept, []);
-    // 未知声明不出现在上传前拒绝，也不被丢弃：随元数据上送
-    assert.deepEqual(plan.declaredLabels, ["质检单", "物流回单"]);
-  });
-
-  it("reports no evidence plan when the task declares nothing", () => {
-    assert.deepEqual(planTaskEvidence({ requiredEvidence: [] }), { mode: "none", slots: [], declaredLabels: [] });
-    assert.deepEqual(planTaskEvidence({ requiredEvidence: ["  "] }), { mode: "none", slots: [], declaredLabels: [] });
-  });
-
-  it("prefers evidenceSpec over label parsing: no store-side label table exists", () => {
-    const plan = planTaskEvidence({
-      evidenceSpec: [{ key: "whatever_key", label: "任意业务凭证", inputKind: "file", accept: ["image/png"] }],
-      requiredEvidence: ["商店不认识的声明"]
-    });
-    assert.equal(plan.mode, "spec");
-    assert.equal(plan.slots[0]?.key, "whatever_key");
+  it("renders no evidence slots for spec-less tasks instead of a fabricated generic upload (F-06)", () => {
+    // 单轨口径：仅消费 evidenceSpec。无 spec 的任务不再回退解析
+    // requiredEvidence 臆造通用槽位——没有槽位就是没有槽位。
+    assert.deepEqual(planTaskEvidence({}), { mode: "none", slots: [] });
+    assert.deepEqual(planTaskEvidence({ evidenceSpec: [] }), { mode: "none", slots: [] });
+    assert.deepEqual(planTaskEvidence({ evidenceSpec: undefined }), { mode: "none", slots: [] });
   });
 });
 
@@ -219,8 +196,7 @@ describe("evidence file validation (spec-driven)", () => {
 describe("task evidence slot required-check", () => {
   it("lists every missing required slot by its configured label", () => {
     const plan = planTaskEvidence({
-      evidenceSpec: customsDemoTaskConfig.evidenceSpec,
-      requiredEvidence: []
+      evidenceSpec: customsDemoTaskConfig.evidenceSpec
     });
     assert.deepEqual(
       missingTaskEvidenceSlotLabels(plan.slots, {}, []),
@@ -232,8 +208,7 @@ describe("task evidence slot required-check", () => {
       evidenceSpec: [
         ...customsDemoTaskConfig.evidenceSpec,
         { key: "extra_note", label: "补充说明", inputKind: "text", required: false }
-      ],
-      requiredEvidence: []
+      ]
     });
     assert.deepEqual(
       missingTaskEvidenceSlotLabels(
@@ -253,19 +228,12 @@ describe("task evidence slot required-check", () => {
     );
   });
 
-  it("requires the generic upload in fallback mode before submit", () => {
-    const plan = planTaskEvidence({ requiredEvidence: ["任意声明"] });
-    assert.deepEqual(missingTaskEvidenceSlotLabels(plan.slots, {}, []), ["阶段凭证"]);
-    assert.deepEqual(missingTaskEvidenceSlotLabels(plan.slots, {}, [FALLBACK_EVIDENCE_SLOT_KEY]), []);
-  });
-
   it("treats a text/date-only task with all fields filled as submittable without any upload", () => {
     const plan = planTaskEvidence({
       evidenceSpec: [
         { key: "completion_date", label: "完成时间", inputKind: "date", required: true },
         { key: "remark", label: "备注说明", inputKind: "text", required: false }
-      ],
-      requiredEvidence: []
+      ]
     });
     assert.deepEqual(missingTaskEvidenceSlotLabels(plan.slots, {}, []), ["完成时间"]);
     assert.deepEqual(
@@ -275,7 +243,7 @@ describe("task evidence slot required-check", () => {
   });
 
   it("treats a task with no evidence slots as submittable with zero uploads", () => {
-    const plan = planTaskEvidence({ requiredEvidence: [] });
+    const plan = planTaskEvidence({});
     assert.equal(plan.mode, "none");
     assert.deepEqual(missingTaskEvidenceSlotLabels(plan.slots, {}, []), []);
   });
@@ -285,8 +253,7 @@ describe("task evidence slot required-check", () => {
       evidenceSpec: [
         { key: "report", label: "报告", inputKind: "file", required: true },
         { key: "completion_date", label: "完成时间", inputKind: "date", required: true }
-      ],
-      requiredEvidence: []
+      ]
     });
     assert.deepEqual(
       missingTaskEvidenceSlotLabels(plan.slots, { completion_date: "2026-09-01" }, []),
@@ -352,8 +319,7 @@ describe("framework reserved keys are namespaced", () => {
 
   it("lets a spec slot use the bare key \"notes\" without touching the framework note", () => {
     const plan = planTaskEvidence({
-      evidenceSpec: [{ key: "notes", label: "结关备注", inputKind: "text", required: true }],
-      requiredEvidence: []
+      evidenceSpec: [{ key: "notes", label: "结关备注", inputKind: "text", required: true }]
     });
     assert.equal(plan.slots[0]?.key, "notes");
     const specSnapshot = evidenceMetadataSignature({ notes: "spec value" });

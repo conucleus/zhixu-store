@@ -38,17 +38,15 @@ export function delay(ms: number): Promise<void> {
 }
 
 /**
- * 任务证据计划的输入：优先使用凝结核随 zhixu 配置携带的结构化 evidenceSpec；
- * 没有 spec 时回退解析 requiredEvidence 开放字符串数组（通用降级声明形状）。
+ * 任务证据计划的输入：仅消费凝结核随 zhixu 配置携带的结构化 evidenceSpec。
  */
 export interface TaskEvidencePlanInput {
   readonly evidenceSpec?: readonly TaskEvidenceSpecDTO[] | undefined;
-  readonly requiredEvidence: readonly string[];
 }
 
 export type TaskEvidenceSlotInputKind = "file" | "text" | "date";
 
-/** 渲染层的一个证据槽位：所有业务语义都来自凝结核配置或声明文本本身。 */
+/** 渲染层的一个证据槽位：所有业务语义都来自凝结核配置。 */
 export interface TaskEvidenceSlot {
   readonly key: string;
   readonly label: string;
@@ -57,64 +55,35 @@ export interface TaskEvidenceSlot {
   readonly accept: readonly string[];
   readonly required: boolean;
   readonly description?: string;
-  /** spec=凝结核配置；fallback=requiredEvidence 字符串的通用降级。 */
-  readonly source: "spec" | "fallback";
 }
 
 export interface TaskEvidencePlan {
-  readonly mode: "spec" | "fallback" | "none";
+  readonly mode: "spec" | "none";
   readonly slots: readonly TaskEvidenceSlot[];
-  /** 声明文本在 fallback 模式下原样保留并随元数据上送，绝不静默丢弃。 */
-  readonly declaredLabels: readonly string[];
 }
-
-/** 回退模式下的通用文件槽位：不携带任何具体业务语义。 */
-export const FALLBACK_EVIDENCE_SLOT_KEY = "task_evidence_generic";
-
-export const GENERIC_EVIDENCE_SLOT_LABEL = "阶段凭证";
 
 /**
  * 把任务的证据要求解析为可渲染槽位。
  *
- * 框架红线：商店不含业务标签匹配表。spec 缺失或含未知声明时一律降级为
- * 通用上传槽位（文件 + 可选文本说明），既不在上传前拒绝，也不静默丢弃。
+ * 框架红线：商店不含业务标签匹配表。任务未携带 spec 时没有证据槽位
+ * （纯字段确认或按业务约定线下提交），既不臆造通用槽位，也不在上传前拒绝。
  */
 export function planTaskEvidence(task: TaskEvidencePlanInput): TaskEvidencePlan {
   const spec = task.evidenceSpec;
   if (spec && spec.length > 0) {
-    const slots = spec.map((entry): TaskEvidenceSlot => ({
-      key: entry.key,
-      label: entry.label,
-      inputKind: entry.inputKind ?? "file",
-      accept: entry.inputKind === undefined || entry.inputKind === "file" ? [...(entry.accept ?? [])] : [],
-      required: entry.required ?? true,
-      ...(entry.description ? { description: entry.description } : {}),
-      source: "spec"
-    }));
-    return { mode: "spec", slots, declaredLabels: declaredLabelsFrom(task.requiredEvidence) };
+    return {
+      mode: "spec",
+      slots: spec.map((entry): TaskEvidenceSlot => ({
+        key: entry.key,
+        label: entry.label,
+        inputKind: entry.inputKind ?? "file",
+        accept: entry.inputKind === undefined || entry.inputKind === "file" ? [...(entry.accept ?? [])] : [],
+        required: entry.required ?? true,
+        ...(entry.description ? { description: entry.description } : {})
+      }))
+    };
   }
-  const labels = declaredLabelsFrom(task.requiredEvidence);
-  if (labels.length === 0) {
-    return { mode: "none", slots: [], declaredLabels: [] };
-  }
-  return {
-    mode: "fallback",
-    slots: [
-      {
-        key: FALLBACK_EVIDENCE_SLOT_KEY,
-        label: GENERIC_EVIDENCE_SLOT_LABEL,
-        inputKind: "file",
-        accept: [],
-        required: true,
-        source: "fallback"
-      }
-    ],
-    declaredLabels: labels
-  };
-}
-
-function declaredLabelsFrom(requiredEvidence: readonly string[]): readonly string[] {
-  return requiredEvidence.map((item) => item.trim()).filter((item) => item.length > 0);
+  return { mode: "none", slots: [] };
 }
 
 /** 与后端 Evidence Service 一致的限制：解码后最大 10MB（HTTP body 上限 16MB）。 */

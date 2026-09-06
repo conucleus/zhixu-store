@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { assertOrdinaryPageCopy } from "./product-assertions";
-import { installWorkbenchRoutes, STUB_API_BASE, stubFallbackTask, stubOrder, stubTask, stubZhixu, stubParticipant } from "./workbench-stubs";
+import { installWorkbenchRoutes, STUB_API_BASE, stubSpeclessTask, stubOrder, stubTask, stubZhixu, stubParticipant } from "./workbench-stubs";
 
 test.describe("Product Workbench browser smoke", () => {
   test("renders catalog, order, and task pages against stubbed product API", async ({ page }, testInfo) => {
@@ -275,11 +275,11 @@ test.describe("Product Workbench browser smoke", () => {
     await expect(page.getByText("尚未上传「报关单 PDF」")).toBeVisible();
   });
 
-  test("degrades spec-less tasks into a generic upload slot without rejecting declared evidence", async ({ page }) => {
+  test("renders no upload slots for spec-less tasks instead of a fabricated generic upload (F-06)", async ({ page }) => {
     await installWorkbenchRoutes(page, {
       overrides: {
         "/product/tasks": {
-          body: { tasks: [stubFallbackTask] }
+          body: { tasks: [stubSpeclessTask] }
         }
       }
     });
@@ -287,18 +287,11 @@ test.describe("Product Workbench browser smoke", () => {
     await page.getByRole("button", { name: /待办/ }).first().click();
     await expect(page.getByTestId("task-detail-page")).toBeVisible();
 
-    // 旧 requiredEvidence 字符串原样展示，不拒绝也不丢弃
-    await expect(page.getByText("本待办需要的凭证：质检单、物流回单")).toBeVisible();
-    await expect(page.getByText("本待办没有结构化证据配置")).toBeVisible();
-
-    // 通用槽位不限格式：商店不含任何业务格式特判
-    await page.getByTestId("task-file-input-task_evidence_generic").setInputFiles({
-      name: "回单.txt",
-      mimeType: "text/plain",
-      buffer: Buffer.from("fallback slot accepts any file")
-    });
-    await expect(page.getByText("凭证已上传，指纹已生成")).toBeVisible();
-    await expect(page.getByTestId("product-workbench")).not.toHaveAttribute("data-uvp-evidence-id", "");
+    // 单轨口径：仅消费 evidenceSpec。无 spec 的任务不臆造通用槽位，
+    // 如实呈现"按业务约定提交凭证"。
+    await expect(page.getByText("本待办需要的凭证：按业务约定提交凭证")).toBeVisible();
+    await expect(page.getByText("本待办无需上传文件凭证")).toBeVisible();
+    await expect(page.getByTestId("task-file-input-task_evidence_generic")).toHaveCount(0);
   });
 
   test("submits a file-free task through pure field confirmation without requiring uploads", async ({ page }) => {
@@ -306,7 +299,6 @@ test.describe("Product Workbench browser smoke", () => {
       ...stubTask,
       taskId: "task-2003-textonly",
       title: "纯字段待办：补充说明",
-      requiredEvidence: ["完成时间"],
       evidenceSpec: [
         { key: "completion_date", label: "完成时间", inputKind: "date" as const, required: true },
         { key: "remark", label: "备注说明", inputKind: "text" as const, required: false }
