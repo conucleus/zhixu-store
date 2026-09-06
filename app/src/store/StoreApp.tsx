@@ -1,5 +1,5 @@
 import { AlertTriangle, ExternalLink, GitBranch, KeyRound, Loader2, PackageSearch, ShieldCheck, Store, Truck, UserPlus, Users } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
   accessFromStoreSession,
@@ -17,7 +17,7 @@ import { StoreSupplierPage } from "./StoreSupplierPage";
 import { StoreZhixuDetailPage } from "./StoreZhixuDetailPage";
 import { loginStoreSessionWithWallet } from "./session";
 import type { StoreApiClient } from "./api";
-import type { StoreAccessState, StoreApiSource, StoreSearchInput, StoreZhixuSearchResultDTO } from "./types";
+import type { StoreApiSource, StoreSearchInput, StoreSessionDTO, StoreZhixuSearchResultDTO } from "./types";
 import { shortValue } from "../shared/frontend";
 
 type StoreView = "search" | "detail" | "suppliers" | "runtime" | "docking" | "account" | "join";
@@ -30,12 +30,40 @@ type StoreLoadState =
 export function StoreApp({ productHref = "/app" }: { readonly productHref?: string | undefined }) {
   // 会话 token 驱动 client 重建——登录/退出后 access 与能力随之刷新。
   const [sessionToken, setSessionToken] = useState<string | undefined>(() => readStoredStoreSessionToken());
+  // env 只提供引导态（无会话时的缺省 access）；会话取回后 access 一律以
+  // 服务端 session 为准，UI 门控与 client 前置门共用同一份，消除两源不一致。
   const baseAccess = useMemo(() => createStoreApiClient().access, []);
-  const api = useMemo(
-    () => createStoreApiClient(undefined, sessionToken),
-    [sessionToken],
+  const [session, setSession] = useState<StoreSessionDTO | undefined>();
+
+  useEffect(() => {
+    const bootstrapClient = createStoreApiClient(baseAccess, sessionToken);
+    if (!bootstrapClient.baseUrl) {
+      return;
+    }
+    let cancelled = false;
+    void bootstrapClient.getSession().then((result) => {
+      if (!cancelled) {
+        setSession(result.data);
+      }
+    }).catch(() => {
+      // 会话不可得（未登录/接口失败）即回到 env 引导态，不猜权限。
+      if (!cancelled) {
+        setSession(undefined);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [baseAccess, sessionToken]);
+
+  const access = useMemo(
+    () => (session ? accessFromStoreSession(session, baseAccess) : baseAccess),
+    [session, baseAccess],
   );
-  const [access, setAccess] = useState<StoreAccessState>(baseAccess);
+  const api = useMemo(
+    () => createStoreApiClient(access, sessionToken),
+    [access, sessionToken],
+  );
   const [view, setView] = useState<StoreView>("search");
   const [selectedZhixuId, setSelectedZhixuId] = useState<string | undefined>();
   const [joinPlanFilter, setJoinPlanFilter] = useState<string | undefined>();
@@ -43,22 +71,6 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
   const [loadState, setLoadState] = useState<StoreLoadState>({ status: "loading" });
   const [loginBusy, setLoginBusy] = useState(false);
   const [loginMessage, setLoginMessage] = useState<string | undefined>();
-
-  const refreshSession = useCallback(() => {
-    if (!api.baseUrl) {
-      setAccess(api.access);
-      return;
-    }
-    void api.getSession().then((result) => {
-      setAccess(accessFromStoreSession(result.data, api.access));
-    }).catch(() => {
-      setAccess(api.access);
-    });
-  }, [api]);
-
-  useEffect(() => {
-    refreshSession();
-  }, [refreshSession]);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,7 +116,9 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
       setSessionToken(token);
       return;
     }
+    // 退出：token 与会话态立即同步清除，权限门随 access 回到引导态。
     storeStoreSessionToken(undefined);
+    setSession(undefined);
     setSessionToken(undefined);
   }
 
@@ -136,8 +150,7 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
     } catch {
       // token 已失效也按退出处理。
     }
-    storeStoreSessionToken(undefined);
-    setSessionToken(undefined);
+    handleSessionChanged(undefined);
     setLoginMessage("已退出会话");
     setLoginBusy(false);
   }

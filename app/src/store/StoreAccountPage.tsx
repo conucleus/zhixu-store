@@ -75,10 +75,11 @@ export function StoreAccountPage({
     try {
       await api.authLogout();
       setMessage("已退出会话");
-      onSessionToken(undefined);
     } catch (error) {
-      setMessage(readableStoreError(error, "退出失败"));
+      // 服务端撤销失败也按退出处理：本地 token 不保留（与顶栏口径一致）。
+      setMessage(`已退出本地会话（服务端撤销失败：${readableStoreError(error, "退出失败")}）`);
     } finally {
+      onSessionToken(undefined);
       setBusy(false);
     }
   }

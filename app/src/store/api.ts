@@ -432,6 +432,7 @@ class BrowserStoreApiClient implements StoreApiClient {
     StoreApiResult<{ readonly validation: StoreProductSchemaValidationDTO }>
   > {
     const pathname = `/store/zhixu-drafts/${encodeURIComponent(draftId)}/product-schema/validate`;
+    this.requireWriteAccess(pathname);
     return await this.realWrite<{
       readonly validation: StoreProductSchemaValidationDTO;
     }>("POST", pathname, productSchema ? { productSchema } : undefined);
@@ -558,9 +559,10 @@ class BrowserStoreApiClient implements StoreApiClient {
   }
 
   async revokeAccountAddress(address: string): Promise<
-    StoreApiResult<{ readonly accountId: string; readonly addresses: readonly { readonly address: string; readonly status: "active" | "revoked"; readonly anchoredAt: string }[] }>
+    StoreApiResult<{ readonly accountId: string; readonly addresses: { readonly address: string; readonly status: "active" | "revoked"; readonly anchoredAt: string }[] }>
   > {
     const pathname = "/store/auth/addresses/revoke";
+    this.requireAnchoredSession(pathname);
     return await this.realWrite<{ readonly accountId: string; readonly addresses: { readonly address: string; readonly status: "active" | "revoked"; readonly anchoredAt: string }[] }>("POST", pathname, { address });
   }
 
@@ -568,11 +570,13 @@ class BrowserStoreApiClient implements StoreApiClient {
 
   async saveDecoration(planId: string, decoration: StoreDecorationDataView, note?: string): Promise<StoreApiResult<StoreDecorationView>> {
     const pathname = `/store/decoration/${encodeURIComponent(planId)}`;
+    this.requireAnchoredSession(pathname);
     return await this.realWrite<StoreDecorationView>("PUT", pathname, { decoration, ...(note ? { note } : {}) });
   }
 
   async restoreDecorationVersion(planId: string, version: number): Promise<StoreApiResult<StoreDecorationView>> {
     const pathname = `/store/decoration/${encodeURIComponent(planId)}/versions/${version}/restore`;
+    this.requireAnchoredSession(pathname);
     return await this.realWrite<StoreDecorationView>("POST", pathname, {});
   }
 
@@ -585,6 +589,7 @@ class BrowserStoreApiClient implements StoreApiClient {
 
   async grantDelegation(publisherAddress: string, memberAddress: string): Promise<StoreApiResult<{ readonly delegations: readonly StorePublisherDelegationView[] }>> {
     const pathname = "/store/publishers/delegations";
+    this.requireAnchoredSession(pathname);
     return await this.realWrite<{ readonly delegations: StorePublisherDelegationView[] }>("POST", pathname, {
       publisherAddress,
       memberAddress,
@@ -593,6 +598,7 @@ class BrowserStoreApiClient implements StoreApiClient {
 
   async revokeDelegation(delegationId: string, reason?: string): Promise<StoreApiResult<{ readonly delegations: readonly StorePublisherDelegationView[] }>> {
     const pathname = `/store/publishers/delegations/${encodeURIComponent(delegationId)}/revoke`;
+    this.requireAnchoredSession(pathname);
     return await this.realWrite<{ readonly delegations: StorePublisherDelegationView[] }>("POST", pathname, {
       ...(reason ? { reason } : {}),
     });
@@ -604,6 +610,13 @@ class BrowserStoreApiClient implements StoreApiClient {
     input: { readonly planId: string; readonly planHash?: string | undefined; readonly deploymentId?: string | undefined },
   ): Promise<StoreApiResult<{ readonly listing: StoreListingView; readonly anchorVerification: { readonly status: string; readonly checks: readonly { readonly id: string; readonly outcome: string }[] } }>> {
     const pathname = "/store/listings/import";
+    // 服务端口径：运营方 store.listing.manage 能力或锚定（publisher 导入）二者其一。
+    if (!this.access.capabilities.includes("store.listing.manage") && !this.access.anchoredAddress) {
+      throw new StoreApiError(pathname, 403, "forbidden", {
+        code: "forbidden",
+        details: { requiredCapability: "store.listing.manage", alternative: "anchored_wallet_session" },
+      });
+    }
     return await this.realWrite<{ readonly listing: StoreListingView; readonly anchorVerification: { readonly status: string; readonly checks: readonly { readonly id: string; readonly outcome: string }[] } }>("POST", pathname, input);
   }
 
@@ -616,6 +629,7 @@ class BrowserStoreApiClient implements StoreApiClient {
 
   async reviewListing(listingId: string, decision: "approve" | "reject", note?: string): Promise<StoreApiResult<{ readonly listing: StoreListingView }>> {
     const pathname = `/store/listings/${encodeURIComponent(listingId)}/review`;
+    this.requireCapability(pathname, "store.listing.manage");
     return await this.realWrite<{ readonly listing: StoreListingView }>("POST", pathname, {
       decision,
       ...(note ? { note } : {}),
@@ -624,6 +638,7 @@ class BrowserStoreApiClient implements StoreApiClient {
 
   async delistListing(listingId: string, reason?: string): Promise<StoreApiResult<{ readonly listing: StoreListingView }>> {
     const pathname = `/store/listings/${encodeURIComponent(listingId)}/delist`;
+    this.requireCapability(pathname, "store.listing.manage");
     return await this.realWrite<{ readonly listing: StoreListingView }>("POST", pathname, {
       ...(reason ? { reason } : {}),
     });
@@ -631,6 +646,7 @@ class BrowserStoreApiClient implements StoreApiClient {
 
   async relistListing(listingId: string): Promise<StoreApiResult<{ readonly listing: StoreListingView }>> {
     const pathname = `/store/listings/${encodeURIComponent(listingId)}/relist`;
+    this.requireCapability(pathname, "store.listing.manage");
     return await this.realWrite<{ readonly listing: StoreListingView }>("POST", pathname, {});
   }
 
@@ -638,6 +654,7 @@ class BrowserStoreApiClient implements StoreApiClient {
 
   async submitJoinApplication(input: StoreJoinApplicationSubmitInput): Promise<StoreApiResult<StoreJoinApplicationDetailView>> {
     const pathname = "/store/join-applications";
+    this.requireAnchoredSession(pathname);
     return await this.realWrite<StoreJoinApplicationDetailView>("POST", pathname, input);
   }
 
@@ -663,11 +680,13 @@ class BrowserStoreApiClient implements StoreApiClient {
 
   async joinReviewStart(applicationId: string): Promise<StoreApiResult<StoreJoinApplicationDetailView>> {
     const pathname = `/store/join-applications/${encodeURIComponent(applicationId)}/review-start`;
+    this.requireAnchoredSession(pathname);
     return await this.realWrite<StoreJoinApplicationDetailView>("POST", pathname, {});
   }
 
   async joinApprove(applicationId: string, note?: string): Promise<StoreApiResult<StoreJoinApplicationDetailView>> {
     const pathname = `/store/join-applications/${encodeURIComponent(applicationId)}/approve`;
+    this.requireAnchoredSession(pathname);
     return await this.realWrite<StoreJoinApplicationDetailView>("POST", pathname, {
       ...(note ? { note } : {}),
     });
@@ -675,11 +694,13 @@ class BrowserStoreApiClient implements StoreApiClient {
 
   async joinReject(applicationId: string, reason: string): Promise<StoreApiResult<StoreJoinApplicationDetailView>> {
     const pathname = `/store/join-applications/${encodeURIComponent(applicationId)}/reject`;
+    this.requireAnchoredSession(pathname);
     return await this.realWrite<StoreJoinApplicationDetailView>("POST", pathname, { reason });
   }
 
   async joinRevoke(applicationId: string, reason?: string): Promise<StoreApiResult<StoreJoinApplicationDetailView>> {
     const pathname = `/store/join-applications/${encodeURIComponent(applicationId)}/revoke`;
+    this.requireAnchoredSession(pathname);
     return await this.realWrite<StoreJoinApplicationDetailView>("POST", pathname, {
       ...(reason ? { reason } : {}),
     });
@@ -749,6 +770,21 @@ class BrowserStoreApiClient implements StoreApiClient {
     if (!this.access.canWrite) {
       throw new StoreApiError(pathname, 403, "forbidden", {
         code: "forbidden",
+      });
+    }
+  }
+
+  /**
+   * 锚定会话前置门：服务端对这些写路径按"会话锚定地址 + 资源归属
+   * （publisher/受托成员/申请人本人）"授权，而不是按运营方能力授权；
+   * 本地镜像同一口径，未锚定会话直接 403（双层防御），不误伤
+   * 只有锚定身份、没有运营方能力的 publisher 会话。
+   */
+  private requireAnchoredSession(pathname: string): void {
+    if (!this.access.anchoredAddress) {
+      throw new StoreApiError(pathname, 403, "forbidden", {
+        code: "forbidden",
+        details: { required: "anchored_wallet_session" },
       });
     }
   }
