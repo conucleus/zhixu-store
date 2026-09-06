@@ -1,8 +1,9 @@
 import { BadgeCheck, ClipboardList, Loader2, ShieldAlert, UserPlus } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { readableStoreError, type StoreApiClient } from "./api";
 import type {
   StoreAccessState,
+  StoreApiResult,
   StoreJoinApplicationDetailView,
   StoreJoinApplicationStatus
 } from "./types";
@@ -41,6 +42,10 @@ export function StoreJoinPage({
 }) {
   const [state, setState] = useState<JoinListState>({ status: "loading" });
   const [busyId, setBusyId] = useState<string | undefined>();
+  // 已排队待执行的治理动作所在行：治理动作不允许被静默丢弃，其他行 busy 时入队串行执行。
+  const [queuedIds, setQueuedIds] = useState<readonly string[]>([]);
+  const actionQueueRef = useRef<readonly (() => Promise<void>)[]>([]);
+  const drainingRef = useRef(false);
   const [message, setMessage] = useState<string | undefined>();
   const [rejectTarget, setRejectTarget] = useState<string | undefined>();
   const [rejectReason, setRejectReason] = useState("");
@@ -99,21 +104,49 @@ export function StoreJoinPage({
     void reload();
   }, [reload]);
 
-  async function run(action: () => Promise<unknown>, applicationId: string, done: string): Promise<void> {
-    if (busyId) {
+  /** 治理动作串行队列：其他行 busy 时入队而非丢弃，队列按提交顺序逐个执行。 */
+  function enqueueAction(action: () => Promise<void>): void {
+    actionQueueRef.current = [...actionQueueRef.current, action];
+    if (drainingRef.current) {
       return;
     }
-    setBusyId(applicationId);
-    setMessage(undefined);
-    try {
-      await action();
-      setMessage(done);
-      await reload();
-    } catch (error) {
-      setMessage(readableStoreError(error, "操作失败"));
-    } finally {
-      setBusyId(undefined);
-    }
+    drainingRef.current = true;
+    void (async () => {
+      try {
+        while (actionQueueRef.current.length > 0) {
+          const next = actionQueueRef.current[0];
+          if (!next) {
+            break;
+          }
+          actionQueueRef.current = actionQueueRef.current.slice(1);
+          await next();
+        }
+      } finally {
+        drainingRef.current = false;
+      }
+    })();
+  }
+
+  function run(
+    applicationId: string,
+    action: () => Promise<unknown>,
+    done: string | ((result: unknown) => string)
+  ): void {
+    setQueuedIds((current) => [...current, applicationId]);
+    enqueueAction(async () => {
+      setQueuedIds((current) => current.filter((id) => id !== applicationId));
+      setBusyId(applicationId);
+      setMessage(undefined);
+      try {
+        const result = await action();
+        setMessage(typeof done === "function" ? done(result) : done);
+        await reload();
+      } catch (error) {
+        setMessage(readableStoreError(error, "操作失败"));
+      } finally {
+        setBusyId(undefined);
+      }
+    });
   }
 
   const isOperator = access.level === "store_operator" || access.level === "store_admin";
@@ -162,13 +195,14 @@ export function StoreJoinPage({
                   key={detail.application.applicationId}
                   detail={detail}
                   busy={busyId === detail.application.applicationId}
+                  queued={queuedIds.includes(detail.application.applicationId)}
                   isOperator={isOperator}
                   viewerCanReview={viewerCanReview}
                   rejectOpen={rejectTarget === detail.application.applicationId}
                   rejectReason={rejectReason}
                   onRejectReasonChange={setRejectReason}
-                  onReviewStart={() => void run(() => api.joinReviewStart(detail.application.applicationId), detail.application.applicationId, "已开始审核")}
-                  onApprove={() => void run(() => api.joinApprove(detail.application.applicationId), detail.application.applicationId, "已通过：身份配对已执行，见下方证据栏的交易记录（模拟交易为本地广播，未上链）")}
+                  onReviewStart={() => run(detail.application.applicationId, () => api.joinReviewStart(detail.application.applicationId), "已开始审核")}
+                  onApprove={() => run(detail.application.applicationId, () => api.joinApprove(detail.application.applicationId), joinApproveMessage)}
                   onRejectOpen={() => {
                     setRejectTarget(detail.application.applicationId);
                     setRejectReason("");
@@ -181,9 +215,9 @@ export function StoreJoinPage({
                       return;
                     }
                     setRejectTarget(undefined);
-                    void run(() => api.joinReject(detail.application.applicationId, reason), detail.application.applicationId, "已拒绝并留痕");
+                    run(detail.application.applicationId, () => api.joinReject(detail.application.applicationId, reason), "已拒绝并留痕");
                   }}
-                  onRevoke={() => void run(() => api.joinRevoke(detail.application.applicationId), detail.application.applicationId, "已撤销")}
+                  onRevoke={() => run(detail.application.applicationId, () => api.joinRevoke(detail.application.applicationId), "已撤销")}
                 />
               ))}
             </tbody>
@@ -197,6 +231,7 @@ export function StoreJoinPage({
 function JoinApplicationRow({
   detail,
   busy,
+  queued,
   isOperator,
   viewerCanReview,
   rejectOpen,
@@ -211,6 +246,8 @@ function JoinApplicationRow({
 }: {
   readonly detail: StoreJoinApplicationDetailView;
   readonly busy: boolean;
+  /** 该行的治理动作已排队等待前序动作完成，未被执行也未被丢弃。 */
+  readonly queued: boolean;
   readonly isOperator: boolean;
   readonly viewerCanReview: boolean;
   readonly rejectOpen: boolean;
@@ -264,6 +301,7 @@ function JoinApplicationRow({
       </td>
       <td>
         {busy ? <Loader2 className="spin" /> : null}
+        {queued ? <span className="muted">排队中…</span> : null}
         {canReview ? (
           <div className="join-actions">
             {application.status === "applied" ? (
@@ -308,4 +346,15 @@ function evidenceKindLabel(kind: string): string {
     default:
       return kind;
   }
+}
+
+/**
+ * 入驻成功文案：\"模拟交易未上链\"的提示只在该次审批产生的链上证据
+ * executionMode=simulated 时附带；真实上链执行不得再挂模拟话术。
+ */
+function joinApproveMessage(result: unknown): string {
+  const base = "已通过：身份配对已执行，见下方证据栏的交易记录";
+  const detail = (result as StoreApiResult<StoreJoinApplicationDetailView> | undefined)?.data;
+  const simulated = detail?.application.txEvidence.some((entry) => entry.executionMode === "simulated");
+  return simulated ? `${base}（模拟交易为本地广播，未上链）` : base;
 }
