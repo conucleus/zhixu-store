@@ -230,6 +230,7 @@ export function StoreZhixuDetailPage({
             decoration={overlay?.decoration}
             viewerIsPublisher={overlay?.viewerPermission?.viewerIsPublisher ?? false}
             viewerIsDelegate={(overlay?.viewerPermission?.viewerActiveDelegations ?? []).length > 0}
+            publisherAddress={overlay?.viewerPermission?.publisher}
             onChanged={reloadDetail}
           />
 

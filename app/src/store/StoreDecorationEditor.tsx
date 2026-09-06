@@ -22,6 +22,7 @@ export function StoreDecorationEditor({
   decoration,
   viewerIsPublisher,
   viewerIsDelegate,
+  publisherAddress,
   onChanged,
 }: {
   readonly access: StoreAccessState;
@@ -30,10 +31,15 @@ export function StoreDecorationEditor({
   readonly decoration: StoreDecorationView | undefined;
   readonly viewerIsPublisher: boolean;
   readonly viewerIsDelegate: boolean;
+  /** 服务端权限视图声明的 planPublisher 地址；委托授予必须以它为 publisher。 */
+  readonly publisherAddress?: string | undefined;
   readonly onChanged: () => void;
 }) {
   // publisher 与受托成员都可写装修；委托只传 Store 侧操作权。
   const canWrite = (viewerIsPublisher || viewerIsDelegate) && Boolean(access.anchoredAddress);
+  // 委托面板只对 publisher 本人可见：受托成员以自己锚定地址发起授予，
+  // 等于冒充 publisher 增发委托，服务端角色必须与面板渲染角色一致。
+  const canManageDelegations = viewerIsPublisher && Boolean(access.anchoredAddress);
   const current = decoration?.current;
   const [open, setOpen] = useState(false);
   const [displayName, setDisplayName] = useState(current?.data.theme?.displayName ?? "");
@@ -60,6 +66,15 @@ export function StoreDecorationEditor({
     } catch (loadError) {
       setError(readableStoreError(loadError, "委托表加载失败"));
     }
+  }
+
+  /**
+   * 委托授予的 publisher 一律取服务端权限视图声明的 planPublisher；
+   * viewerIsPublisher 已保证会话锚定地址即 publisher，字段缺失时才用
+   * 锚定地址兜底——两种来源在"本人就是 publisher"的前提下等价。
+   */
+  function delegationPublisher(): string {
+    return publisherAddress ?? access.anchoredAddress ?? "";
   }
 
   async function handleSave(): Promise<void> {
@@ -118,7 +133,7 @@ export function StoreDecorationEditor({
   }
 
   async function handleGrant(): Promise<void> {
-    if (busy || !access.anchoredAddress) {
+    if (busy || !canManageDelegations) {
       return;
     }
     const member = delegationAddress.trim();
@@ -129,7 +144,7 @@ export function StoreDecorationEditor({
     setBusy(true);
     setError(undefined);
     try {
-      const result = await api.grantDelegation(access.anchoredAddress, member);
+      const result = await api.grantDelegation(delegationPublisher(), member);
       setDelegations(result.data);
       setDelegationAddress("");
       setMessage(`已委托 ${member}（仅 Store 侧操作权，不含链上签名权）`);
@@ -141,7 +156,7 @@ export function StoreDecorationEditor({
   }
 
   async function handleRevoke(delegationId: string): Promise<void> {
-    if (busy || !access.anchoredAddress) {
+    if (busy || !canManageDelegations) {
       return;
     }
     setBusy(true);
@@ -166,8 +181,8 @@ export function StoreDecorationEditor({
             setOpen((value) => !value);
             if (!open) {
               seedFrom(decoration?.current);
-              if (access.anchoredAddress) {
-                void loadDelegations(access.anchoredAddress);
+              if (canManageDelegations) {
+                void loadDelegations(delegationPublisher());
               }
             }
           }} data-testid="store-decoration-toggle">
@@ -230,32 +245,38 @@ export function StoreDecorationEditor({
             ))}
           </div>
 
-          <div className="store-decoration-delegation" data-testid="store-decoration-delegation">
-            <h4><UserCog /> 团队委托（publisher 本人管理）</h4>
-            <p className="muted">委托只传递 Store 侧操作权（装修/加入审核），不传递链上签名权；撤销立即生效。</p>
-            <div className="store-decoration-delegation-form">
-              <input
-                value={delegationAddress}
-                onChange={(event) => setDelegationAddress(event.target.value)}
-                placeholder="成员地址 0x…"
-                data-testid="store-delegation-member-input"
-              />
-              <button className="secondary-button" onClick={() => void handleGrant()} disabled={busy}>授予</button>
+          {canManageDelegations ? (
+            <div className="store-decoration-delegation" data-testid="store-decoration-delegation">
+              <h4><UserCog /> 团队委托（publisher 本人管理）</h4>
+              <p className="muted">委托只传递 Store 侧操作权（装修/加入审核），不传递链上签名权；撤销立即生效。</p>
+              <div className="store-decoration-delegation-form">
+                <input
+                  value={delegationAddress}
+                  onChange={(event) => setDelegationAddress(event.target.value)}
+                  placeholder="成员地址 0x…"
+                  data-testid="store-delegation-member-input"
+                />
+                <button className="secondary-button" onClick={() => void handleGrant()} disabled={busy}>授予</button>
+              </div>
+              {delegations ? (
+                <ul className="store-delegation-list">
+                  {delegations.delegations.map((entry) => (
+                    <li key={entry.delegationId} className={entry.revokedAt ? "is-revoked" : ""}>
+                      <span className="mono">{entry.memberAddress}</span>
+                      <span className="muted">{entry.revokedAt ? "已撤销" : "生效中"}</span>
+                      {!entry.revokedAt ? (
+                        <button className="secondary-button" onClick={() => void handleRevoke(entry.delegationId)} disabled={busy}>撤销</button>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
-            {delegations ? (
-              <ul className="store-delegation-list">
-                {delegations.delegations.map((entry) => (
-                  <li key={entry.delegationId} className={entry.revokedAt ? "is-revoked" : ""}>
-                    <span className="mono">{entry.memberAddress}</span>
-                    <span className="muted">{entry.revokedAt ? "已撤销" : "生效中"}</span>
-                    {!entry.revokedAt ? (
-                      <button className="secondary-button" onClick={() => void handleRevoke(entry.delegationId)} disabled={busy}>撤销</button>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
+          ) : (
+            <p className="muted" data-testid="store-delegation-publisher-only">
+              委托（增减团队成员）只属于 publisher 本人；受托成员仅获得装修与加入审核操作权。
+            </p>
+          )}
         </div>
       ) : null}
 
