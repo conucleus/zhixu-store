@@ -84,18 +84,16 @@ export function listingStatusLabel(status: StoreListingView["status"]): string {
   }
 }
 
-/** 红线：锚冲突、已下架、审核未通过或尚未完成上架审核时抑制加入入口。 */
+/**
+ * 红线（fail-closed）：只有服务端明确给出"listing 已公开上架 且 锚核验一致"
+ * 才放开加入入口；从未进入上架流程（无 listing/无核验）、待索引或状态未知
+ * 一律不开——未知不是放行理由。
+ */
 export function joinEntrySuppressed(
   verification: StoreAnchorVerificationView | undefined,
   listing: StoreListingView | undefined,
 ): boolean {
-  if (verification?.status === "conflict") {
-    return true;
-  }
-  if (listing?.status === "delisted" || listing?.status === "rejected" || listing?.status === "imported") {
-    return true;
-  }
-  return false;
+  return !(listing?.status === "public" && verification?.status === "consistent");
 }
 
 export function joinSuppressionReason(
@@ -114,5 +112,11 @@ export function joinSuppressionReason(
   if (listing?.status === "imported") {
     return "该秩序已导入但尚未完成上架审核：审核通过前不开放加入。";
   }
-  return undefined;
+  if (listing?.status !== "public") {
+    return "该秩序尚未在 Store 完成上架（或上架状态未知）：加入入口保持关闭，完成上架并核验一致后才开放。";
+  }
+  if (verification?.status === "pending_indexing") {
+    return "锚核验仍在等待索引：投影确认与链上一致之前不开放加入。";
+  }
+  return "锚核验结果未知：完成上架核验前不开放加入。";
 }

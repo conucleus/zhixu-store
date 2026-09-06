@@ -66,7 +66,7 @@ const zhixuDetail = {
   proofRows: []
 };
 
-type OverlayMode = "consistent" | "conflict" | "delisted";
+type OverlayMode = "consistent" | "conflict" | "delisted" | "absent";
 
 function storeOverlay(mode: OverlayMode): Record<string, unknown> {
   const verification = {
@@ -130,7 +130,10 @@ async function installStoreRoutes(page: Page, options: { readonly overlayMode: O
       return;
     }
     if (pathname.startsWith("/store/zhixus/") && method === "GET") {
-      await fulfill({ zhixu: zhixuDetail, storeOverlay: storeOverlay(options.overlayMode) });
+      // absent：从未进入上架流程的秩序，服务端不返回叠加层。
+      await fulfill(options.overlayMode === "absent"
+        ? { zhixu: zhixuDetail }
+        : { zhixu: zhixuDetail, storeOverlay: storeOverlay(options.overlayMode) });
       return;
     }
     if (pathname === "/store/session" && method === "GET") {
@@ -290,6 +293,19 @@ test("PRD92: delisted listing suppresses the join entry and shows the banner", a
   await expect(page.getByTestId("store-suppression-banner")).toBeVisible();
   await expect(page.getByTestId("store-join-entry")).toHaveCount(0);
   await expect(page.getByTestId("store-anchor-panel")).toContainText("已下架");
+});
+
+test("O25: zhixu that never entered the listing flow keeps the join entry closed", async ({ page }) => {
+  // fail-closed：无上架/锚核验叠加层（状态未知）时不得放开加入入口。
+  await installStoreRoutes(page, { overlayMode: "absent", anchored: true });
+  await installMockWallet(page);
+  await page.goto("/store");
+
+  await page.getByTestId("store-open-zhixu-button").first().click();
+  await expect(page.getByTestId("store-zhixu-detail-page")).toBeVisible();
+  await expect(page.getByTestId("store-suppression-banner")).toBeVisible();
+  await expect(page.getByTestId("store-suppression-banner")).toContainText("未完成上架");
+  await expect(page.getByTestId("store-join-entry")).toHaveCount(0);
 });
 
 test("PRD89: account page login persists the session token and logout clears it", async ({ page }) => {

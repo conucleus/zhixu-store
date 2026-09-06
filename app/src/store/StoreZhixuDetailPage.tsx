@@ -99,7 +99,9 @@ export function StoreZhixuDetailPage({
                   ? "该秩序上架审核未通过"
                   : overlay?.listing?.status === "imported"
                     ? "该秩序上架审核未完成"
-                    : "该秩序已下架"
+                    : overlay?.listing?.status === "delisted"
+                      ? "该秩序已下架"
+                      : "该秩序未完成上架或状态未知"
             }</strong>
             <p>{suppressionReason}</p>
           </div>
