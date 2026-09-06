@@ -91,6 +91,13 @@ export function StoreSearchPage({
 
   const schemaLocked = reviewDraft ? isSchemaLockedStatus(reviewDraft.status) : false;
   const summaryMetricsObserved = result.zhixus.every((zhixu) => zhixu.metricsStatus === "observed");
+  // "可建单"判据以链上投影为准（目录 console DTO 的 lifecycleStatus），
+  // 与目录/详情页同源；draft.status 只描述 Store 工作流，不再是第二套判据。
+  // 草稿对应的秩序尚未出现在目录投影（索引未落地/不可见）时 fail-closed 不开。
+  const draftProjection = reviewDraft?.zhixuId
+    ? result.zhixus.find((zhixu) => zhixu.zhixuId === reviewDraft.zhixuId)
+    : undefined;
+  const draftOrderCreatable = draftProjection?.lifecycleStatus === "active";
 
   async function handleSearchSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -475,7 +482,7 @@ export function StoreSearchPage({
                   tone={productSchema.validation.ok ? "success" : "warning"}
                 />
               </div>
-              <PublishingChecklist draft={reviewDraft} productSchema={productSchema} />
+              <PublishingChecklist draft={reviewDraft} productSchema={productSchema} orderCreatable={draftOrderCreatable} />
               <div className="schema-slot-list" data-testid="store-schema-slot-list">
                 {productSchema.roleSlots.map((slot) => (
                   <article className="schema-slot-row" key={slot.slotId}>
@@ -520,6 +527,7 @@ export function StoreSearchPage({
           <ActionNotice state={schemaAction} testId="store-schema-action-notice" />
           <DraftGovernancePanel
             draft={reviewDraft}
+            orderCreatable={draftOrderCreatable}
             onRefreshCatalog={onRefreshCatalog}
           />
         </section>
@@ -535,12 +543,14 @@ export function StoreSearchPage({
 
 function DraftGovernancePanel({
   draft,
+  orderCreatable,
   onRefreshCatalog
 }: {
   readonly draft: StoreZhixuDraftDTO;
+  /** 以目录链上投影为准的可建单判据，与 catalog/详情页同源。 */
+  readonly orderCreatable: boolean;
   readonly onRefreshCatalog?: (() => Promise<StoreZhixuSearchResultDTO>) | undefined;
 }) {
-  const active = isDraftOrderCreatable(draft);
   return (
     <section className="governance-publish-card" data-testid="store-governance-publishing">
       <div className="governance-publish-head">
@@ -548,30 +558,30 @@ function DraftGovernancePanel({
           <h3>发布状态</h3>
           <p data-testid="store-governance-heading">Store 审核完成后，由发布工具把 Plan 注册到 UVPStateMachine。</p>
         </div>
-        <span className={`status-badge ${active ? "success" : "info"}`} data-testid="store-governance-status">
+        <span className={`status-badge ${orderCreatable ? "success" : "info"}`} data-testid="store-governance-status">
           {draftStatusLabel(draft.status)}
         </span>
       </div>
 
-      <div className={`governance-state-note ${active ? "success" : "info"}`} data-testid="store-governance-state-note" data-state={draft.status}>
-        {active ? <CheckCircle2 /> : <ClipboardCheck />}
+      <div className={`governance-state-note ${orderCreatable ? "success" : "info"}`} data-testid="store-governance-state-note" data-state={draft.status}>
+        {orderCreatable ? <CheckCircle2 /> : <ClipboardCheck />}
         <div>
-          <strong>{active ? "版本已激活" : "等待发布"}</strong>
+          <strong>{orderCreatable ? "版本已激活" : "等待发布"}</strong>
           <p data-testid="store-governance-description">
-            {active
-              ? "Store 投影显示该版本已激活、可创建订单；PlanRegistered 的最终索引状态以链上投影为准。"
-              : "当前草稿仍处于 Store 工作流中；发布工具负责链上注册。"}
+            {orderCreatable
+              ? "链上投影显示该版本已激活、可创建订单；PlanRegistered 的最终索引状态以链上投影为准。"
+              : "当前草稿仍处于 Store 工作流中，或目录投影尚未观察到激活（可能仍在索引）；发布工具负责链上注册。"}
           </p>
         </div>
       </div>
 
-      {active ? (
+      {orderCreatable ? (
         <div className="governance-publish-complete" data-testid="store-publishing-complete" data-state="container-ready">
           <div className="governance-publish-complete-head">
             <CheckCircle2 />
             <div>
               <strong>标准信号容器已就绪</strong>
-              <p>Store 投影显示该版本已激活，可作为标准信号容器创建订单；PlanRegistered 索引状态以链上投影为准。</p>
+              <p>链上投影显示该版本已激活，可作为标准信号容器创建订单；PlanRegistered 索引状态以链上投影为准。</p>
             </div>
           </div>
           {onRefreshCatalog ? (
@@ -596,12 +606,15 @@ function DraftGovernancePanel({
 
 function PublishingChecklist({
   draft,
-  productSchema
+  productSchema,
+  orderCreatable
 }: {
   readonly draft: StoreZhixuDraftDTO;
   readonly productSchema: StoreProductSchemaDTO;
+  /** 以目录链上投影为准的可建单判据，与 catalog/详情页同源。 */
+  readonly orderCreatable: boolean;
 }) {
-  const items = publishingChecklistItems(draft, productSchema);
+  const items = publishingChecklistItems(draft, productSchema, orderCreatable);
   return (
     <section className="store-publishing-checklist" data-testid="store-publishing-checklist">
       <div className="store-publishing-checklist-head">
@@ -609,8 +622,8 @@ function PublishingChecklist({
           <h3>发布清单</h3>
           <p>依次检查草稿、编译、资源清单、履约标签、Store 审核与 StateMachine 发布。</p>
         </div>
-        <span className={`status-badge ${isDraftOrderCreatable(draft) ? "success" : "info"}`} data-testid="store-publishing-checklist-summary">
-          {isDraftOrderCreatable(draft) ? "order-creatable" : "order-blocked"}
+        <span className={`status-badge ${orderCreatable ? "success" : "info"}`} data-testid="store-publishing-checklist-summary">
+          {orderCreatable ? "order-creatable" : "order-blocked"}
         </span>
       </div>
       <div className="store-publishing-checklist-grid">
@@ -887,7 +900,8 @@ interface PublishingChecklistItem {
 
 function publishingChecklistItems(
   draft: StoreZhixuDraftDTO,
-  productSchema: StoreProductSchemaDTO
+  productSchema: StoreProductSchemaDTO,
+  orderCreatable: boolean
 ): readonly PublishingChecklistItem[] {
   const resourceReady = isResourceManifestReviewed(productSchema);
   const supplierPassportReady = isSupplierCapabilityPassportReviewed(productSchema);
@@ -939,11 +953,11 @@ function publishingChecklistItems(
     {
       id: "order-creatable",
       label: "StateMachine publication",
-      detail: isDraftOrderCreatable(draft)
-        ? "PlanRegistered 已被索引，可以创建订单。"
-        : "等待发布工具注册 Plan 并由索引器确认。",
-      state: isDraftOrderCreatable(draft) ? "done" : "blocked",
-      tone: isDraftOrderCreatable(draft) ? "success" : "warning"
+      detail: orderCreatable
+        ? "链上投影已观察到 PlanRegistered（目录 lifecycleStatus=active），可以创建订单。"
+        : "等待发布工具注册 Plan 并由链上投影观察到（目录尚未显示 active 前不开放建单）。",
+      state: orderCreatable ? "done" : "blocked",
+      tone: orderCreatable ? "success" : "warning"
     }
   ];
 }
@@ -985,10 +999,6 @@ function isSupplierCapabilityPassportReviewed(productSchema: StoreProductSchemaD
 
 function isStoreReviewApprovedStatus(status: StoreZhixuDraftStatus): boolean {
   return status === "approved_for_broadcast" || status === "active";
-}
-
-function isDraftOrderCreatable(draft: StoreZhixuDraftDTO): boolean {
-  return draft.status === "active";
 }
 
 function isSchemaLockedStatus(status: StoreZhixuDraftStatus): boolean {
