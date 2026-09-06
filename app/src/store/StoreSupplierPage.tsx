@@ -536,5 +536,7 @@ function normalizeTextList(value: string): readonly string[] {
 }
 
 function uniqueSorted(values: readonly string[]): readonly string[] {
-  return [...new Set(values)].sort((left, right) => left.localeCompare(right));
+  // 码点序（等价 UTF-8 字节序）：该列表会随 metadata 持久化并参与摘要，
+  // localeCompare 依赖机器 locale，跨机器会产生不同顺序。
+  return [...new Set(values)].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
 }
