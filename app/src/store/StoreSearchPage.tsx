@@ -481,7 +481,9 @@ export function StoreSearchPage({
           <div className="panel-heading">
             <div>
               <h2>能力插件审查</h2>
-              <p>{reviewDraft.title} · {reviewDraft.status} · {reviewDraft.draftId}</p>
+              <p>
+                {reviewDraft.zhixuDisplay ?? reviewDraft.title} · {reviewDraft.status} · {reviewDraft.draftId}
+              </p>
             </div>
             <div className="button-row store-toolbar-actions">
               <button className="secondary-button" disabled={schemaAction.phase === "pending" || schemaLocked} onClick={() => void handleCompileDraft()}>
@@ -955,7 +957,7 @@ function publishingChecklistItems(
       id: "compile",
       label: "compile valid",
       detail: draft.compilePreview
-        ? `${shortHash(draft.compilePreview.planId, { prefixLength: 8, suffixLength: 8 })} / ${shortHash(draft.compilePreview.planHash, { prefixLength: 8, suffixLength: 8 })}`
+        ? `${draft.zhixuDisplay ? `${draft.zhixuDisplay} · ` : ""}${shortHash(draft.compilePreview.planId, { prefixLength: 8, suffixLength: 8 })} / ${shortHash(draft.compilePreview.planHash, { prefixLength: 8, suffixLength: 8 })}`
         : "等待编译预览生成 deterministic plan identity。",
       state: draft.compilePreview ? "done" : draft.status === "compile_failed" ? "blocked" : "pending",
       tone: draft.compilePreview ? "success" : draft.status === "compile_failed" ? "warning" : "default"

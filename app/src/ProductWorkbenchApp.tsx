@@ -1507,7 +1507,7 @@ function DockableModules({ modules }: { modules: readonly DockableZhixuModuleDTO
   return (
     <div className="dock-module-grid">
       {modules.map((module) => (
-        <article className="dock-module-card" key={module.title}>
+        <article className="dock-module-card" key={module.interfaceName}>
           <div className="dock-module-title">
             <span><Layers3 /></span>
             <div>
@@ -1519,7 +1519,15 @@ function DockableModules({ modules }: { modules: readonly DockableZhixuModuleDTO
             </StatusBadge>
           </div>
           <div className="dock-port-row">
-            {module.ports.map((port) => <span key={port}>{port}</span>)}
+            {module.inputs.map((port) => (
+              <span key={`in:${port.portName}`}>入口 {port.label}</span>
+            ))}
+            {module.outputs.map((port) => (
+              <span key={`out:${port.portName}`}>出口 {port.label}</span>
+            ))}
+          </div>
+          <div className="dock-port-row">
+            <span>下单模式：{module.orderModes.join(" / ")}</span>
           </div>
         </article>
       ))}

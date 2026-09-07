@@ -12,7 +12,7 @@ const WALLET_ADDRESS = "0x19e7e376e7c213b7e7e7e46cc70a5dd086daff2a";
 const PLAN_ID = "0x0000000000000000000000000000000000000000000000000000000000000101";
 
 const zhixuRow = {
-  zhixuId: "cross-border-high-value-staged-payment",
+  zhixuId: "zx-3fa636e0229362fa4f6db3db37737a17",
   title: "跨境高价值 staged payment",
   subtitle: "演示秩序",
   reviewStatus: "approved",

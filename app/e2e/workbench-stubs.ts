@@ -13,7 +13,8 @@ import { customsDemoTaskConfig } from "../src/product/demo/customs-demo-config";
 export const STUB_API_BASE = "http://127.0.0.1:9";
 
 export const stubZhixu = {
-  zhixuId: "zhixu-cross-border-high-value",
+  // 派生身份演示值（zx-+32hex，与编译产物 zhixuId 同形态）。
+  zhixuId: "zx-3fa636e0229362fa4f6db3db37737a17",
   title: "跨境高价值货物履约秩序",
   subtitle: "买家、卖家、报关、物流、检验方按同一套阶段推进",
   reviewStatus: "approved",
@@ -40,7 +41,15 @@ export const stubZhixu = {
     { slotId: "validation", title: "检验方", label: "验收确认", duty: "验收货物", evidence: ["验收单"], status: "optional", tone: "neutral", required: false }
   ],
   dockableModules: [
-    { moduleId: "funds-protection", title: "资金保障", desc: "付款条件由订单状态约束", ports: ["付款确认"], status: "available" }
+    {
+      interfaceName: "funds_protection",
+      orderModes: ["new"],
+      title: "资金保障",
+      desc: "付款条件由订单状态约束",
+      inputs: [{ portName: "payment_evidence", label: "付款确认", hook: "funding.intake#EXECUTE" }],
+      outputs: [{ portName: "guarantee_proof", label: "担保证明", signal: "guarantor::funding.escrow.guarantee" }],
+      status: "available"
+    }
   ],
   stages: [
     { stageId: "stage-export-customs", index: 1, name: "出口报关", evidence: ["报关单"], ownerRole: "报关物流", status: "active" },

@@ -413,15 +413,15 @@ test.describe("Product Workbench browser smoke", () => {
   });
 
   test("keeps the workbench usable when one zhixu detail fails while others succeed", async ({ page }) => {
-    const zhixuB = { ...stubZhixu, zhixuId: "zhixu-cross-border-high-value-b", title: "备用履约秩序" };
+    const zhixuB = { ...stubZhixu, zhixuId: "zx-3fa636e0229362fa4f6db3db37737a18", title: "备用履约秩序" };
     await installWorkbenchRoutes(page, {
       overrides: {
         // 失败的秩序详情 404；存活的详情显式给桩，避免被列表前缀覆盖
-        "/product/zhixus/zhixu-cross-border-high-value-b": {
+        "/product/zhixus/zx-3fa636e0229362fa4f6db3db37737a18": {
           status: 404,
           body: { error: "not_found" }
         },
-        "/product/zhixus/zhixu-cross-border-high-value": {
+        "/product/zhixus/zx-3fa636e0229362fa4f6db3db37737a17": {
           body: { zhixu: stubZhixu }
         },
         "/product/zhixus": {
