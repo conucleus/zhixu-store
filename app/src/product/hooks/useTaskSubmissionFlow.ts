@@ -233,11 +233,15 @@ export function useTaskSubmissionFlow(input: {
       });
       // 与 executor-kit 同边界：签名前校验 typedData 的 primaryType、domain 和 submitter，
       // prepared 记录与 typedData 声明的提交方必须一致，防止换签名对象。
+      // verifyingContract 与任务投影携带的状态机部署地址交叉核对，防被攻陷 BFF 换域。
       const signature = await signTypedData(account, preparedResult.data.typedData, {
         primaryType: "UVPStateMachineSignal",
         domainName: "UVPStateMachine",
         // 协议冻结面：domain.version 以 protocol-bindings 导出的常量为唯一来源。
         domainVersion: PRODUCT_SUBMIT_DOMAIN_VERSION,
+        ...(activeTask.stateMachineAddress
+          ? { verifyingContract: activeTask.stateMachineAddress }
+          : {}),
         submitter: account.address,
         preparedSubmitters: [preparedResult.data.summary.walletAddress]
       });

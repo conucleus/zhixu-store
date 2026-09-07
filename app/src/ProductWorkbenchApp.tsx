@@ -71,6 +71,8 @@ import {
   emptyTaskEvidenceFieldValues,
   missingTaskEvidenceSlotLabels,
   resolveWorkbenchTask,
+  taskSubmitIntent,
+  taskSubmitIntentCopy,
   type TaskEvidenceFieldValues,
   type TaskEvidencePlan,
   type TaskEvidenceSlot
@@ -1058,6 +1060,17 @@ function TaskPage({
       <BackLine onClick={onBack}>返回待办列表</BackLine>
       <h1>{task.title}</h1>
       <p className="page-subtitle">{task.subtitle}</p>
+      {task.status === "blocked" && task.blockedReason ? (
+        // 服务端已给出确定原因的 blocked 是终态（如链上条件已取消），
+        // 如实呈现原因，不渲染成无限期的"同步中"。
+        <div className="warning-box" data-testid="task-blocked-reason" role="alert">
+          <AlertTriangle />
+          <div>
+            <strong>该待办已阻塞（终态）</strong>
+            <p>{task.blockedReason}</p>
+          </div>
+        </div>
+      ) : null}
       <div className="summary-strip task-summary">
         <SummaryItem icon={<FileText />} label="订单" title={task.orderTitle} />
         <SummaryItem icon={<Layers3 />} label="阶段" title={task.stageName} />
@@ -1225,6 +1238,8 @@ function SubmitPage({
     submitMachine.status === "wallet_rejected";
   const proofRows = submitMachine.submission?.proofRows ?? task.proofRows;
   const declaredEvidenceLabels = evidencePlan.slots.map((slot) => slot.label);
+  // 主文案按提交意图出：拒绝/争议意图不得固定显示"确认阶段完成"。
+  const intentCopy = taskSubmitIntentCopy(taskSubmitIntent(task));
   // 所见即所签：确认页列出全部已上传证据（签名覆盖的 evidenceIds 与之一一对应），
   // 每条带槽位名与指纹；纯字段任务没有文件凭证时如实说明。
   const uploadedEvidence = evidencePlan.slots
@@ -1233,13 +1248,13 @@ function SubmitPage({
   return (
     <section className="page-shell" data-testid="submit-page">
       <BackLine onClick={onBack}>返回待办详情</BackLine>
-      <h1>确认阶段完成 / 提交结果</h1>
+      <h1>{intentCopy.pageTitle}</h1>
       <p className="page-subtitle">请确认凭证指纹和责任声明，钱包授权后会进入提交中状态。</p>
       <div className="submit-layout">
         <Panel>
-          <StatusBadge tone="info">确认提交</StatusBadge>
-          <h2>确认阶段完成</h2>
-          <p>请确认你将代表 {task.assigneeRole} 提交本阶段完成确认。</p>
+          <StatusBadge tone="info">{intentCopy.badge}</StatusBadge>
+          <h2>{intentCopy.panelTitle}</h2>
+          <p>请确认你将代表 {task.assigneeRole} {intentCopy.actionPhrase}。</p>
           <ul className="confirm-list">
             <li><strong>订单：</strong>{task.orderTitle}</li>
             <li><strong>阶段：</strong>{task.stageName}</li>
@@ -1298,7 +1313,7 @@ function SubmitPage({
           <StatusBadge tone={confirmed ? "success" : failed ? "warning" : "info"}>{submitStatusLabel(submitMachine.status)}</StatusBadge>
           <div className="success-hero">
             <span className={failed ? "danger" : ""}>{confirmed ? <Check /> : pending ? <Loader2 className="spin" /> : failed ? <AlertTriangle /> : <Clock3 />}</span>
-            <h2>{confirmed ? "已确认阶段完成" : submitStatusTitle(submitMachine.status)}</h2>
+            <h2>{confirmed ? intentCopy.confirmedTitle : submitStatusTitle(submitMachine.status)}</h2>
             <p>{submitMachine.message}</p>
           </div>
           <ul className="success-list">

@@ -16,10 +16,12 @@ import {
   isEvidenceSlotStale,
   missingTaskEvidenceSlotLabels,
   planTaskEvidence,
+  readableError,
   resolveWorkbenchTask,
   submissionPollOutcome,
   submissionTerminalMessage,
   taskSubmitIntent,
+  taskSubmitIntentCopy,
   validateEvidenceFileForSlot
 } from "./workbenchSupport";
 import { customsDemoTaskConfig } from "../demo/customs-demo-config";
@@ -346,6 +348,23 @@ describe("submission poll tiering", () => {
   });
 });
 
+describe("readableError permission judgement", () => {
+  it("maps permission errors only from the structured http status", () => {
+    const forbidden = new Error("forbidden");
+    (forbidden as { status?: number }).status = 403;
+    assert.equal(readableError(forbidden, "fallback"), "当前账号没有权限执行该操作");
+  });
+
+  it("does not treat message substrings like 403 as a permission error", () => {
+    // 订单号/块高等数字撞上"403"子串时不得误标为权限错误。
+    const notForbidden = new Error("order 4031 not found");
+    assert.equal(readableError(notForbidden, "fallback"), "order 4031 not found");
+    const withOtherStatus = new Error("not found");
+    (withOtherStatus as { status?: number }).status = 404;
+    assert.equal(readableError(withOtherStatus, "fallback"), "not found");
+  });
+});
+
 describe("spec-driven submit intent", () => {
   it("falls back to confirm_stage when the task carries no manifest", () => {
     assert.equal(taskSubmitIntent(minimalTask("task-1")), "confirm_stage");
@@ -391,5 +410,15 @@ describe("spec-driven submit intent", () => {
       }
     };
     assert.equal(taskSubmitIntent(task), "confirm_stage");
+  });
+
+  it("wording follows the intent and never shows 确认阶段完成 for rejection or dispute intents", () => {
+    for (const intent of ["reject_stage", "raise_dispute", "resolve_dispute"] as const) {
+      const copy = taskSubmitIntentCopy(intent);
+      assert.ok(!copy.panelTitle.includes("确认阶段完成"), `${intent} 不复用 confirm_stage 主文案`);
+      assert.ok(!copy.confirmedTitle.includes("确认阶段完成"), `${intent} 不复用 confirm_stage 完成文案`);
+    }
+    assert.equal(taskSubmitIntentCopy("confirm_stage").panelTitle, "确认阶段完成");
+    assert.equal(taskSubmitIntentCopy("reject_stage").panelTitle, "拒绝本阶段");
   });
 });

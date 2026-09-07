@@ -222,6 +222,21 @@ describe("workbench sync state judgement", () => {
     assert.equal(data.activeTask?.status, "blocked");
   });
 
+  it("treats blocked tasks that carry a server blockedReason as terminal, not syncing", async () => {
+    // 服务端对链上终态 cancelled / 元数据缺失都会给 blocked + blockedReason；
+    // 已取消任务不得无限期显示"订单状态同步中"。
+    const client = clientWith(baseRoutes({
+      "/product/tasks": {
+        body: { tasks: [{ taskId: "task-1", orderId: "order-1", status: "blocked", blockedReason: "链上条件已取消，当前任务不能继续提交" }] }
+      }
+    }));
+
+    const data = await client.loadWorkbenchData();
+
+    assert.equal(data.syncState, "ready");
+    assert.equal(data.activeTask?.blockedReason, "链上条件已取消，当前任务不能继续提交");
+  });
+
   it("never derives syncing from the display statusLabel of an order", async () => {
     // 后端对链上状态 unknown 的订单会下发合成标签“同步中”；
     // 标签只是渲染文案，不得充当状态机判据（中文标签不充当判据）。

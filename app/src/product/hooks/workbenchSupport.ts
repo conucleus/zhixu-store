@@ -27,10 +27,19 @@ export function readableError(error: unknown, fallback: string): string {
   if (error.message.includes("evidence_required")) {
     return "请先上传凭证";
   }
-  if (error.message.includes("403")) {
+  if (errorHttpStatus(error) === 403) {
     return "当前账号没有权限执行该操作";
   }
   return error.message && error.message !== "Failed to fetch" ? error.message : fallback;
+}
+
+/**
+ * 权限判定只认结构化的 HTTP 状态字段（产品 API 错误对象携带的 status），
+ * 不做消息子串匹配：消息里出现"403"数字（单号、块高等）不是权限错误。
+ */
+function errorHttpStatus(error: Error): number | undefined {
+  const status = (error as { readonly status?: unknown }).status;
+  return typeof status === "number" ? status : undefined;
 }
 
 export function delay(ms: number): Promise<void> {
@@ -321,6 +330,56 @@ export function taskSubmitIntent(
     .filter((action) => action.actionKind === "submit_signal");
   const primary = submitActions.find((action) => action.primary) ?? submitActions[0];
   return primary?.intent ?? "confirm_stage";
+}
+
+export interface TaskSubmitIntentCopy {
+  readonly pageTitle: string;
+  readonly badge: string;
+  readonly panelTitle: string;
+  /** 句式主语后的动作描述，如"提交本阶段完成确认"。 */
+  readonly actionPhrase: string;
+  readonly confirmedTitle: string;
+}
+
+/**
+ * 确认页主文案按提交 intent 出：拒绝/争议意图不得继续显示
+ * "确认阶段完成"，否则签名者看到的承诺与实际提交的信号相反。
+ */
+export function taskSubmitIntentCopy(intent: TaskSubmitIntent): TaskSubmitIntentCopy {
+  switch (intent) {
+    case "reject_stage":
+      return {
+        pageTitle: "拒绝本阶段 / 提交结果",
+        badge: "确认拒绝",
+        panelTitle: "拒绝本阶段",
+        actionPhrase: "提交本阶段拒绝结论",
+        confirmedTitle: "已提交阶段拒绝"
+      };
+    case "raise_dispute":
+      return {
+        pageTitle: "提交争议材料 / 提交结果",
+        badge: "确认争议材料",
+        panelTitle: "提交争议材料",
+        actionPhrase: "提交本阶段争议材料",
+        confirmedTitle: "已提交争议材料"
+      };
+    case "resolve_dispute":
+      return {
+        pageTitle: "提交争议解决结论 / 提交结果",
+        badge: "确认争议解决",
+        panelTitle: "提交争议解决结论",
+        actionPhrase: "提交本阶段争议解决结论",
+        confirmedTitle: "已提交争议解决结论"
+      };
+    case "confirm_stage":
+      return {
+        pageTitle: "确认阶段完成 / 提交结果",
+        badge: "确认提交",
+        panelTitle: "确认阶段完成",
+        actionPhrase: "提交本阶段完成确认",
+        confirmedTitle: "已确认阶段完成"
+      };
+  }
 }
 
 export type SubmissionPollOutcome = "confirmed" | "terminal_failure" | "pending";

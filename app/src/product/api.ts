@@ -925,12 +925,16 @@ function isSnakeCaseIdentifier(value: string): boolean {
 }
 
 /**
- * 同步判据只用结构化状态字段：任务投影未跟上（含链上状态 unknown）时后端给出
- * blocked。订单 DTO 的 status 是单值联合（"registered"），结构上无法表达
- * "同步中"；statusLabel 只是展示文案，不得反过来充当状态机判据。
+ * 同步判据只用结构化状态字段。服务端把链上终态（cancelled）、投影未跟上
+ * （unknown）和元数据缺失都折叠成 blocked，但只有已给出确定原因的 blocked
+ * 会附带 blockedReason（cancelled=条件已取消 / 缺插件元数据）；blocked 且无
+ * blockedReason 才是"投影未跟上"的过渡态。带 blockedReason 的 blocked 是
+ * 服务端已有结论的终态，不得渲染成无限期的"同步中"。订单 DTO 的 status 是
+ * 单值联合（"registered"），结构上无法表达"同步中"；statusLabel 只是展示
+ * 文案，不得反过来充当状态机判据。
  */
 function isSyncing(task: ProductTaskDTO | undefined): boolean {
-  return task?.status === "blocked";
+  return task?.status === "blocked" && !task.blockedReason;
 }
 
 function sortLatestProjectionFirst<TItem extends { readonly projection?: ProductProjectionFreshnessDTO | undefined }>(items: readonly TItem[]): readonly TItem[] {

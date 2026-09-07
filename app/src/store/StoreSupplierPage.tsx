@@ -30,7 +30,7 @@ type SupplierActionState =
   | { readonly phase: "error"; readonly message: string };
 
 interface SupplierEditForm {
-  readonly capabilityTags: readonly string[];
+  readonly capabilityTagsText: string;
   readonly roleSlotIdsText: string;
   readonly stageIdsText: string;
 }
@@ -89,7 +89,7 @@ export function StoreSupplierPage({
   const openEdit = (supplier: StoreSupplierDTO) => {
     setEditingSupplierId(supplier.supplierId);
     setEditForm({
-      capabilityTags: supplier.capabilityTags,
+      capabilityTagsText: supplier.capabilityTags.join("\n"),
       roleSlotIdsText: supplier.supportedRoleSlotIds.join("\n"),
       stageIdsText: supplier.supportedStageIds.join("\n"),
     });
@@ -112,7 +112,7 @@ export function StoreSupplierPage({
     });
     try {
       const result = await api.updateSupplierCapabilities(supplier.supplierId, {
-        capabilityTags: editForm.capabilityTags,
+        capabilityTags: normalizeTextList(editForm.capabilityTagsText),
         supportedRoleSlotIds: normalizeTextList(editForm.roleSlotIdsText),
         supportedStageIds: normalizeTextList(editForm.stageIdsText),
         reviewStatus: supplier.reviewStatus,
@@ -357,14 +357,21 @@ function SupplierEditPanel({
         <label className="field">
           <span>capabilityTags</span>
           <textarea
-            onChange={(event) =>
+            onBlur={(event) =>
+              // 归一放到失焦/保存时：onChange 归一会吞掉行尾换行与逗号，
+              // 让“每行一个”的输入方式在敲回车的瞬间就被破坏。
               setForm({
                 ...form,
-                capabilityTags: normalizeTextList(event.target.value),
+                capabilityTagsText: normalizeTextList(
+                  event.target.value,
+                ).join("\n"),
               })
             }
+            onChange={(event) =>
+              setForm({ ...form, capabilityTagsText: event.target.value })
+            }
             placeholder="每行一个 Store 内部标签"
-            value={form.capabilityTags.join("\n")}
+            value={form.capabilityTagsText}
           />
         </label>
         <label className="field">

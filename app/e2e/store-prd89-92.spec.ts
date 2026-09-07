@@ -267,6 +267,8 @@ test("PRD92/90: consistent overlay keeps the join entry and shows decoration the
   await expect(page.getByTestId("store-zhixu-detail-page")).toBeVisible();
   await expect(page.getByTestId("store-anchor-panel")).toHaveAttribute("data-anchor-status", "consistent");
   await expect(page.getByTestId("store-join-entry")).toBeVisible();
+  // 健康态（listing=public 且核验=consistent）不渲染任何"加入不开放"横幅。
+  await expect(page.getByTestId("store-suppression-banner")).toHaveCount(0);
   // 装修主题覆盖展示名（PRD91 theme）。
   await expect(page.getByRole("heading", { name: "装修后的展示名" })).toBeVisible();
   // 装修面板出现且非 publisher 只读。
