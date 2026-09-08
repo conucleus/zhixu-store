@@ -36,7 +36,8 @@ export function StoreDockingPage({
     [initialSourceZhixuId, zhixus]
   );
   // 目标秩序必须由操作员显式选择：不再静默取“第一个非来源秩序”，
-  // 也不允许回落到来源秩序自身（自试拼没有意义且服务端暂不拒绝）。
+  // 也不允许回落到来源秩序自身——自试拼无业务意义，服务端 STORE-03
+  // 也会以 self_docking_forbidden 拒绝。
   const [selectedTargetZhixuId, setSelectedTargetZhixuId] = useState("");
   const targetZhixu = zhixus.find((item) => item.zhixuId === selectedTargetZhixuId);
   const sameAsSource = Boolean(targetZhixu && sourceZhixu && targetZhixu.zhixuId === sourceZhixu.zhixuId);

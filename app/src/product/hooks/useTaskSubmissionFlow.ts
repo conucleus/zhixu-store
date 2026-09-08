@@ -71,6 +71,7 @@ export function useTaskSubmissionFlow(input: {
     message: "等待上传凭证并确认提交"
   });
   const [disputeAction, setDisputeAction] = useState<ActionState>(idleAction);
+  const submitInflightRef = useRef(false);
   const taskScopeKey = activeTask
     ? `${activeTask.orderId}:${activeTask.taskId}:${activeTask.stageId}`
     : "none";
@@ -171,6 +172,12 @@ export function useTaskSubmissionFlow(input: {
   }
 
   async function handleConfirmSubmit(): Promise<void> {
+    // 连击互斥：提交是 prepare→签名→上链→轮询的长链路，按钮的 pending 禁用
+    // 要等状态落盘+重渲染才生效，同步 ref 互斥挡住重渲染前的第二次点击
+    // （服务端 first-writer-wins 只是兜底，不能依赖）。
+    if (submitInflightRef.current) {
+      return;
+    }
     if (!activeTask) {
       setSubmitMachine({ status: "failed", message: "暂无可提交的待办" });
       return;
@@ -211,6 +218,7 @@ export function useTaskSubmissionFlow(input: {
       });
       return;
     }
+    submitInflightRef.current = true;
     try {
       setSubmitMachine({ status: "preparing", message: "正在准备签名前摘要" });
       const account = await requestWalletAccount();
@@ -278,6 +286,8 @@ export function useTaskSubmissionFlow(input: {
         return;
       }
       setSubmitMachine({ status: "failed", message: readableError(error, "确认提交失败") });
+    } finally {
+      submitInflightRef.current = false;
     }
   }
 
