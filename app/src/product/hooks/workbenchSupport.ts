@@ -128,8 +128,26 @@ export function acceptAllowsFile(accept: readonly string[], file: EvidenceFileMe
   const mime = file.type.trim().toLowerCase();
   const extension = extensionOf(file.name);
   return rules.some((rule) =>
-    (mime.length > 0 && rule === mime) || (extension.length > 0 && rule === extension)
+    ruleAcceptsMime(rule, mime) || (extension.length > 0 && rule === extension)
   );
+}
+
+/**
+ * MIME 条目按全等或 <type>/* 通配命中。协议校验器放行通配 MIME（如 image/*），
+ * 若前端只做全等匹配，该槽位任何文件都匹配不上，永远无法上传。
+ */
+function ruleAcceptsMime(rule: string, mime: string): boolean {
+  if (mime.length === 0) {
+    return false;
+  }
+  if (rule === mime) {
+    return true;
+  }
+  if (!rule.endsWith("/*")) {
+    return false;
+  }
+  const typePrefix = rule.slice(0, -1);
+  return typePrefix === "*/" || mime.startsWith(typePrefix);
 }
 
 const PDF_MIME = "application/pdf";
@@ -286,8 +304,31 @@ export function evidenceMetadataSignature(fields: TaskEvidenceFieldValues): stri
       entries.push([key, trimmed]);
     }
   }
-  entries.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  // 键序用码点序，与 uvp-core/uvp-protocol/uvp-order-app 的 canonical 口径一致；
+  // UTF-16 码元序会让增补平面字符的键排错位，跨端指纹对不上。
+  entries.sort(([left], [right]) => compareByCodePoint(left, right));
   return JSON.stringify(entries);
+}
+
+// 码点序等价 UTF-8 字节序；localeCompare 依赖 ICU/locale，同一份字段在不同
+// 环境会签出不同指纹。按码点而非 UTF-16 码元比较：增补平面字符的代理对在
+// 码元序里会排到 U+E000..U+FFFF 之前，偏离字节序。
+function compareByCodePoint(left: string, right: string): number {
+  if (left === right) {
+    return 0;
+  }
+  let leftIndex = 0;
+  let rightIndex = 0;
+  while (leftIndex < left.length && rightIndex < right.length) {
+    const leftCode = left.codePointAt(leftIndex)!;
+    const rightCode = right.codePointAt(rightIndex)!;
+    if (leftCode !== rightCode) {
+      return leftCode < rightCode ? -1 : 1;
+    }
+    leftIndex += leftCode > 0xffff ? 2 : 1;
+    rightIndex += rightCode > 0xffff ? 2 : 1;
+  }
+  return leftIndex < left.length ? 1 : rightIndex < right.length ? -1 : 0;
 }
 
 /** 槽位是否 stale：无快照（该槽位没有上传记录）恒为 false；字段签名与上传时不一致即 stale。 */

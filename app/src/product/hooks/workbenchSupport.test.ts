@@ -124,6 +124,13 @@ describe("evidence accept constraints", () => {
     assert.equal(acceptAllowsFile([], { size: 10, name: "任意.bin", type: "" }), true);
   });
 
+  it("expands wildcard MIME entries so image/* slots are uploadable", () => {
+    assert.equal(acceptAllowsFile(["image/*"], { size: 10, name: "照片.png", type: "image/png" }), true);
+    assert.equal(acceptAllowsFile(["image/*"], { size: 10, name: "照片.jpg", type: "image/jpeg" }), true);
+    assert.equal(acceptAllowsFile(["image/*"], { size: 10, name: "凭证.pdf", type: "application/pdf" }), false);
+    assert.equal(acceptAllowsFile(["*/*"], { size: 10, name: "任意.png", type: "image/png" }), true);
+  });
+
   it("normalizes bare extension entries so accept=[\"pdf\"] cannot bypass checks", () => {
     // 无点前缀的 accept=["pdf"] 既匹配不到扩展名，也绕不过 %PDF- 快检的前提
     // 是先归一化补点。
@@ -305,6 +312,15 @@ describe("evidence metadata snapshot staleness", () => {
   it("ignores whitespace-only differences, matching upload metadata semantics", () => {
     const snapshot = evidenceMetadataSignature({ port: "洋山港" });
     assert.equal(isEvidenceSlotStale(snapshot, { port: "  洋山港  " }), false);
+  });
+
+  it("orders signature keys by code point, not UTF-16 code units", () => {
+    const astral = "\u{1F600}键";
+    const bmp = "\uFFFF键";
+    assert.equal(
+      evidenceMetadataSignature({ [astral]: "1", [bmp]: "2" }),
+      JSON.stringify([[bmp, "2"], [astral, "1"]])
+    );
   });
 });
 
