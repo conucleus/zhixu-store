@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { ProductTaskDTO } from "@uvp-eth/product-dto";
+import type { FulfillmentPluginKind, ProductTaskDTO } from "@uvp-eth/product-dto";
 import {
   EVIDENCE_MAX_FILE_BYTES,
   FRAMEWORK_METADATA_PREFIX,
@@ -454,6 +454,36 @@ describe("spec-driven submit intent", () => {
       }
     };
     assert.equal(taskSubmitIntent(task), "confirm_stage");
+  });
+
+  it("falls back to the capability plugin kind mapping when the manifest declares no intent (aligned with uvp-order-app)", () => {
+    const withPluginKind = (taskId: string, pluginKind: FulfillmentPluginKind): ProductTaskDTO => ({
+      ...minimalTask(taskId),
+      capabilityPlugin: { pluginKind, source: "explicit" }
+    });
+    assert.equal(taskSubmitIntent(withPluginKind("task-dispute", "dispute_material")), "raise_dispute");
+    assert.equal(taskSubmitIntent(withPluginKind("task-confirm", "delivery_update")), "confirm_stage");
+  });
+
+  it("prefers the manifest intent over a disagreeing capability plugin kind", () => {
+    const task: ProductTaskDTO = {
+      ...minimalTask("task-4"),
+      capabilityPlugin: { pluginKind: "dispute_material", source: "explicit" },
+      addOnManifest: {
+        schemaVersion: "participant-addon-manifest.v1",
+        manifestId: "manifest-3",
+        roleSlotId: "delivery",
+        addOnKind: "submit_signal",
+        title: "插件",
+        summary: "",
+        stageBindings: [],
+        pages: [],
+        actions: [
+          { actionId: "a-primary", actionKind: "submit_signal", label: "主操作", primary: true, inputBindings: {}, intent: "reject_stage" }
+        ]
+      }
+    };
+    assert.equal(taskSubmitIntent(task), "reject_stage");
   });
 
   it("wording follows the intent and never shows 确认阶段完成 for rejection or dispute intents", () => {

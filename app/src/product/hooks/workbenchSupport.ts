@@ -1,6 +1,7 @@
 import {
   lifecycleStatusForZhixu,
   validateTaskEvidenceSpec,
+  type FulfillmentPluginKind,
   type ProductResourceRequirementDTO,
   type ProductTaskDTO,
   type TaskEvidenceSpecDTO,
@@ -374,17 +375,31 @@ export function resolveWorkbenchTask(
 
 export type TaskSubmitIntent = "confirm_stage" | "reject_stage" | "raise_dispute" | "resolve_dispute";
 
+/** 无 manifest 声明时的兜底映射：争议任务不得以 confirm_stage 提交。 */
+const submitIntentByPluginKind: Readonly<Record<FulfillmentPluginKind, TaskSubmitIntent>> = {
+  payment_placeholder: "confirm_stage",
+  evidence_submission: "confirm_stage",
+  delivery_update: "confirm_stage",
+  validation_confirm: "confirm_stage",
+  dispute_material: "raise_dispute"
+};
+
 /**
- * 提交 intent 以任务携带的 spec（addOnManifest 的 submit_signal 动作声明）驱动，
- * 与订单工作台的 manifest 口径一致；spec 未声明 intent 时才回落 confirm_stage。
+ * 提交意图与 uvp-order-app 同源同序：manifest 显式声明的 submit_signal intent
+ * 优先（发布者声明是权威），无 manifest 声明时按能力插件类型推导。
+ * 两端各自单源推导会在 manifest 与插件类型不一致时得出不同 intent。
  */
 export function taskSubmitIntent(
-  task: Pick<ProductTaskDTO, "addOnManifest">
+  task: Pick<ProductTaskDTO, "addOnManifest" | "capabilityPlugin">
 ): TaskSubmitIntent {
   const submitActions = (task.addOnManifest?.actions ?? [])
     .filter((action) => action.actionKind === "submit_signal");
   const primary = submitActions.find((action) => action.primary) ?? submitActions[0];
-  return primary?.intent ?? "confirm_stage";
+  if (primary?.intent) {
+    return primary.intent;
+  }
+  const pluginKind = task.capabilityPlugin?.pluginKind;
+  return pluginKind ? submitIntentByPluginKind[pluginKind] ?? "confirm_stage" : "confirm_stage";
 }
 
 export interface TaskSubmitIntentCopy {
