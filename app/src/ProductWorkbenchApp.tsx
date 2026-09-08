@@ -448,7 +448,8 @@ function ParticipantAppPage({
 }) {
   const openTasks = data.tasks.filter((task) => task.status === "open");
   const blockedTasks = data.tasks.filter((task) => task.status === "blocked");
-  const completedTasks = data.tasks.filter((task) => task.status === "done" || task.status === "submitted");
+  // submitted 是"等待链上确认"的中间态，与 done 并列"最近完成"会提前宣布成功。
+  const completedTasks = data.tasks.filter((task) => task.status === "done");
   const primaryTask = openTasks[0] ?? data.activeTask;
   const zhixu = data.zhixu;
   const canCreate = zhixu ? canCreateProductOrder(zhixu) : false;
@@ -537,7 +538,7 @@ function ParticipantAppPage({
           </SidePanel>
           <SidePanel title="最近完成">
             {completedTasks.length > 0 ? completedTasks.map((task) => (
-              <MiniTask key={task.taskId} title={task.title} detail={task.proofSummary?.label ?? "已留下证明"} onClick={onOrder} />
+              <MiniTask key={task.taskId} title={task.title} detail={task.proofSummary?.label ?? "已完成"} onClick={onOrder} />
             )) : <InlineEmpty text="暂无已完成待办" />}
           </SidePanel>
         </aside>
@@ -1054,6 +1055,8 @@ function TaskPage({
   const fileSlots = evidencePlan.slots.filter((slot) => slot.inputKind === "file");
   const inputSlots = evidencePlan.slots.filter((slot) => slot.inputKind !== "file");
   const declaredEvidenceLabels = evidencePlan.slots.map((slot) => slot.label);
+  // 入口按钮与确认页同源按意图出文案：拒绝/争议意图不得显示"确认阶段完成"。
+  const intentCopy = taskSubmitIntentCopy(taskSubmitIntent(task));
 
   return (
     <section className="page-shell" data-testid="task-detail-page">
@@ -1116,7 +1119,7 @@ function TaskPage({
           {task.responsibilityStatements.map((statement) => (
             <CheckStatement key={statement.title} title={statement.title} desc={statement.desc} />
           ))}
-          <button className={canConfirm ? "primary-button block" : "disabled-button block"} data-testid="task-confirm-button" onClick={canConfirm ? onSubmit : undefined} disabled={!canConfirm}>确认阶段完成</button>
+          <button className={canConfirm ? "primary-button block" : "disabled-button block"} data-testid="task-confirm-button" onClick={canConfirm ? onSubmit : undefined} disabled={!canConfirm}>{intentCopy.panelTitle}</button>
           {!canConfirm && missingEvidenceLabels.length > 0 ? (
             <p className="side-note" data-testid="task-confirm-blocked-note"><HelpCircle /> 还需完成：{missingEvidenceLabels.join("、")}</p>
           ) : null}
