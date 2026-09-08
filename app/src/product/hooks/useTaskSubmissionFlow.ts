@@ -59,7 +59,8 @@ export function useTaskSubmissionFlow(input: {
 } {
   const { api, activeTask, fieldValues, onMutationSuccess } = input;
   const evidencePlan = planTaskEvidence({
-    evidenceSpec: activeTask?.evidenceSpec
+    evidenceSpec: activeTask?.evidenceSpec,
+    resourceRequirements: activeTask?.resourceRequirements
   });
   const [evidenceBySlot, setEvidenceBySlot] = useState<EvidenceBySlot>({});
   const [proofsBySlot, setProofsBySlot] = useState<EvidenceProofsBySlot>({});

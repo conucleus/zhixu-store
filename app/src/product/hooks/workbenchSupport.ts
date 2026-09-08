@@ -1,5 +1,7 @@
 import {
   lifecycleStatusForZhixu,
+  validateTaskEvidenceSpec,
+  type ProductResourceRequirementDTO,
   type ProductTaskDTO,
   type TaskEvidenceSpecDTO,
   type ZhixuSummaryDTO
@@ -47,10 +49,12 @@ export function delay(ms: number): Promise<void> {
 }
 
 /**
- * 任务证据计划的输入：仅消费凝结核随 zhixu 配置携带的结构化 evidenceSpec。
+ * 任务证据计划的输入：凝结核随 zhixu 配置携带的结构化 evidenceSpec，
+ * 以及任务投影下发的结构化资源要求（spec 缺失/非法时的证据槽位来源）。
  */
 export interface TaskEvidencePlanInput {
   readonly evidenceSpec?: readonly TaskEvidenceSpecDTO[] | undefined;
+  readonly resourceRequirements?: readonly ProductResourceRequirementDTO[] | undefined;
 }
 
 export type TaskEvidenceSlotInputKind = "file" | "text" | "date";
@@ -72,14 +76,15 @@ export interface TaskEvidencePlan {
 }
 
 /**
- * 把任务的证据要求解析为可渲染槽位。
+ * 把任务的证据要求解析为可渲染槽位。spec 缺失或非法时保留服务端结构化
+ * 资源要求槽位（metadata 型除外）——与 uvp-order-app planTaskEvidence 同口径。
  *
- * 框架红线：商店不含业务标签匹配表。任务未携带 spec 时没有证据槽位
- * （纯字段确认或按业务约定线下提交），既不臆造通用槽位，也不在上传前拒绝。
+ * 框架红线：商店不含业务标签匹配表。spec 与资源要求都不存在时没有证据
+ * 槽位（纯字段确认或按业务约定线下提交），不臆造通用槽位，也不在上传前拒绝。
  */
 export function planTaskEvidence(task: TaskEvidencePlanInput): TaskEvidencePlan {
   const spec = task.evidenceSpec;
-  if (spec && spec.length > 0) {
+  if (spec && spec.length > 0 && validateTaskEvidenceSpec(spec).length === 0) {
     return {
       mode: "spec",
       slots: spec.map((entry): TaskEvidenceSlot => ({
@@ -92,7 +97,16 @@ export function planTaskEvidence(task: TaskEvidencePlanInput): TaskEvidencePlan 
       }))
     };
   }
-  return { mode: "none", slots: [] };
+  const resourceSlots = (task.resourceRequirements ?? [])
+    .filter((resource) => (resource.resourceType ?? resource.resourceId) !== "metadata")
+    .map((resource): TaskEvidenceSlot => ({
+      key: `resource-requirement:${resource.resourceId}`,
+      label: resource.label,
+      inputKind: "file",
+      accept: [],
+      required: resource.required
+    }));
+  return { mode: "none", slots: resourceSlots };
 }
 
 /** 与后端 Evidence Service 一致的限制：解码后最大 10MB（HTTP body 上限 16MB）。 */

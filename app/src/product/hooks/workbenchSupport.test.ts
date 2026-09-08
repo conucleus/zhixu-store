@@ -107,12 +107,40 @@ describe("task evidence plan (schema-driven)", () => {
     ]);
   });
 
-  it("renders no evidence slots for spec-less tasks instead of a fabricated generic upload (F-06)", () => {
-    // 单轨口径：仅消费 evidenceSpec。无 spec 的任务不再回退解析
-    // requiredEvidence 臆造通用槽位——没有槽位就是没有槽位。
+  it("renders no evidence slots for tasks without spec or resource requirements instead of a fabricated generic upload (F-06)", () => {
+    // 单轨口径：仅消费 evidenceSpec 与结构化资源要求。两者皆无的任务不再
+    // 回退解析 requiredEvidence 臆造通用槽位——没有槽位就是没有槽位。
     assert.deepEqual(planTaskEvidence({}), { mode: "none", slots: [] });
     assert.deepEqual(planTaskEvidence({ evidenceSpec: [] }), { mode: "none", slots: [] });
     assert.deepEqual(planTaskEvidence({ evidenceSpec: undefined }), { mode: "none", slots: [] });
+  });
+
+  it("keeps structured resource requirement slots when the spec is missing (aligned with uvp-order-app)", () => {
+    const plan = planTaskEvidence({
+      resourceRequirements: [
+        { resourceId: "inspection_report", label: "第三方检验证明", required: true, source: "resource_patch", resourceType: "document" },
+        { resourceId: "internal_meta", label: "内部元数据", required: false, source: "plan_default", resourceType: "metadata" }
+      ]
+    });
+    assert.equal(plan.mode, "none");
+    assert.deepEqual(plan.slots, [
+      { key: "resource-requirement:inspection_report", label: "第三方检验证明", inputKind: "file", accept: [], required: true }
+    ]);
+  });
+
+  it("drops an invalid evidenceSpec entirely instead of rendering duplicate slots (aligned with uvp-order-app)", () => {
+    const plan = planTaskEvidence({
+      evidenceSpec: [
+        { key: "", label: "空 key" },
+        { key: "dup", label: "重复" },
+        { key: "dup", label: "重复" }
+      ],
+      resourceRequirements: [
+        { resourceId: "fallback_doc", label: "兜底凭证", required: true, source: "resource_patch" }
+      ]
+    });
+    assert.equal(plan.mode, "none");
+    assert.deepEqual(plan.slots.map((slot) => slot.key), ["resource-requirement:fallback_doc"]);
   });
 });
 
