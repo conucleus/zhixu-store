@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { STUB_API_BASE } from "./workbench-stubs";
 
 /**
- * PRD89-92 Store 侧 e2e（fixture 模式，全桩）：
+ * Store 会话与上架侧 e2e（fixture 模式，全桩）：
  * - 钱包登录（mock window.ethereum）→ 会话锚定 → 账号页地址表。
  * - 详情页锚核验面板 + 加入入口；锚冲突时显式告警并抑制加入入口（红线）。
  * - 运营方上架治理面板可见。
@@ -222,7 +222,7 @@ async function installMockWallet(page: Page): Promise<void> {
   });
 }
 
-test("PRD89: wallet login anchors the session and the account page lists addresses", async ({ page }) => {
+test("wallet login anchors the session and the account page lists addresses", async ({ page }) => {
   await installStoreRoutes(page, { overlayMode: "consistent", anchored: false });
   await installMockWallet(page);
   await page.goto("/store");
@@ -240,7 +240,7 @@ test("PRD89: wallet login anchors the session and the account page lists address
   await expect(page.getByTestId("store-address-row")).toHaveCount(1);
 });
 
-test("PRD92: detail page shows anchor verification and suppresses join entry on conflict", async ({ page }) => {
+test("detail page shows anchor verification and suppresses join entry on conflict", async ({ page }) => {
   await installStoreRoutes(page, { overlayMode: "conflict", anchored: true });
   await installMockWallet(page);
   await page.goto("/store");
@@ -256,7 +256,7 @@ test("PRD92: detail page shows anchor verification and suppresses join entry on 
   await expect(page.getByTestId("store-join-entry")).toHaveCount(0);
 });
 
-test("PRD92/90: consistent overlay keeps the join entry and shows decoration theme", async ({ page }) => {
+test("consistent overlay keeps the join entry and shows decoration theme", async ({ page }) => {
   await installStoreRoutes(page, { overlayMode: "consistent", anchored: true });
   await installMockWallet(page);
   await page.goto("/store");
@@ -269,13 +269,13 @@ test("PRD92/90: consistent overlay keeps the join entry and shows decoration the
   await expect(page.getByTestId("store-join-entry")).toBeVisible();
   // 健康态（listing=public 且核验=consistent）不渲染任何"加入不开放"横幅。
   await expect(page.getByTestId("store-suppression-banner")).toHaveCount(0);
-  // 装修主题覆盖展示名（PRD91 theme）。
+  // 装修主题覆盖展示名（theme）。
   await expect(page.getByRole("heading", { name: "装修后的展示名" })).toBeVisible();
   // 装修面板出现且非 publisher 只读。
   await expect(page.getByTestId("store-decoration-panel")).toBeVisible();
 });
 
-test("PRD90: unanchored session is told to log in before joining", async ({ page }) => {
+test("unanchored session is told to log in before joining", async ({ page }) => {
   await installStoreRoutes(page, { overlayMode: "consistent", anchored: false });
   await page.goto("/store");
 
@@ -286,7 +286,7 @@ test("PRD90: unanchored session is told to log in before joining", async ({ page
   await expect(page.getByTestId("store-join-entry")).toContainText("先在「账号与地址」页连接钱包登录");
 });
 
-test("PRD92: delisted listing suppresses the join entry and shows the banner", async ({ page }) => {
+test("delisted listing suppresses the join entry and shows the banner", async ({ page }) => {
   await installStoreRoutes(page, { overlayMode: "delisted", anchored: true });
   await page.goto("/store");
 
@@ -297,7 +297,7 @@ test("PRD92: delisted listing suppresses the join entry and shows the banner", a
   await expect(page.getByTestId("store-anchor-panel")).toContainText("已下架");
 });
 
-test("O25: zhixu that never entered the listing flow keeps the join entry closed", async ({ page }) => {
+test("zhixu that never entered the listing flow keeps the join entry closed", async ({ page }) => {
   // fail-closed：无上架/锚核验叠加层（状态未知）时不得放开加入入口。
   await installStoreRoutes(page, { overlayMode: "absent", anchored: true });
   await installMockWallet(page);
@@ -310,7 +310,7 @@ test("O25: zhixu that never entered the listing flow keeps the join entry closed
   await expect(page.getByTestId("store-join-entry")).toHaveCount(0);
 });
 
-test("PRD89: account page login persists the session token and logout clears it", async ({ page }) => {
+test("account page login persists the session token and logout clears it", async ({ page }) => {
   await installStoreRoutes(page, { overlayMode: "consistent", anchored: false });
   await installMockWallet(page);
   await page.goto("/store");
