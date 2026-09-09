@@ -179,22 +179,47 @@ export function createStoreApiClient(
   });
 }
 
-/** 钱包会话 token 的本地持久化（仅 token，不含任何链上签名材料）。 */
+/**
+ * 钱包会话 token 的本地持久化（仅 token + 服务端声明的过期时间，不含任何
+ * 链上签名材料）。过期时间是本地卫生线：服务端仍按会话 TTL 拒绝过期 token，
+ * 本地按同一时间点弃置，避免长期持有必然失效的凭据。
+ */
 export const STORE_SESSION_TOKEN_STORAGE_KEY = "uvp-store-session-token";
+
+interface StoredStoreSession {
+  readonly token: string;
+  readonly expiresAt?: string | undefined;
+}
 
 export function readStoredStoreSessionToken(): string | undefined {
   try {
-    const value = window.localStorage.getItem(STORE_SESSION_TOKEN_STORAGE_KEY);
-    return value && value.startsWith("uvs_") ? value : undefined;
+    const raw = window.localStorage.getItem(STORE_SESSION_TOKEN_STORAGE_KEY);
+    if (!raw) {
+      return undefined;
+    }
+    const parsed = JSON.parse(raw) as Partial<StoredStoreSession>;
+    const token = typeof parsed.token === "string" && parsed.token.startsWith("uvs_") ? parsed.token : undefined;
+    const expiresAt = Date.parse(parsed.expiresAt ?? "");
+    if (!token) {
+      window.localStorage.removeItem(STORE_SESSION_TOKEN_STORAGE_KEY);
+      return undefined;
+    }
+    if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) {
+      window.localStorage.removeItem(STORE_SESSION_TOKEN_STORAGE_KEY);
+      return undefined;
+    }
+    return token;
   } catch {
     return undefined;
   }
 }
 
-export function storeStoreSessionToken(token: string | undefined): void {
+export function storeStoreSessionToken(
+  session: { readonly token: string; readonly expiresAt?: string | undefined } | undefined,
+): void {
   try {
-    if (token) {
-      window.localStorage.setItem(STORE_SESSION_TOKEN_STORAGE_KEY, token);
+    if (session) {
+      window.localStorage.setItem(STORE_SESSION_TOKEN_STORAGE_KEY, JSON.stringify(session));
     } else {
       window.localStorage.removeItem(STORE_SESSION_TOKEN_STORAGE_KEY);
     }

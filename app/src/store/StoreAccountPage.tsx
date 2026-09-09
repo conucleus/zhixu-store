@@ -23,7 +23,7 @@ export function StoreAccountPage({
 }: {
   readonly access: StoreAccessState;
   readonly api: StoreApiClient;
-  readonly onSessionToken: (token?: string | undefined) => void;
+  readonly onSessionToken: (token?: string | undefined, expiresAt?: string | undefined) => void;
 }) {
   const [addressesState, setAddressesState] = useState<AddressesState>({ status: "idle" });
   const [busy, setBusy] = useState(false);
@@ -58,7 +58,7 @@ export function StoreAccountPage({
     try {
       const result = await loginStoreSessionWithWallet(api);
       setMessage(`已登录 ${shortValue(result.address)}（会话已锚定该地址）`);
-      onSessionToken(result.verify.token);
+      onSessionToken(result.verify.token, result.verify.session.expiresAt);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : readableStoreError(error, "登录失败"));
     } finally {
