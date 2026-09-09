@@ -287,8 +287,12 @@ export function StoreSearchPage({
   return (
     <section className="page-shell store-console-page" data-testid="store-search-page">
 
-        {access.capabilities.includes("store.listing.manage") ? (
-          <StoreListingPanel api={api} />
+        {/* 服务端口径：导入上架可由运营方（store.listing.manage）或锚定
+            publisher（导入自己的秩序）发起——两种会话都要有渲染入口，
+            否则 publisher 导入路径是客户端可过、界面无门的功能死角。
+            审核/下架等治理动作仍只对运营方渲染（见 StoreListingPanel）。 */}
+        {access.capabilities.includes("store.listing.manage") || access.anchoredAddress ? (
+          <StoreListingPanel access={access} api={api} />
         ) : null}
       <div className="store-dashboard-grid">
         <div className="store-dashboard-main">
@@ -590,6 +594,22 @@ function DraftGovernancePanel({
   readonly orderCreatable: boolean;
   readonly onRefreshCatalog?: (() => Promise<StoreZhixuSearchResultDTO>) | undefined;
 }) {
+  const [refreshAction, setRefreshAction] = useState<ActionState>({ phase: "idle" });
+
+  async function handleRefreshCatalog(): Promise<void> {
+    if (!onRefreshCatalog || refreshAction.phase === "pending") {
+      return;
+    }
+    setRefreshAction({ phase: "pending", message: "正在刷新秩序目录" });
+    try {
+      await onRefreshCatalog();
+      setRefreshAction({ phase: "idle" });
+    } catch (error) {
+      // 刷新失败必须回到界面（目录数据未更新），不能静默吞掉。
+      setRefreshAction({ phase: "error", message: readableStoreError(error, "秩序目录刷新失败") });
+    }
+  }
+
   return (
     <section className="governance-publish-card" data-testid="store-governance-publishing">
       <div className="governance-publish-head">
@@ -628,13 +648,15 @@ function DraftGovernancePanel({
               <button
                 className="primary-button"
                 data-testid="store-refresh-catalog-button"
-                onClick={() => void onRefreshCatalog()}
+                disabled={refreshAction.phase === "pending"}
+                onClick={() => void handleRefreshCatalog()}
               >
-                <Layers3 />
+                {refreshAction.phase === "pending" ? <Loader2 className="spin" /> : <Layers3 />}
                 刷新秩序目录
               </button>
             </div>
           ) : null}
+          <ActionNotice state={refreshAction} testId="store-refresh-catalog-notice" />
           <p className="help-text">Store 目录刷新后，对应的秩序卡片将显示"可创建订单"生命周期，表示标准信号容器 docking 已完成。</p>
         </div>
       ) : null}

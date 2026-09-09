@@ -2,7 +2,7 @@ import { ListChecks, Loader2, PackagePlus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { readableStoreError, type StoreApiClient } from "./api";
 import { listingStatusLabel } from "./StoreAnchorPanel";
-import type { StoreListingView } from "./types";
+import type { StoreAccessState, StoreListingView } from "./types";
 import { shortValue } from "../shared/frontend";
 
 type ListingsState =
@@ -11,10 +11,12 @@ type ListingsState =
   | { readonly status: "error"; readonly message: string };
 
 /**
- * 上架治理面板（运营方）：导入链上秩序锚 → 锚核验 → 审核公开 → 下架/重新上架。
+ * 上架治理面板：导入链上秩序锚 → 锚核验 → 审核公开 → 下架/重新上架。
  * 只改 Store 可见性，不改链上事实；审核通过要求锚核验一致。
+ * 导入对锚定 publisher 开放（服务端核验 plan 归属）；审核/下架/重新上架
+ * 是 store.listing.manage 治理动作，仅对持有该能力的会话渲染。
  */
-export function StoreListingPanel({ api }: { readonly api: StoreApiClient }) {
+export function StoreListingPanel({ access, api }: { readonly access: StoreAccessState; readonly api: StoreApiClient }) {
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<ListingsState>({ status: "loading" });
   const [planId, setPlanId] = useState("");
@@ -22,6 +24,7 @@ export function StoreListingPanel({ api }: { readonly api: StoreApiClient }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
+  const canManageListings = access.capabilities.includes("store.listing.manage");
 
   const reload = useCallback(async () => {
     setState({ status: "loading" });
@@ -129,7 +132,7 @@ export function StoreListingPanel({ api }: { readonly api: StoreApiClient }) {
                       <td>{listingStatusLabel(listing.status)}{listing.reviewNote ? <span className="muted">（{listing.reviewNote}）</span> : null}</td>
                       <td>{new Date(listing.importedAt).toLocaleString()}</td>
                       <td>
-                        {listing.status === "imported" || listing.status === "rejected" ? (
+                        {canManageListings && (listing.status === "imported" || listing.status === "rejected") ? (
                           <span className="store-listing-actions">
                             <button
                               className="primary-button"
@@ -148,7 +151,7 @@ export function StoreListingPanel({ api }: { readonly api: StoreApiClient }) {
                             </button>
                           </span>
                         ) : null}
-                        {listing.status === "public" ? (
+                        {canManageListings && listing.status === "public" ? (
                           <button
                             className="secondary-button"
                             disabled={busy}
@@ -157,7 +160,7 @@ export function StoreListingPanel({ api }: { readonly api: StoreApiClient }) {
                             下架
                           </button>
                         ) : null}
-                        {listing.status === "delisted" ? (
+                        {canManageListings && listing.status === "delisted" ? (
                           <button
                             className="secondary-button"
                             disabled={busy}
