@@ -202,7 +202,8 @@ test.describe("Product Workbench browser smoke", () => {
     await expect(page.getByText("凭证已上传，指纹已生成")).toBeVisible();
 
     await page.getByTestId("task-confirm-button").click();
-    await expect(page.getByRole("heading", { name: "确认阶段完成 / 提交结果" })).toBeVisible();
+    // 提交页主文案来自服务端任务载荷（stub primaryActionLabel），前端不按意图推导。
+    await expect(page.getByRole("heading", { name: "确认出口报关完成 / 提交结果" })).toBeVisible();
     // 所见即所签：确认页列出全部已上传证据的槽位名与指纹
     await expect(page.getByTestId("submit-fingerprint-list")).toContainText("报关单 PDF");
     await page.getByTestId("submit-confirm-button").click();

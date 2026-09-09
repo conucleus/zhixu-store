@@ -106,7 +106,8 @@ export const stubTask = {
   evidenceSpec: customsDemoTaskConfig.evidenceSpec,
   status: "open",
   participantRoleLabel: "报关物流",
-  primaryActionLabel: "处理待办",
+  // 提交入口/确认页文案由任务载荷下发（审计裁决 #24）：桩值即服务端会下发的动作文案。
+  primaryActionLabel: "确认出口报关完成",
   responsibilityStatements: [
     { title: "凭证真实", desc: "我确认上传的凭证真实有效。" }
   ],

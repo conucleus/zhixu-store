@@ -3,19 +3,20 @@ export interface ShortHashOptions {
   readonly suffixLength?: number;
 }
 
-export interface FrontendRuntimeEnv {
-  readonly [key: string]: string | boolean | undefined;
-}
-
 export function normalizeBaseUrl(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed.replace(/\/+$/, "") : undefined;
 }
 
+/**
+ * API 基地址来自构建期注入的静态值（import.meta.env.VITE_X 的静态成员访问，
+ * Vite 构建时内联为字面量）。这里只接受已解析的字符串：传入整个 env 对象
+ * 会把键名查找留在运行期，形成随包分发的环境开关（审计裁决 #31）。
+ */
 export function resolveFrontendApiBaseUrl(
-  env: FrontendRuntimeEnv
+  configuredUrl: string | undefined
 ): string | undefined {
-  return normalizeBaseUrl(envValue(env, "VITE_UVP_CHAIN_SERVICES_URL"));
+  return normalizeBaseUrl(configuredUrl);
 }
 
 export function shortHash(
@@ -38,9 +39,4 @@ export function stringValue(value: unknown): string | undefined {
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function envValue(env: FrontendRuntimeEnv, name: string): string | undefined {
-  const value = env[name];
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }

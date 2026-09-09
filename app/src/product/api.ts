@@ -9,7 +9,6 @@ import {
 } from "@uvp-eth/product-dto";
 import {
   isRecord,
-  normalizeBaseUrl,
   resolveFrontendApiBaseUrl,
   shortHash
 } from "../shared/frontend";
@@ -319,7 +318,7 @@ export interface ProductApiClient {
 }
 
 export function createProductApiClient(): ProductApiClient {
-  const baseUrl = normalizeBaseUrl(resolveFrontendApiBaseUrl(import.meta.env));
+  const baseUrl = resolveFrontendApiBaseUrl(import.meta.env.VITE_UVP_CHAIN_SERVICES_URL);
   return new HttpProductApiClient(baseUrl);
 }
 

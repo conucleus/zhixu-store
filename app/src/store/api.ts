@@ -1351,7 +1351,7 @@ function normalizeStoreAccessLevel(
 }
 
 function resolveStoreApiBaseUrl(): string | undefined {
-  return resolveFrontendApiBaseUrl(import.meta.env);
+  return resolveFrontendApiBaseUrl(import.meta.env.VITE_UVP_CHAIN_SERVICES_URL);
 }
 
 function numberValue(value: unknown): number | undefined {

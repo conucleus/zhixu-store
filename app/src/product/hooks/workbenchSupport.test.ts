@@ -20,8 +20,8 @@ import {
   resolveWorkbenchTask,
   submissionPollOutcome,
   submissionTerminalMessage,
+  taskSubmitActionLabel,
   taskSubmitIntent,
-  taskSubmitIntentCopy,
   validateEvidenceFileForSlot
 } from "./workbenchSupport";
 import { customsDemoTaskConfig } from "../demo/customs-demo-config";
@@ -486,13 +486,46 @@ describe("spec-driven submit intent", () => {
     assert.equal(taskSubmitIntent(task), "reject_stage");
   });
 
-  it("wording follows the intent and never shows 确认阶段完成 for rejection or dispute intents", () => {
-    for (const intent of ["reject_stage", "raise_dispute", "resolve_dispute"] as const) {
-      const copy = taskSubmitIntentCopy(intent);
-      assert.ok(!copy.panelTitle.includes("确认阶段完成"), `${intent} 不复用 confirm_stage 主文案`);
-      assert.ok(!copy.confirmedTitle.includes("确认阶段完成"), `${intent} 不复用 confirm_stage 完成文案`);
-    }
-    assert.equal(taskSubmitIntentCopy("confirm_stage").panelTitle, "确认阶段完成");
-    assert.equal(taskSubmitIntentCopy("reject_stage").panelTitle, "拒绝本阶段");
+  it("derives the submit action copy from the server task payload, not from the intent", () => {
+    // 审计裁决 #24：提交文案由服务端随任务下发（manifest 主 submit_signal
+    // 动作 label → 插件 primaryActionLabel → 任务级 primaryActionLabel →
+    // 中性兜底），前端不再维护 intent→文案表。
+    const manifestTask: ProductTaskDTO = {
+      ...minimalTask("task-copy-1"),
+      addOnManifest: {
+        schemaVersion: "participant-addon-manifest.v1",
+        manifestId: "manifest-copy",
+        roleSlotId: "delivery",
+        addOnKind: "submit_signal",
+        title: "插件",
+        summary: "",
+        stageBindings: [],
+        pages: [],
+        actions: [
+          { actionId: "a-primary", actionKind: "submit_signal", label: "拒绝本阶段", primary: true, inputBindings: {}, intent: "reject_stage" },
+          { actionId: "a-secondary", actionKind: "submit_signal", label: "次要动作", inputBindings: {} }
+        ]
+      }
+    };
+    assert.equal(taskSubmitActionLabel(manifestTask), "拒绝本阶段");
+
+    const pluginTask: ProductTaskDTO = {
+      ...minimalTask("task-copy-2"),
+      capabilityPlugin: { pluginKind: "evidence_submission", source: "explicit", primaryActionLabel: "上传报关凭证" }
+    };
+    assert.equal(taskSubmitActionLabel(pluginTask), "上传报关凭证");
+
+    const taskLevelLabel = { ...minimalTask("task-copy-3"), primaryActionLabel: "处理待办" };
+    assert.equal(taskSubmitActionLabel(taskLevelLabel), "处理待办");
+
+    // 无任何服务端文案时使用中性兜底：不含 confirm/reject 意图语义。
+    assert.equal(taskSubmitActionLabel(minimalTask("task-copy-4")), "提交待办结果");
+    // 争议插件类型本身也不改写文案——intent 只决定协议意图，不决定文案。
+    const disputeTask: ProductTaskDTO = {
+      ...minimalTask("task-copy-5"),
+      capabilityPlugin: { pluginKind: "dispute_material", source: "explicit" }
+    };
+    assert.equal(taskSubmitActionLabel(disputeTask), "提交待办结果");
+    assert.equal(taskSubmitIntent(disputeTask), "raise_dispute");
   });
 });

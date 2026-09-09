@@ -71,8 +71,7 @@ import {
   emptyTaskEvidenceFieldValues,
   missingTaskEvidenceSlotLabels,
   resolveWorkbenchTask,
-  taskSubmitIntent,
-  taskSubmitIntentCopy,
+  taskSubmitActionLabel,
   type TaskEvidenceFieldValues,
   type TaskEvidencePlan,
   type TaskEvidenceSlot
@@ -1055,8 +1054,9 @@ function TaskPage({
   const fileSlots = evidencePlan.slots.filter((slot) => slot.inputKind === "file");
   const inputSlots = evidencePlan.slots.filter((slot) => slot.inputKind !== "file");
   const declaredEvidenceLabels = evidencePlan.slots.map((slot) => slot.label);
-  // 入口按钮与确认页同源按意图出文案：拒绝/争议意图不得显示"确认阶段完成"。
-  const intentCopy = taskSubmitIntentCopy(taskSubmitIntent(task));
+  // 提交入口文案由服务端随任务下发（manifest/插件/任务级 primaryActionLabel），
+  // 前端不按意图推导（审计裁决 #24）；拒绝/争议任务的差异由发布者配置声明。
+  const submitActionLabel = taskSubmitActionLabel(task);
 
   return (
     <section className="page-shell" data-testid="task-detail-page">
@@ -1119,7 +1119,7 @@ function TaskPage({
           {task.responsibilityStatements.map((statement) => (
             <CheckStatement key={statement.title} title={statement.title} desc={statement.desc} />
           ))}
-          <button className={canConfirm ? "primary-button block" : "disabled-button block"} data-testid="task-confirm-button" onClick={canConfirm ? onSubmit : undefined} disabled={!canConfirm}>{intentCopy.panelTitle}</button>
+          <button className={canConfirm ? "primary-button block" : "disabled-button block"} data-testid="task-confirm-button" onClick={canConfirm ? onSubmit : undefined} disabled={!canConfirm}>{submitActionLabel}</button>
           {!canConfirm && missingEvidenceLabels.length > 0 ? (
             <p className="side-note" data-testid="task-confirm-blocked-note"><HelpCircle /> 还需完成：{missingEvidenceLabels.join("、")}</p>
           ) : null}
@@ -1241,8 +1241,9 @@ function SubmitPage({
     submitMachine.status === "wallet_rejected";
   const proofRows = submitMachine.submission?.proofRows ?? task.proofRows;
   const declaredEvidenceLabels = evidencePlan.slots.map((slot) => slot.label);
-  // 主文案按提交意图出：拒绝/争议意图不得固定显示"确认阶段完成"。
-  const intentCopy = taskSubmitIntentCopy(taskSubmitIntent(task));
+  // 主文案由服务端随任务下发（与入口按钮同源），前端不按意图推导；
+  // 页面骨架（"/ 提交结果"后缀、确认按钮等）是框架结构，不含业务语义。
+  const submitActionLabel = taskSubmitActionLabel(task);
   // 所见即所签：确认页列出全部已上传证据（签名覆盖的 evidenceIds 与之一一对应），
   // 每条带槽位名与指纹；纯字段任务没有文件凭证时如实说明。
   const uploadedEvidence = evidencePlan.slots
@@ -1251,13 +1252,13 @@ function SubmitPage({
   return (
     <section className="page-shell" data-testid="submit-page">
       <BackLine onClick={onBack}>返回待办详情</BackLine>
-      <h1>{intentCopy.pageTitle}</h1>
+      <h1>{`${submitActionLabel} / 提交结果`}</h1>
       <p className="page-subtitle">请确认凭证指纹和责任声明，钱包授权后会进入提交中状态。</p>
       <div className="submit-layout">
         <Panel>
-          <StatusBadge tone="info">{intentCopy.badge}</StatusBadge>
-          <h2>{intentCopy.panelTitle}</h2>
-          <p>请确认你将代表 {task.assigneeRole} {intentCopy.actionPhrase}。</p>
+          <StatusBadge tone="info">确认提交</StatusBadge>
+          <h2>{submitActionLabel}</h2>
+          <p>请确认你将代表 {task.assigneeRole} 提交「{submitActionLabel}」。</p>
           <ul className="confirm-list">
             <li><strong>订单：</strong>{task.orderTitle}</li>
             <li><strong>阶段：</strong>{task.stageName}</li>
@@ -1284,7 +1285,7 @@ function SubmitPage({
             <div className="auth-option is-selected">
               <span><WalletCards /></span>
               <div>
-                <strong>{submitMachine.prepared?.summary.actionLabel ?? "确认本阶段完成"}</strong>
+                <strong>{submitMachine.prepared?.summary.actionLabel ?? submitActionLabel}</strong>
                 <p>{submitMachine.prepared ? `授权有效期至 ${formatDateTime(submitMachine.prepared.summary.authorizationValidUntil)}` : "点击确认后会生成可读摘要并请求钱包授权。"}</p>
               </div>
               <CheckCircle2 />
@@ -1316,7 +1317,7 @@ function SubmitPage({
           <StatusBadge tone={confirmed ? "success" : failed ? "warning" : "info"}>{submitStatusLabel(submitMachine.status)}</StatusBadge>
           <div className="success-hero">
             <span className={failed ? "danger" : ""}>{confirmed ? <Check /> : pending ? <Loader2 className="spin" /> : failed ? <AlertTriangle /> : <Clock3 />}</span>
-            <h2>{confirmed ? intentCopy.confirmedTitle : submitStatusTitle(submitMachine.status)}</h2>
+            <h2>{confirmed ? `已提交：${submitActionLabel}` : submitStatusTitle(submitMachine.status)}</h2>
             <p>{submitMachine.message}</p>
           </div>
           <ul className="success-list">
@@ -1987,7 +1988,9 @@ function submitStatusTitle(status: SubmitMachineStatus): string {
     case "tx_pending":
       return "提交处理中";
     case "confirmed":
-      return "已确认阶段完成";
+      // 中性状态文案：不含"阶段完成"意图语义（提交内容可能是拒绝/争议，
+      // 业务语义由服务端下发的 submitActionLabel 承载）。
+      return "提交已确认";
     case "failed":
       return "提交失败";
   }
