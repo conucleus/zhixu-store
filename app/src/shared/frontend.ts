@@ -11,7 +11,7 @@ export function normalizeBaseUrl(value: string | undefined): string | undefined 
 /**
  * API 基地址来自构建期注入的静态值（import.meta.env.VITE_X 的静态成员访问，
  * Vite 构建时内联为字面量）。这里只接受已解析的字符串：传入整个 env 对象
- * 会把键名查找留在运行期，形成随包分发的环境开关（审计裁决 #31）。
+ * 会把键名查找留在运行期，形成随包分发的环境开关。
  */
 export function resolveFrontendApiBaseUrl(
   configuredUrl: string | undefined

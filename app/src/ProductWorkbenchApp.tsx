@@ -1055,7 +1055,7 @@ function TaskPage({
   const inputSlots = evidencePlan.slots.filter((slot) => slot.inputKind !== "file");
   const declaredEvidenceLabels = evidencePlan.slots.map((slot) => slot.label);
   // 提交入口文案由服务端随任务下发（manifest/插件/任务级 primaryActionLabel），
-  // 前端不按意图推导（审计裁决 #24）；拒绝/争议任务的差异由发布者配置声明。
+  // 前端不按意图推导；拒绝/争议任务的差异由发布者配置声明。
   const submitActionLabel = taskSubmitActionLabel(task);
 
   return (

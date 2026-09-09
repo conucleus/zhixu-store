@@ -487,7 +487,7 @@ describe("spec-driven submit intent", () => {
   });
 
   it("derives the submit action copy from the server task payload, not from the intent", () => {
-    // 审计裁决 #24：提交文案由服务端随任务下发（manifest 主 submit_signal
+    // 提交文案由服务端随任务下发（manifest 主 submit_signal
     // 动作 label → 插件 primaryActionLabel → 任务级 primaryActionLabel →
     // 中性兜底），前端不再维护 intent→文案表。
     const manifestTask: ProductTaskDTO = {

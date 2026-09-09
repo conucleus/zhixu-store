@@ -403,8 +403,8 @@ export function taskSubmitIntent(
 }
 
 /**
- * 提交入口与确认页的动作文案由服务端随任务下发，前端不按意图推导
- * （审计裁决 #24）。取值顺序与 uvp-order-app 的 taskPrimaryActionLabel 同源：
+ * 提交入口与确认页的动作文案由服务端随任务下发，前端不按意图推导。
+ * 取值顺序与 uvp-order-app 的 taskPrimaryActionLabel 同源：
  * manifest 主 submit_signal 动作 label（发布者声明）→ 能力插件
  * primaryActionLabel → 任务级 primaryActionLabel → 中性兜底（不含意图语义）。
  * intent 只决定提交的协议意图（taskSubmitIntent），不决定文案。
