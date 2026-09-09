@@ -276,7 +276,7 @@ test.describe("Product Workbench browser smoke", () => {
     await expect(page.getByText("尚未上传「报关单 PDF」")).toBeVisible();
   });
 
-  test("renders no upload slots for spec-less tasks instead of a fabricated generic upload (F-06)", async ({ page }) => {
+  test("renders no upload slots for spec-less tasks instead of a fabricated generic upload", async ({ page }) => {
     await installWorkbenchRoutes(page, {
       overrides: {
         "/product/tasks": {

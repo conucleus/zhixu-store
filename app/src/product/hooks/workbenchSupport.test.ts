@@ -107,9 +107,9 @@ describe("task evidence plan (schema-driven)", () => {
     ]);
   });
 
-  it("renders no evidence slots for tasks without spec or resource requirements instead of a fabricated generic upload (F-06)", () => {
-    // 单轨口径：仅消费 evidenceSpec 与结构化资源要求。两者皆无的任务不再
-    // 回退解析 requiredEvidence 臆造通用槽位——没有槽位就是没有槽位。
+  it("renders no evidence slots for tasks without spec or resource requirements instead of a fabricated generic upload", () => {
+    // 单轨口径：仅消费 evidenceSpec 与结构化资源要求。两者皆无的任务
+    // 不回退解析 requiredEvidence 臆造通用槽位——没有槽位就是没有槽位。
     assert.deepEqual(planTaskEvidence({}), { mode: "none", slots: [] });
     assert.deepEqual(planTaskEvidence({ evidenceSpec: [] }), { mode: "none", slots: [] });
     assert.deepEqual(planTaskEvidence({ evidenceSpec: undefined }), { mode: "none", slots: [] });
