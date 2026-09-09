@@ -491,7 +491,7 @@ function ParticipantAppPage({
                         <h3>{task.title}</h3>
                         <p>{task.orderTitle} · {task.participantRoleLabel ?? task.assigneeRole}</p>
                       </div>
-                      <StatusBadge tone={task.status === "open" ? "info" : task.status === "blocked" ? "warning" : "success"}>{participantTaskStatusLabel(task.status)}</StatusBadge>
+                      <StatusBadge tone={participantTaskStatusTone(task.status)}>{participantTaskStatusLabel(task.status)}</StatusBadge>
                     </div>
                     <div className="catalog-facts">
                       <FactRow icon={<Layers3 />} label="任务插件" value={pluginKindLabel(task.capabilityPlugin?.pluginKind)} />
@@ -1768,6 +1768,21 @@ function participantTaskStatusLabel(status: ProductTaskDTO["status"]): string {
       return "已完成";
     case "blocked":
       return "已阻塞";
+  }
+}
+
+function participantTaskStatusTone(status: ProductTaskDTO["status"]): "info" | "warning" | "success" {
+  switch (status) {
+    case "open":
+      return "info";
+    case "blocked":
+      return "warning";
+    // submitted 是等待链上确认的中间态：标签如实说"已提交"，色调不得
+    // 提前用成功色宣布完成（9991262 只修了列表归类，这里是残留表面）。
+    case "submitted":
+      return "info";
+    case "done":
+      return "success";
   }
 }
 
