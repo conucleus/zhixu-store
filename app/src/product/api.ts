@@ -287,6 +287,12 @@ export interface PreparedOrderTriggerDTO {
   readonly orderId: string;
   readonly expiresAt: string;
   readonly submitter: string;
+  /**
+   * prepare 信封里 trigger 记录声明的状态机部署地址：签名前必须与
+   * typedData.domain.verifyingContract 交叉核对（与任务提交用任务投影的
+   * stateMachineAddress 同边界），防被攻陷的 BFF 单独换签名域。
+   */
+  readonly stateMachineAddress: string;
   readonly typedData: unknown;
   readonly summary?: Readonly<Record<string, unknown>> | undefined;
 }
@@ -304,8 +310,6 @@ export interface ProductApiClient {
   updateOrderDraft(draftId: string, input: UpdateOrderDraftInput): Promise<ProductApiResult<ProductOrderDraftDTO>>;
   getOrderDraft(draftId: string): Promise<ProductApiResult<ProductOrderDraftDTO>>;
   createInvite(draftId: string, input: CreateInviteInput): Promise<ProductApiResult<ProductInviteDTO>>;
-  acceptInvite(inviteId: string, input: { readonly displayName: string; readonly walletAddress: string; readonly contact: string }): Promise<ProductApiResult<ProductInviteDTO>>;
-  rejectInvite(inviteId: string): Promise<ProductApiResult<ProductInviteDTO>>;
   listParticipants(draftId: string): Promise<ProductApiResult<readonly DraftParticipantDTO[]>>;
   prepareOrderTrigger(draftId: string, input: { readonly walletAddress: string }): Promise<ProductApiResult<PreparedOrderTriggerDTO>>;
   triggerOrder(draftId: string, input: TriggerOrderInput): Promise<ProductApiResult<ProductOrderDraftDTO>>;
@@ -462,26 +466,6 @@ export class HttpProductApiClient implements ProductApiClient {
     return { data: result.data.invite, source: result.source };
   }
 
-  async acceptInvite(
-    inviteId: string,
-    input: { readonly displayName: string; readonly walletAddress: string; readonly contact: string }
-  ): Promise<ProductApiResult<ProductInviteDTO>> {
-    const result = await this.requestWithSource<{ readonly invite: ProductInviteDTO }>(
-      "POST",
-      `/product/invites/${encodeURIComponent(inviteId)}/accept`,
-      input
-    );
-    return { data: result.data.invite, source: result.source };
-  }
-
-  async rejectInvite(inviteId: string): Promise<ProductApiResult<ProductInviteDTO>> {
-    const result = await this.requestWithSource<{ readonly invite: ProductInviteDTO }>(
-      "POST",
-      `/product/invites/${encodeURIComponent(inviteId)}/reject`
-    );
-    return { data: result.data.invite, source: result.source };
-  }
-
   async listParticipants(draftId: string): Promise<ProductApiResult<readonly DraftParticipantDTO[]>> {
     const result = await this.requestWithSource<{ readonly participants: readonly DraftParticipantDTO[] }>(
       "GET",
@@ -494,12 +478,23 @@ export class HttpProductApiClient implements ProductApiClient {
     draftId: string,
     input: { readonly walletAddress: string }
   ): Promise<ProductApiResult<PreparedOrderTriggerDTO>> {
-    const result = await this.requestWithSource<{ readonly prepared: PreparedOrderTriggerDTO }>(
+    const result = await this.requestWithSource<{
+      readonly prepared: Omit<PreparedOrderTriggerDTO, "stateMachineAddress">;
+      readonly trigger?: { readonly stateMachineAddress?: unknown } | undefined;
+    }>(
       "POST",
       `/product/order-drafts/${encodeURIComponent(draftId)}/prepare-trigger`,
       input
     );
-    return { data: result.data.prepared, source: result.source };
+    // fail-closed：trigger 记录未声明部署地址时无法交叉核对签名域，拒绝进入签名。
+    const stateMachineAddress = result.data.trigger?.stateMachineAddress;
+    if (typeof stateMachineAddress !== "string" || !/^0x[0-9a-fA-F]{40}$/u.test(stateMachineAddress)) {
+      throw new Error("prepared_trigger_state_machine_address_missing");
+    }
+    return {
+      data: { ...result.data.prepared, stateMachineAddress },
+      source: result.source
+    };
   }
 
   async triggerOrder(draftId: string, input: TriggerOrderInput): Promise<ProductApiResult<ProductOrderDraftDTO>> {
@@ -512,10 +507,12 @@ export class HttpProductApiClient implements ProductApiClient {
   }
 
   async uploadEvidence(input: UploadEvidenceInput): Promise<ProductApiResult<EvidenceObjectDTO>> {
+    // 大载荷上传走放宽超时；其余读写维持统一 6s。
     const result = await this.requestWithSource<unknown>(
       "POST",
       "/product/evidence",
-      await evidenceUploadBody(input)
+      await evidenceUploadBody(input),
+      UVP_WORKBENCH_UPLOAD_TIMEOUT_MS
     );
     return { data: evidenceFromResponse(result.data), source: result.source };
   }
@@ -575,21 +572,31 @@ export class HttpProductApiClient implements ProductApiClient {
     return response.zhixu;
   }
 
-  private async requestWithSource<TData>(method: string, pathname: string, body?: unknown): Promise<ProductApiResult<TData>> {
+  private async requestWithSource<TData>(
+    method: string,
+    pathname: string,
+    body?: unknown,
+    timeoutMs?: number
+  ): Promise<ProductApiResult<TData>> {
     if (!this.baseUrl) {
       throw new ApiMissingConfigError(pathname, "API base URL is not configured");
     }
-    const data = await this.requestJson<TData>(method, pathname, body);
+    const data = await this.requestJson<TData>(method, pathname, body, timeoutMs);
     return { data, source: { kind: "real", baseUrl: this.baseUrl } };
   }
 
-  private async requestJson<TResponse>(method: string, pathname: string, body?: unknown): Promise<TResponse> {
+  private async requestJson<TResponse>(
+    method: string,
+    pathname: string,
+    body?: unknown,
+    timeoutMs?: number
+  ): Promise<TResponse> {
     if (!this.baseUrl) {
       throw new ApiMissingConfigError(pathname, "API base URL is not configured");
     }
     // 写路径同样必须走注入的 fetchImpl：读路径（loadWorkbenchData）已注入，
     // 测试里全局 fetch 不可达，漏传会在测试环境触发真实网络请求。
-    return await fetchJson<TResponse>(this.baseUrl, pathname, { method, body }, this.fetchImpl);
+    return await fetchJson<TResponse>(this.baseUrl, pathname, { method, body }, this.fetchImpl, timeoutMs);
   }
 }
 
@@ -798,12 +805,18 @@ class ApiUnsupportedEndpointError extends ApiRequestError {
 const UVP_WORKBENCH_FETCH_TIMEOUT_MS = Number(
   (import.meta.env ?? {})?.VITE_UVP_WORKBENCH_FETCH_TIMEOUT_MS
 ) || 6000;
+// 证据上传携带 base64 载荷（10MB 文件约 13.7MB 文本），统一 6s 超时会让
+// 合法大凭证必超时；上传单独放宽（与 order-app DEFAULT_UPLOAD_TIMEOUT_MS 同口径）。
+const UVP_WORKBENCH_UPLOAD_TIMEOUT_MS = Number(
+  (import.meta.env ?? {})?.VITE_UVP_WORKBENCH_UPLOAD_TIMEOUT_MS
+) || 60000;
 
 async function fetchJson<TResponse>(
   baseUrl: string,
   pathname: string,
   init: { readonly method?: string; readonly body?: unknown } = {},
-  fetchImpl: typeof fetch = fetch.bind(globalThis)
+  fetchImpl: typeof fetch = fetch.bind(globalThis),
+  timeoutMs: number = UVP_WORKBENCH_FETCH_TIMEOUT_MS
 ): Promise<TResponse> {
   const headers = new Headers();
   let body: BodyInit | undefined;
@@ -821,7 +834,7 @@ async function fetchJson<TResponse>(
       method: init.method ?? "GET",
       headers,
       ...(body !== undefined ? { body } : {}),
-      signal: AbortSignal.timeout(UVP_WORKBENCH_FETCH_TIMEOUT_MS)
+      signal: AbortSignal.timeout(timeoutMs)
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === "TimeoutError") {

@@ -316,6 +316,11 @@ export async function installWorkbenchRoutes(page: Page, options: WorkbenchStubO
     }
     if (pathname.startsWith("/product/order-drafts/") && pathname.endsWith("/prepare-trigger") && method === "POST") {
       await fulfillJson(route, {
+        // trigger 记录声明的部署地址：签名域交叉核对的对照来源。
+        trigger: {
+          triggerId: "trigger-order-8001",
+          stateMachineAddress: "0x0000000000000000000000000000000000000001"
+        },
         prepared: {
           prepareId: "prepare-order-8001",
           triggerId: "trigger-order-8001",

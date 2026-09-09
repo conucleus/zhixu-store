@@ -304,3 +304,75 @@ describe("write paths honor the injected fetchImpl", () => {
     }
   });
 });
+
+describe("prepare-trigger envelope carries the cross-check source for the signing domain", () => {
+  const preparedBody = (stateMachineAddress?: string) => ({
+    trigger: {
+      triggerId: "trigger-1",
+      ...(stateMachineAddress ? { stateMachineAddress } : {})
+    },
+    prepared: {
+      prepareId: "prepare-1",
+      triggerId: "trigger-1",
+      draftId: "draft-1",
+      orderId: "order-1",
+      expiresAt: "2026-01-01T00:00:00.000Z",
+      submitter: "0xabc0000000000000000000000000000000000001",
+      typedData: { domain: { name: "UVPStateMachine", chainId: 31337, verifyingContract: "0x0000000000000000000000000000000000000001" } }
+    }
+  });
+
+  it("surfaces the trigger record's state machine address for the wallet gate", async () => {
+    const client = clientWith({
+      "/product/order-drafts/draft-1/prepare-trigger": { body: preparedBody("0x0000000000000000000000000000000000000001") }
+    });
+    const result = await client.prepareOrderTrigger("draft-1", { walletAddress: "0xabc0000000000000000000000000000000000001" });
+    assert.equal(result.data.stateMachineAddress, "0x0000000000000000000000000000000000000001");
+  });
+
+  it("fails closed when the trigger record does not declare a deployment address", async () => {
+    const client = clientWith({
+      "/product/order-drafts/draft-1/prepare-trigger": { body: preparedBody() }
+    });
+    // 无法交叉核对签名域时不得进入签名流程。
+    await assert.rejects(
+      () => client.prepareOrderTrigger("draft-1", { walletAddress: "0xabc0000000000000000000000000000000000001" }),
+      /prepared_trigger_state_machine_address_missing/
+    );
+  });
+});
+
+describe("evidence upload timeout boundary", () => {
+  function withRecordedTimeouts(run: () => Promise<unknown>): Promise<number[]> {
+    const requested: number[] = [];
+    const originalTimeout = AbortSignal.timeout;
+    (AbortSignal as { timeout?: unknown }).timeout = (ms: number) => {
+      requested.push(ms);
+      return originalTimeout(ms);
+    };
+    return Promise.resolve(run()).finally(() => {
+      (AbortSignal as { timeout?: unknown }).timeout = originalTimeout;
+    }).then(() => requested);
+  }
+
+  it("uses the widened upload timeout for /product/evidence and the unified timeout elsewhere", async () => {
+    const client = clientWith({
+      "/product/evidence": { body: { evidence: { evidenceId: "ev-1" } } },
+      "/product/tasks/task-1/prepare-submit": { body: { prepared: {} } }
+    });
+    const requests = await withRecordedTimeouts(async () => {
+      await client.uploadEvidence({
+        file: new File(["proof"], "invoice.pdf", { type: "application/pdf" }),
+        stageIdentifier: "stage-1",
+        documentType: "invoice",
+        metadata: { businessLabel: "发票", documentType: "invoice" }
+      }).catch(() => undefined);
+      await client.getSubmission("submission-1").catch(() => undefined);
+      return undefined;
+    });
+    // 10MB 凭证 base64 约 13.7MB，统一 6s 超时必超时；上传必须单独放宽，
+    // 其余读写维持统一口径。
+    assert.equal(requests[0], 60000);
+    assert.equal(requests[1], 6000);
+  });
+});
