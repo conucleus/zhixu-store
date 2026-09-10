@@ -183,8 +183,7 @@ export const stubInvite = {
   tokenHash: "0xtoken",
   status: "active",
   expiresAt: "2026-12-31T00:00:00.000Z",
-  createdAt: "2026-01-01T00:00:00.000Z",
-  inviteUrl: "/?invite=invite-4001"
+  createdAt: "2026-01-01T00:00:00.000Z"
 };
 
 export const stubEvidence = {
@@ -360,7 +359,12 @@ export async function installWorkbenchRoutes(page: Page, options: WorkbenchStubO
     }
     if (/^\/product\/orders\/[^/]+\/invites$/.test(pathname) && method === "POST") {
       inviteSequence += 1;
-      await fulfillJson(route, { invite: { ...stubInvite, inviteId: `invite-${4000 + inviteSequence}` } });
+      // 契约对齐：一次性明文 token 只随创建响应出现一次（客户端用它拼
+      // 含 ?inviteToken= 的邀请链接）；invite 记录本身只带 tokenHash。
+      await fulfillJson(route, {
+        invite: { ...stubInvite, inviteId: `invite-${4000 + inviteSequence}` },
+        inviteToken: `one-time-invite-token-${inviteSequence}`
+      });
       return;
     }
     if (/^\/product\/orders\/[^/]+\/participants$/.test(pathname) && method === "GET") {

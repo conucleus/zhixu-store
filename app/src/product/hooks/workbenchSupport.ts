@@ -8,6 +8,7 @@ import {
   type ZhixuSummaryDTO
 } from "@uvp-eth/product-dto";
 import type { ProductSubmissionStatus } from "../api";
+import type { SubmitMachineStatus } from "./workbenchTypes";
 
 /**
  * Order creation follows the frozen lifecycle DTO.  Review approval alone is
@@ -373,6 +374,23 @@ export function resolveWorkbenchTask(
   return selected ?? fallback;
 }
 
+/**
+ * 邀请链接（发送给受邀参与方）：一次性 token 由服务端在创建响应中下发一次，
+ * 链接必须带 ?invite=&inviteToken=（uvp-order-app 入口格式，accept/reject/
+ * preview 都按 token 哈希比对）。基地址取部署配置注入，缺省同源部署。
+ */
+export function inviteLinkForInvite(
+  inviteId: string,
+  inviteToken: string,
+  baseUrl?: string
+): string {
+  const origin = baseUrl?.trim() ||
+    (import.meta.env?.VITE_UVP_ORDER_APP_URL as string | undefined)?.trim() ||
+    (typeof window === "undefined" ? "" : window.location.origin);
+  const params = new URLSearchParams({ invite: inviteId, inviteToken });
+  return `${origin.replace(/\/+$/u, "")}/?${params.toString()}`;
+}
+
 export type TaskSubmitIntent = "confirm_stage" | "reject_stage" | "raise_dispute" | "resolve_dispute";
 
 /** 无 manifest 声明时的兜底映射：争议任务不得以 confirm_stage 提交。 */
@@ -430,6 +448,49 @@ export function taskSubmitActionLabel(
     return taskLabel;
   }
   return NEUTRAL_SUBMIT_ACTION_LABEL;
+}
+
+/**
+ * 签名域交叉核对的预期值独立来源：构建期部署配置注入（Vite 内联的静态
+ * import.meta.env 成员），不来自被核对的同一 BFF 响应——被攻陷的 BFF 可以
+ * 让 typedData.domain 与任务投影/prepare 信封自洽，但改不了部署配置。
+ * 与 uvp-order-app 的 submitSignExpectation 同范式；缺预期值即拒绝签名
+ * （fail-closed），不再条件性跳过比对。
+ */
+export interface SignDomainEnv {
+  readonly VITE_UVP_STATE_MACHINE_ADDRESS?: string | undefined;
+}
+
+export function stateMachineSignExpectation(env: SignDomainEnv = buildTimeSignDomainEnv()): {
+  readonly verifyingContract: string;
+} {
+  const address = env.VITE_UVP_STATE_MACHINE_ADDRESS?.trim();
+  if (!address || !/^0x[0-9a-fA-F]{40}$/u.test(address)) {
+    throw new Error("状态机部署地址未配置（构建期环境变量 VITE_UVP_STATE_MACHINE_ADDRESS），无法交叉核对签名域，已拒绝签名");
+  }
+  return { verifyingContract: address };
+}
+
+function buildTimeSignDomainEnv(): SignDomainEnv {
+  return {
+    VITE_UVP_STATE_MACHINE_ADDRESS: import.meta.env?.VITE_UVP_STATE_MACHINE_ADDRESS
+  };
+}
+
+/**
+ * 提交入口终态门：DTO 的 status/canSubmit 是服务端权威门（已关闭/待索引/
+ * 受阻任务不呈现可提交入口，order-app 同功能面 fail-closed），submitStatus
+ * confirmed 是本次会话的终态闸——提交确认后不得再触发完整签名提交，除非
+ * 刷新后的投影把任务改回 open（新会话/新状态）。
+ */
+export function canSubmitWorkbenchTask(
+  task: Pick<ProductTaskDTO, "status" | "canSubmit">,
+  submitStatus: SubmitMachineStatus
+): boolean {
+  if (task.status !== "open" || task.canSubmit === false) {
+    return false;
+  }
+  return submitStatus !== "confirmed";
 }
 
 export type SubmissionPollOutcome = "confirmed" | "terminal_failure" | "pending";

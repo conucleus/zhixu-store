@@ -342,6 +342,94 @@ describe("prepare-trigger envelope carries the cross-check source for the signin
   });
 });
 
+describe("invite creation and session anchoring", () => {
+  const inviteInput = {
+    participantId: "participant-1",
+    roleSlotId: "delivery",
+    roleLabel: "交付方",
+    contact: "delivery@example.com",
+    required: true
+  };
+
+  it("keeps the one-time invite token from the create response for the shareable link", async () => {
+    // token 明文只在创建响应出现一次：客户端必须留存它生成含
+    // ?inviteToken= 的邀请链接，丢掉 token 的链接在 accept 处必然 403。
+    const client = clientWith({
+      "/product/orders/draft-1/invites": {
+        body: { invite: { inviteId: "invite-1", status: "active" }, inviteToken: "one-time-invite-token" }
+      }
+    });
+
+    const result = await client.createInvite("draft-1", inviteInput);
+
+    assert.equal(result.data.inviteToken, "one-time-invite-token");
+    assert.equal(result.data.invite.inviteId, "invite-1");
+  });
+
+  it("fails closed when the create response omits the one-time token", async () => {
+    const client = clientWith({
+      "/product/orders/draft-1/invites": {
+        body: { invite: { inviteId: "invite-1", status: "active" } }
+      }
+    });
+
+    await assert.rejects(
+      () => client.createInvite("draft-1", inviteInput),
+      /invite_token_missing_in_create_response/
+    );
+  });
+
+  it("attaches the anchored wallet session header to participant-scoped requests", async () => {
+    // 非 local 运行时服务端对参与者面读写强制会话锚定：客户端统一携带
+    // x-uvp-store-session（与 Store 入口共用的钱包会话），不再只发 content-type。
+    const seen: Array<{ readonly path: string; readonly headers: Headers }> = [];
+    const injected = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = String(input);
+      seen.push({ path: url.replace(/^https?:\/\/[^/]+/u, ""), headers: new Headers(init?.headers) });
+      return new Response(JSON.stringify({ draft: { draftId: "draft-1" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    }) as typeof fetch;
+    const client = new HttpProductApiClient("https://api.test", {
+      fetchImpl: injected,
+      sessionToken: () => "uvs_test_session_token"
+    });
+
+    await client.createOrderDraft({
+      zhixuId: "zhixu-a",
+      title: "会话头订单",
+      businessType: "工业设备",
+      totalAmount: "100",
+      currency: "USDC"
+    });
+    await client.loadWorkbenchData().catch(() => undefined);
+
+    assert.ok(seen.length > 0);
+    for (const call of seen) {
+      assert.equal(call.headers.get("x-uvp-store-session"), "uvs_test_session_token");
+    }
+  });
+
+  it("refuses redirects so the session header is never replayed to the redirect target", async () => {
+    const injected = (async (): Promise<Response> =>
+      new Response(null, { status: 302, headers: { location: "https://attacker.test/" } })) as typeof fetch;
+    const client = new HttpProductApiClient("https://api.test", {
+      fetchImpl: injected,
+      sessionToken: () => "uvs_test_session_token"
+    });
+
+    await assert.rejects(
+      () => client.listParticipants("draft-1"),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, /redirect_refused:302/u);
+        return true;
+      }
+    );
+  });
+});
+
 describe("evidence upload timeout boundary", () => {
   function withRecordedTimeouts(run: () => Promise<unknown>): Promise<number[]> {
     const requested: number[] = [];

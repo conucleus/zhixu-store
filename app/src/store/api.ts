@@ -851,6 +851,10 @@ async function fetchStoreJson<TResponse>(
       method: init.method,
       headers,
       ...(body !== undefined ? { body } : {}),
+      // 禁止跟随重定向（executor-kit 同款）：这些请求携带钱包会话头
+      // （x-uvp-store-session），3xx 会让凭据头随重定向重放到 Location
+      // 指向的任意主机。
+      redirect: "manual",
       signal: AbortSignal.timeout(STORE_FETCH_TIMEOUT_MS),
     });
   } catch (error) {
@@ -861,6 +865,14 @@ async function fetchStoreJson<TResponse>(
       pathname,
       error instanceof Error ? error.message : "network_error",
     );
+  }
+
+  // manual 模式下浏览器的跨源重定向是 status 0 的 opaqueredirect：与所有
+  // 3xx 一样按错误处理，凭据头绝不重放。
+  if (response.status === 0 || (response.status >= 300 && response.status < 400)) {
+    throw new StoreApiError(pathname, response.status, `redirect_refused:${response.status}`, {
+      code: "redirect_refused",
+    });
   }
 
   if (!response.ok) {

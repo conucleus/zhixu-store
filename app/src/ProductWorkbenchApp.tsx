@@ -67,8 +67,10 @@ import {
   acceptAttribute,
   acceptHint,
   canCreateProductOrder,
+  canSubmitWorkbenchTask,
   delay,
   emptyTaskEvidenceFieldValues,
+  inviteLinkForInvite,
   missingTaskEvidenceSlotLabels,
   resolveWorkbenchTask,
   taskSubmitActionLabel,
@@ -164,6 +166,8 @@ export function ProductWorkbenchApp() {
 
   const { registerDraftAction, handleRegisterDraft } = useOrderRegistrationFlow({
     api,
+    // 目录作用域：切换目录后，在途的订单启动续作与回调全部作废。
+    scopeKey: selectedZhixu?.zhixuId,
     ensureDraft,
     onRegistered: (nextDraft) => {
       draftFlow.setDraft(nextDraft);
@@ -209,7 +213,10 @@ export function ProductWorkbenchApp() {
   const verificationFailedLabels = Object.entries(evidenceProofsBySlot)
     .filter(([, proof]) => proof.verificationStatus === "mismatch" || proof.verificationStatus === "missing_file")
     .map(([key]) => evidencePlan.slots.find((slot) => slot.key === key)?.label ?? key);
-  const canConfirmSubmit = missingEvidenceSlotLabels.length === 0 && staleSlotLabels.length === 0 && verificationFailedLabels.length === 0;
+  // 服务端权威门 + 本次会话终态闸：status/canSubmit 不满足或已 confirmed
+  // 的任务不呈现可提交入口（order-app 同功能面 fail-closed）。
+  const taskSubmitGate = activeTask ? canSubmitWorkbenchTask(activeTask, submitMachine.status) : false;
+  const canConfirmSubmit = taskSubmitGate && missingEvidenceSlotLabels.length === 0 && staleSlotLabels.length === 0 && verificationFailedLabels.length === 0;
 
   async function handleNextParticipants(): Promise<void> {
     const currentDraft = await ensureDraft();
@@ -829,7 +836,10 @@ function ParticipantsPage({
   draftParticipants: readonly DraftParticipantDTO[];
   draftParticipantsStatus: "unknown" | "loading" | "ready" | "error";
   draftParticipantsError?: string | undefined;
-  inviteActions: Readonly<Record<string, ActionState & { readonly invite?: ProductInviteDTO | undefined }>>;
+  inviteActions: Readonly<Record<string, ActionState & {
+    readonly invite?: ProductInviteDTO | undefined;
+    readonly inviteToken?: string | undefined;
+  }>>;
   registerAction: ActionState;
   onBack: () => void;
   onInvite: (participant: DraftParticipantDTO) => void;
@@ -893,6 +903,11 @@ function ParticipantsPage({
             {draftParticipants.map((item) => {
               const action = inviteActions[item.participantId];
               const actionState = action ?? idleAction;
+              // 一次性令牌由服务端在创建响应下发：没有 token 的邀请链接在
+              // 对端 accept/reject（token 哈希比对）处必然 403，不成链。
+              const inviteLink = action?.invite && action.inviteToken
+                ? inviteLinkForInvite(action.invite.inviteId, action.inviteToken)
+                : undefined;
               return (
               <div className="participant-row" data-testid="participant-row" data-uvp-participant-required={item.required ? "true" : "false"} data-uvp-participant-status={item.status} key={item.participantId}>
                 <div className="participant-role">
@@ -903,10 +918,16 @@ function ParticipantsPage({
                 <div className="evidence-list"><span><FileText />职责确认</span></div>
                 <StatusText tone={draftParticipantTone(item.status)}>{draftParticipantStatusLabel(item.status)}</StatusText>
                 <div className="row-actions">
-                  <button className={item.status === "missing" ? "primary-mini" : "light-button"} onClick={() => onInvite(item)} disabled={actionState.phase === "pending"}>
+                  <button
+                    className={item.status === "missing" ? "primary-mini" : "light-button"}
+                    onClick={() => onInvite(item)}
+                    disabled={actionState.phase === "pending" || !item.contact.trim()}
+                  >
                     {actionState.phase === "pending" ? <Loader2 className="spin" /> : null}{draftParticipantActionLabel(item.status)}
                   </button>
-                  {action?.invite?.inviteUrl ? <button className="light-button" onClick={() => void navigator.clipboard?.writeText(action.invite?.inviteUrl ?? "")}><Copy /> 复制链接</button> : <button className="light-button" onClick={() => onInvite(item)}>替换</button>}
+                  {inviteLink
+                    ? <button className="light-button" onClick={() => void navigator.clipboard?.writeText(inviteLink)}><Copy /> 复制链接</button>
+                    : <button className="light-button" onClick={() => onInvite(item)} disabled={!item.contact.trim()}>替换</button>}
                 </div>
                 <ActionNotice state={actionState} compact />
               </div>
@@ -1309,7 +1330,7 @@ function SubmitPage({
               </div>
             </div>
           ) : null}
-          <button className="primary-button block" data-testid="submit-confirm-button" onClick={onSubmit} disabled={!canSubmit || pending}>
+          <button className="primary-button block" data-testid="submit-confirm-button" onClick={onSubmit} disabled={!canSubmit || pending || confirmed}>
             {pending ? <Loader2 className="spin" /> : <WalletCards />} 确认并提交
           </button>
         </Panel>

@@ -87,7 +87,11 @@ export function useOrderDraftFlow(input: {
   readonly draftParticipantsError?: string | undefined;
   readonly draftAction: ActionState;
   readonly saveDraftAction: ActionState;
-  readonly inviteActions: Record<string, ActionState & { readonly invite?: ProductInviteDTO | undefined }>;
+  /** inviteToken 是一次性明文（只在创建响应出现一次），随动作状态留存供复制链接。 */
+  readonly inviteActions: Record<string, ActionState & {
+    readonly invite?: ProductInviteDTO | undefined;
+    readonly inviteToken?: string | undefined;
+  }>;
   readonly ensureDraft: () => Promise<ProductOrderDraftDTO | undefined>;
   readonly handleCreateDraft: (values: OrderDraftFormValues) => Promise<ProductOrderDraftDTO | undefined>;
   readonly handleSaveDraft: (values: OrderDraftFormValues) => Promise<void>;
@@ -100,7 +104,10 @@ export function useOrderDraftFlow(input: {
   const [draftParticipantsError, setDraftParticipantsError] = useState<string | undefined>();
   const [draftAction, setDraftAction] = useState<ActionState>(idleAction);
   const [saveDraftAction, setSaveDraftAction] = useState<ActionState>(idleAction);
-  const [inviteActions, setInviteActions] = useState<Record<string, ActionState & { readonly invite?: ProductInviteDTO | undefined }>>({});
+  const [inviteActions, setInviteActions] = useState<Record<string, ActionState & {
+    readonly invite?: ProductInviteDTO | undefined;
+    readonly inviteToken?: string | undefined;
+  }>>({});
 
   // A catalog switch must not carry a previous order/draft or its participant
   // confirmations into the newly selected frozen DTO.
@@ -205,6 +212,18 @@ export function useOrderDraftFlow(input: {
   }
 
   async function handleSendInvite(participant: DraftParticipantDTO): Promise<void> {
+    // 服务端对 contact 必填（空值 400）：前端同一口径先拦并给出可操作提示，
+    // 不再发出注定失败的请求，也不为缺失联系方式编造占位值。
+    if (!participant.contact.trim()) {
+      setInviteActions((current) => ({
+        ...current,
+        [participant.participantId]: {
+          phase: "error",
+          message: "该参与方未填写联系方式：请先补填联系方式再发送邀请"
+        }
+      }));
+      return;
+    }
     const currentDraft = await ensureDraft();
     if (!currentDraft) {
       return;
@@ -214,8 +233,6 @@ export function useOrderDraftFlow(input: {
       [participant.participantId]: { phase: "pending", message: "正在发送邀请" }
     }));
     try {
-      // 不为缺失的联系方式编造占位值：contact 为空就如实传空，
-      // 页面会显示"未填写"并提示用其他渠道送达邀请链接。
       const result = await api.createInvite(currentDraft.draftId, {
         participantId: participant.participantId,
         roleSlotId: participant.roleSlotId,
@@ -229,11 +246,10 @@ export function useOrderDraftFlow(input: {
         ...current,
         [participant.participantId]: {
           phase: "success",
-          message: participant.contact.trim()
-            ? "邀请已生成，可复制链接发送给对方"
-            : "邀请已生成；该参与方未填写联系方式，请通过其他渠道把邀请链接送达，并请其补填联系方式",
+          message: "邀请已生成，可复制邀请链接发送给对方",
           source: result.source,
-          invite: result.data
+          invite: result.data.invite,
+          inviteToken: result.data.inviteToken
         }
       }));
       onMutationSuccess?.();

@@ -12,6 +12,7 @@ import {
   resolveFrontendApiBaseUrl,
   shortHash
 } from "../shared/frontend";
+import { readStoredStoreSessionToken } from "../store/api";
 
 export { shortHash } from "../shared/frontend";
 
@@ -140,7 +141,12 @@ export interface ProductInviteDTO {
   readonly expiresAt: string;
   readonly createdAt: string;
   readonly acceptedWalletAddress?: string;
-  readonly inviteUrl?: string;
+}
+
+/** 服务端创建邀请的响应：invite 只带哈希，一次性明文 token 只在本次响应出现。 */
+export interface ProductInviteCreationDTO {
+  readonly invite: ProductInviteDTO;
+  readonly inviteToken: string;
 }
 
 export interface CreateOrderDraftInput {
@@ -309,7 +315,7 @@ export interface ProductApiClient {
   createOrderDraft(input: CreateOrderDraftInput): Promise<ProductApiResult<ProductOrderDraftDTO>>;
   updateOrderDraft(draftId: string, input: UpdateOrderDraftInput): Promise<ProductApiResult<ProductOrderDraftDTO>>;
   getOrderDraft(draftId: string): Promise<ProductApiResult<ProductOrderDraftDTO>>;
-  createInvite(draftId: string, input: CreateInviteInput): Promise<ProductApiResult<ProductInviteDTO>>;
+  createInvite(draftId: string, input: CreateInviteInput): Promise<ProductApiResult<ProductInviteCreationDTO>>;
   listParticipants(draftId: string): Promise<ProductApiResult<readonly DraftParticipantDTO[]>>;
   prepareOrderTrigger(draftId: string, input: { readonly walletAddress: string }): Promise<ProductApiResult<PreparedOrderTriggerDTO>>;
   triggerOrder(draftId: string, input: TriggerOrderInput): Promise<ProductApiResult<ProductOrderDraftDTO>>;
@@ -323,7 +329,11 @@ export interface ProductApiClient {
 
 export function createProductApiClient(): ProductApiClient {
   const baseUrl = resolveFrontendApiBaseUrl(import.meta.env.VITE_UVP_CHAIN_SERVICES_URL);
-  return new HttpProductApiClient(baseUrl);
+  return new HttpProductApiClient(baseUrl, {
+    // 会话锚定身份与 Store 入口共用（同源 localStorage 的钱包会话）：
+    // 非 local 运行时服务端对参与者面读写强制会话锚定，自报钱包一律 401。
+    sessionToken: readStoredStoreSessionToken
+  });
 }
 
 /**
@@ -333,22 +343,31 @@ export function createProductApiClient(): ProductApiClient {
 export class HttpProductApiClient implements ProductApiClient {
   readonly baseUrl?: string | undefined;
 
-  constructor(baseUrl: string | undefined, options: { readonly fetchImpl?: typeof fetch } = {}) {
+  constructor(
+    baseUrl: string | undefined,
+    options: {
+      readonly fetchImpl?: typeof fetch;
+      readonly sessionToken?: (() => string | undefined) | undefined;
+    } = {}
+  ) {
     this.baseUrl = baseUrl;
     this.fetchImpl = options.fetchImpl ?? fetch.bind(globalThis);
+    this.sessionToken = options.sessionToken;
   }
 
   private readonly fetchImpl: typeof fetch;
+  private readonly sessionToken: (() => string | undefined) | undefined;
 
   async loadWorkbenchData(): Promise<ProductWorkbenchData> {
     if (!this.baseUrl) {
       throw new ApiMissingConfigError("/product/zhixus", "API base URL is not configured");
     }
 
+    const sessionHeaders = this.sessionHeaders();
     const zhixusResponse = await fetchJson<{ readonly zhixus: readonly ZhixuSummaryDTO[] }>(
       this.baseUrl,
       "/product/zhixus",
-      {},
+      { headers: sessionHeaders },
       this.fetchImpl
     );
     // Restricted plans are still eligible when their frozen lifecycle says
@@ -367,12 +386,12 @@ export class HttpProductApiClient implements ProductApiClient {
       { path: "/product/tasks", label: "tasks" }
     ] as const;
     const [ordersSettled, tasksSettled, meSettled] = await Promise.allSettled([
-      fetchJson<{ readonly orders: readonly ProductOrderApiDTO[] }>(this.baseUrl, "/product/orders", {}, this.fetchImpl),
-      fetchJson<{ readonly tasks: readonly ProductTaskApiDTO[] }>(this.baseUrl, "/product/tasks", {}, this.fetchImpl),
+      fetchJson<{ readonly orders: readonly ProductOrderApiDTO[] }>(this.baseUrl, "/product/orders", { headers: sessionHeaders }, this.fetchImpl),
+      fetchJson<{ readonly tasks: readonly ProductTaskApiDTO[] }>(this.baseUrl, "/product/tasks", { headers: sessionHeaders }, this.fetchImpl),
       fetchJson<{
         readonly participant: ProductParticipantProfileDTO;
         readonly summary?: unknown;
-      }>(this.baseUrl, "/product/me", {}, this.fetchImpl)
+      }>(this.baseUrl, "/product/me", { headers: sessionHeaders }, this.fetchImpl)
     ]);
 
     const diagnostics = [
@@ -457,13 +476,24 @@ export class HttpProductApiClient implements ProductApiClient {
     return { data: result.data.draft, source: result.source };
   }
 
-  async createInvite(draftId: string, input: CreateInviteInput): Promise<ProductApiResult<ProductInviteDTO>> {
-    const result = await this.requestWithSource<{ readonly invite: ProductInviteDTO }>(
+  async createInvite(draftId: string, input: CreateInviteInput): Promise<ProductApiResult<ProductInviteCreationDTO>> {
+    const result = await this.requestWithSource<{ readonly invite?: unknown; readonly inviteToken?: unknown }>(
       "POST",
       `/product/orders/${encodeURIComponent(draftId)}/invites`,
       input
     );
-    return { data: result.data.invite, source: result.source };
+    // fail-closed：一次性明文 token 只随创建响应出现一次，缺失即视为畸形
+    // 响应——没有 token 的邀请链接在 accept/reject（token 哈希比对）处必然 403。
+    if (typeof result.data.inviteToken !== "string" || result.data.inviteToken.length === 0) {
+      throw new Error("invite_token_missing_in_create_response");
+    }
+    return {
+      data: {
+        invite: (result.data.invite ?? {}) as ProductInviteDTO,
+        inviteToken: result.data.inviteToken
+      },
+      source: result.source
+    };
   }
 
   async listParticipants(draftId: string): Promise<ProductApiResult<readonly DraftParticipantDTO[]>> {
@@ -566,7 +596,7 @@ export class HttpProductApiClient implements ProductApiClient {
     const response = await fetchJson<{ readonly zhixu: ZhixuDetailDTO }>(
       this.baseUrl,
       `/product/zhixus/${encodeURIComponent(zhixuId)}`,
-      {},
+      { headers: this.sessionHeaders() },
       this.fetchImpl
     );
     return response.zhixu;
@@ -596,7 +626,19 @@ export class HttpProductApiClient implements ProductApiClient {
     }
     // 写路径同样必须走注入的 fetchImpl：读路径（loadWorkbenchData）已注入，
     // 测试里全局 fetch 不可达，漏传会在测试环境触发真实网络请求。
-    return await fetchJson<TResponse>(this.baseUrl, pathname, { method, body }, this.fetchImpl, timeoutMs);
+    return await fetchJson<TResponse>(
+      this.baseUrl,
+      pathname,
+      { method, body, headers: this.sessionHeaders() },
+      this.fetchImpl,
+      timeoutMs
+    );
+  }
+
+  /** 与 acceptInvite 同一身份通道：锚定钱包会话头（x-uvp-store-session）。 */
+  private sessionHeaders(): Readonly<Record<string, string>> {
+    const token = this.sessionToken?.();
+    return token ? { "x-uvp-store-session": token } : {};
   }
 }
 
@@ -814,11 +856,15 @@ const UVP_WORKBENCH_UPLOAD_TIMEOUT_MS = Number(
 async function fetchJson<TResponse>(
   baseUrl: string,
   pathname: string,
-  init: { readonly method?: string; readonly body?: unknown } = {},
+  init: {
+    readonly method?: string;
+    readonly body?: unknown;
+    readonly headers?: Readonly<Record<string, string>>;
+  } = {},
   fetchImpl: typeof fetch = fetch.bind(globalThis),
   timeoutMs: number = UVP_WORKBENCH_FETCH_TIMEOUT_MS
 ): Promise<TResponse> {
-  const headers = new Headers();
+  const headers = new Headers(init.headers);
   let body: BodyInit | undefined;
   if (init.body instanceof FormData) {
     body = init.body;
@@ -830,10 +876,13 @@ async function fetchJson<TResponse>(
   try {
     // 统一超时：详情/写路径/轮询与列表读同口径（默认 6s，可经
     // VITE_UVP_WORKBENCH_FETCH_TIMEOUT_MS 覆盖），否则任一挂起请求会让工作台无限 loading。
+    // 禁止跟随重定向（executor-kit 同款）：这些请求携带钱包会话头，
+    // 3xx 会让凭据头随重定向重放到 Location 指向的任意主机。
     response = await fetchImpl(`${baseUrl}${pathname}`, {
       method: init.method ?? "GET",
       headers,
       ...(body !== undefined ? { body } : {}),
+      redirect: "manual",
       signal: AbortSignal.timeout(timeoutMs)
     });
   } catch (error) {
@@ -841,6 +890,11 @@ async function fetchJson<TResponse>(
       throw new ApiNetworkError(pathname, "请求超时", 0);
     }
     throw new ApiNetworkError(pathname, error instanceof Error ? error.message : "network_error");
+  }
+  // manual 模式下浏览器的跨源重定向是 status 0 的 opaqueredirect：与所有
+  // 3xx 一样按错误处理（executor-kit isProductApiRedirectStatus 同口径）。
+  if (response.status === 0 || (response.status >= 300 && response.status < 400)) {
+    throw new ApiRequestError(pathname, response.status, `redirect_refused:${response.status}`);
   }
   if (!response.ok) {
     const message = await readErrorMessage(response);

@@ -10,14 +10,17 @@ import {
   acceptAttribute,
   acceptHint,
   canCreateProductOrder,
+  canSubmitWorkbenchTask,
   acceptIncludesPdf,
   evidenceMetadataSignature,
   formatAcceptLabel,
+  inviteLinkForInvite,
   isEvidenceSlotStale,
   missingTaskEvidenceSlotLabels,
   planTaskEvidence,
   readableError,
   resolveWorkbenchTask,
+  stateMachineSignExpectation,
   submissionPollOutcome,
   submissionTerminalMessage,
   taskSubmitActionLabel,
@@ -389,6 +392,52 @@ describe("submission poll tiering", () => {
     assert.match(submissionTerminalMessage("expired"), /可重新提交/u);
     assert.equal(submissionTerminalMessage("failed", "signal_rejected"), "signal_rejected");
     assert.equal(submissionTerminalMessage("failed"), "提交失败，可重试");
+  });
+});
+
+describe("submit terminal gate (server authority + session final state)", () => {
+  const task = (status: ProductTaskDTO["status"], canSubmit?: boolean): Pick<ProductTaskDTO, "status" | "canSubmit"> => ({
+    status,
+    ...(canSubmit === undefined ? {} : { canSubmit })
+  });
+
+  it("keeps non-open or unauthorized tasks out of the submit entry (fail-closed)", () => {
+    // status/canSubmit 是 DTO 的服务端权威门：已提交待索引、已完成、受阻、
+    // 钱包无提交权的任务都不呈现可提交入口。
+    assert.equal(canSubmitWorkbenchTask(task("open"), "idle"), true);
+    assert.equal(canSubmitWorkbenchTask(task("open", false), "idle"), false);
+    assert.equal(canSubmitWorkbenchTask(task("submitted"), "idle"), false);
+    assert.equal(canSubmitWorkbenchTask(task("done"), "idle"), false);
+    assert.equal(canSubmitWorkbenchTask(task("blocked"), "idle"), false);
+  });
+
+  it("forbids re-submitting in the same session after confirmation", () => {
+    // confirmed 是本次会话终态闸：提交确认后不得再触发完整签名提交。
+    assert.equal(canSubmitWorkbenchTask(task("open"), "confirmed"), false);
+    assert.equal(canSubmitWorkbenchTask(task("open"), "failed"), true);
+    // 刷新后投影仍未改判任务状态时（open）也保持闸住。
+    assert.equal(canSubmitWorkbenchTask(task("open"), "tx_pending"), true);
+  });
+});
+
+describe("signing domain expectation from deployment config", () => {
+  it("derives the expectation from build-time config, not the checked response", () => {
+    assert.deepEqual(
+      stateMachineSignExpectation({ VITE_UVP_STATE_MACHINE_ADDRESS: " 0x0000000000000000000000000000000000000001 " }),
+      { verifyingContract: "0x0000000000000000000000000000000000000001" }
+    );
+  });
+
+  it("refuses to sign when the deployment config is missing or invalid (no conditional skip)", () => {
+    assert.throws(() => stateMachineSignExpectation({}), /VITE_UVP_STATE_MACHINE_ADDRESS/u);
+    assert.throws(() => stateMachineSignExpectation({ VITE_UVP_STATE_MACHINE_ADDRESS: "0x1234" }), /VITE_UVP_STATE_MACHINE_ADDRESS/u);
+  });
+});
+
+describe("invite link carries the one-time token", () => {
+  it("builds the uvp-order-app entry link with invite + inviteToken query", () => {
+    const link = inviteLinkForInvite("invite-9", "one-time-token", "https://order-app.test/");
+    assert.equal(link, "https://order-app.test/?invite=invite-9&inviteToken=one-time-token");
   });
 });
 

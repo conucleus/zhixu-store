@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { assertOrdinaryPageCopy } from "./product-assertions";
-import { installWorkbenchRoutes, STUB_API_BASE, stubSpeclessTask, stubOrder, stubTask, stubZhixu, stubParticipant } from "./workbench-stubs";
+import { installWorkbenchRoutes, STUB_API_BASE, stubSpeclessTask, stubOrder, stubTask, stubZhixu, stubParticipant, stubParticipants } from "./workbench-stubs";
 
 test.describe("Product Workbench browser smoke", () => {
   test("renders catalog, order, and task pages against stubbed product API", async ({ page }, testInfo) => {
@@ -359,10 +359,23 @@ test.describe("Product Workbench browser smoke", () => {
     await expect(page.getByLabel(/备注/)).toHaveValue("视图切换前录入的备注");
   });
 
-  test("sends invites without synthesizing placeholder contacts", async ({ page }) => {
+  test("blocks invites without a contact and shares a token-bearing link once created", async ({ page }) => {
     const inviteBodies: Array<{ readonly contact?: string }> = [];
     await installWorkbenchRoutes(page);
-    // 后注册的路由优先：捕获邀请请求体后回落到通用桩
+    // 后注册的路由优先：参与方清单里前两个参与方无联系方式、交付方已填写；
+    // 再捕获邀请请求体后回落到通用桩。
+    await page.route(`${STUB_API_BASE}/product/orders/*/participants`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          participants: stubParticipants.map((participant, index) => ({
+            ...participant,
+            contact: index === stubParticipants.length - 1 ? "delivery@partner.example" : ""
+          }))
+        })
+      });
+    });
     await page.route(`${STUB_API_BASE}/product/orders/*/invites`, async (route) => {
       inviteBodies.push(route.request().postDataJSON() as { readonly contact?: string });
       await route.fallback();
@@ -378,17 +391,22 @@ test.describe("Product Workbench browser smoke", () => {
     await page.getByTestId("next-participants-button").click();
     await expect(page.getByRole("heading", { name: "邀请参与方确认职责" })).toBeVisible();
 
-    // 桩数据里参与方没有联系方式：页面必须如实显示"未填写"
+    // 无联系方式的参与方如实显示"未填写"：邀请/替换按钮禁用（服务端对
+    // contact 必填 400，前端不发出注定失败的请求，也不编造占位邮箱）。
     await expect(page.getByText("联系方式：未填写").first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "发送邀请" }).first()).toBeDisabled();
+    await expect(page.getByRole("button", { name: "替换" }).first()).toBeDisabled();
+    expect(inviteBodies.length).toBe(0);
 
-    await page.getByRole("button", { name: "发送邀请" }).first().click();
-    await expect(page.getByText("邀请已生成；该参与方未填写联系方式").first()).toBeVisible();
+    // 已填写联系方式的参与方可发邀请；成功后提供复制链接（由服务端创建
+    // 响应里的一次性 token 拼成，缺失 token 的链接不出现）。
+    await page.getByRole("button", { name: "发送邀请" }).nth(1).click();
+    await expect(page.getByText("邀请已生成，可复制邀请链接发送给对方").first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "复制链接" }).first()).toBeVisible();
 
-    // 请求体里不得出现编造的占位邮箱
-    expect(inviteBodies.length).toBeGreaterThan(0);
-    for (const body of inviteBodies) {
-      expect(body.contact ?? "").not.toContain("example.com");
-    }
+    // 请求体如实携带参与方填写的联系方式，不得出现编造的占位值
+    expect(inviteBodies.length).toBe(1);
+    expect(inviteBodies[0]?.contact).toBe("delivery@partner.example");
   });
 
   test("dispute page presents the unopened channel honestly without fabricated SLA steps", async ({ page }) => {

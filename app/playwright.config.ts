@@ -14,7 +14,13 @@ const storeAccessLevel = process.env.UVP_PRODUCT_BROWSER_E2E_STORE_ACCESS_LEVEL;
 // （Store Console 的 E2E 观测桥已按 ND-1 删除，不再需要 VITE_UVP_PRODUCT_E2E。）
 const fixtureDevEnv = chainBackedMode
   ? ""
-  : `VITE_UVP_CHAIN_SERVICES_URL=http://127.0.0.1:9 ${storeAccessLevel ? `VITE_UVP_STORE_ACCESS_LEVEL=${storeAccessLevel} ` : ""}`;
+  : [
+      // 签名域预期值走部署配置注入：与 e2e 桩 typedData.domain 的状态机
+      // 地址（workbench-stubs 0x...01）一致，否则合法用例会被拒签。
+      "VITE_UVP_CHAIN_SERVICES_URL=http://127.0.0.1:9",
+      "VITE_UVP_STATE_MACHINE_ADDRESS=0x0000000000000000000000000000000000000001",
+      ...(storeAccessLevel ? [`VITE_UVP_STORE_ACCESS_LEVEL=${storeAccessLevel}`] : [])
+    ].join(" ") + " ";
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://${host}:${port}`;
 const htmlReportDir = process.env.PLAYWRIGHT_HTML_REPORT ??
   (runRoot ? resolve(runRoot, "playwright-report") : "playwright-report");
