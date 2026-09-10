@@ -10,7 +10,13 @@ import {
   type WalletAccount
 } from "../wallet";
 import { idleAction, type ActionState } from "./workbenchTypes";
-import { readableError, stateMachineSignExpectation } from "./workbenchSupport";
+import {
+  advanceScopeGeneration,
+  readableError,
+  scopeGenerationValue,
+  stateMachineSignExpectation,
+  type ScopeGeneration
+} from "./workbenchSupport";
 
 /** 订单启动流的可注入原语：默认接浏览器钱包，测试注入桩。 */
 export interface OrderRegistrationDeps {
@@ -100,17 +106,24 @@ export function useOrderRegistrationFlow(input: {
 } {
   const { api, scopeKey, ensureDraft, onRegistered } = input;
   const [registerDraftAction, setRegisterDraftAction] = useState<ActionState>(idleAction);
-  const scopeRef = useRef(scopeKey);
+  // 作用域键在 A→B→A 回切时会复用：按裸键比较的 stale 检查在回切后
+  // "键又对上了"，旧目录的在途启动链路（prepare→签名→trigger）继续广播
+  // 并把旧结果写回当前界面。代数单调递增且不复用，键变化即推进；同键
+  // 重渲染（投影刷新）保持不变。
+  const generationRef = useRef<ScopeGeneration<string | undefined>>({ key: scopeKey, generation: 1 });
+  generationRef.current = advanceScopeGeneration(generationRef.current, scopeKey);
+  const effectiveScopeKey = scopeGenerationValue(generationRef.current);
+  const scopeRef = useRef(effectiveScopeKey);
   // 同步互斥（useTaskSubmissionFlow submitInflightRef 同款）：启动是
   // prepare→签名→trigger 的长链路，按钮 pending 禁用要等重渲染才生效，
   // 同步 ref 挡住重渲染前的第二次点击（服务端幂等只是兜底）。
   const registerInflightRef = useRef(false);
 
   useLayoutEffect(() => {
-    scopeRef.current = scopeKey;
+    scopeRef.current = effectiveScopeKey;
     // 上一目录的启动结果/错误不得带进新选中的 DTO。
     setRegisterDraftAction(idleAction);
-  }, [scopeKey]);
+  }, [effectiveScopeKey]);
 
   async function handleRegisterDraft(): Promise<void> {
     if (registerInflightRef.current) {

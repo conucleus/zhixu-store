@@ -526,3 +526,23 @@ export function submissionTerminalMessage(
       return errorCode ?? "提交失败，可重试";
   }
 }
+
+/**
+ * 作用域代数推进：作用域键（目录/任务标识）在 A→B→A 回切时会复用，
+ * 按裸键比较的 stale 检查在回切后"键又对上了"——旧作用域的在途请求
+ * 续作通过检查，把旧结果写回当前界面。代数只在键变化时单调推进且从不
+ * 回退，作用域值 = 键+代数，回切得到的是新值。
+ */
+export interface ScopeGeneration<in out K> {
+  key: K;
+  generation: number;
+}
+
+export function advanceScopeGeneration<K>(current: ScopeGeneration<K>, key: K): ScopeGeneration<K> {
+  return current.key === key ? current : { key, generation: current.generation + 1 };
+}
+
+/** 作用域值：同一代数内保持不变（投影刷新不误伤），跨代永不重复。 */
+export function scopeGenerationValue(scope: ScopeGeneration<string | undefined>): string {
+  return `${String(scope.key)}#${scope.generation}`;
+}

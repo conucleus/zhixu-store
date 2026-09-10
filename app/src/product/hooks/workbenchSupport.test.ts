@@ -25,7 +25,9 @@ import {
   submissionTerminalMessage,
   taskSubmitActionLabel,
   taskSubmitIntent,
-  validateEvidenceFileForSlot
+  validateEvidenceFileForSlot,
+  advanceScopeGeneration,
+  scopeGenerationValue
 } from "./workbenchSupport";
 import { customsDemoTaskConfig } from "../demo/customs-demo-config";
 
@@ -576,5 +578,22 @@ describe("spec-driven submit intent", () => {
     };
     assert.equal(taskSubmitActionLabel(disputeTask), "提交待办结果");
     assert.equal(taskSubmitIntent(disputeTask), "raise_dispute");
+  });
+});
+
+describe("scope generation", () => {
+  it("A→B→A 回切不复用作用域值：旧请求的 stale 检查不因键回切而失效", () => {
+    let scope = { key: "zhixu-a" as string | undefined, generation: 1 };
+    const aFirst = scopeGenerationValue(scope);
+    // 同键重渲染（投影刷新）：代数不变，值稳定。
+    scope = advanceScopeGeneration(scope, "zhixu-a");
+    assert.equal(scopeGenerationValue(scope), aFirst);
+    // 切到 B 再切回 A：键复用，代数推进——值不同于首次进入 A。
+    scope = advanceScopeGeneration(scope, "zhixu-b");
+    scope = advanceScopeGeneration(scope, "zhixu-a");
+    assert.notEqual(scopeGenerationValue(scope), aFirst);
+    // undefined 键（未选中目录）也参与同一口径。
+    scope = advanceScopeGeneration(scope, undefined);
+    assert.notEqual(scopeGenerationValue(scope), aFirst);
   });
 });
