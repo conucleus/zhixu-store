@@ -9,7 +9,7 @@ test.skip(
 );
 
 const storeZhixuA = {
-  zhixuId: "store-zhixu-a",
+  zhixuId: "zx-store-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   title: "Store 秩序甲",
   subtitle: "跨境履约秩序甲",
   maintainer: "Store 维护方",
@@ -35,13 +35,28 @@ const storeZhixuA = {
 
 const storeZhixuB = {
   ...storeZhixuA,
-  zhixuId: "store-zhixu-b",
+  zhixuId: "zx-store-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   title: "Store 秩序乙",
   subtitle: "跨境履约秩序乙",
   planId: "0xplan-b",
   planHash: "0xhash-b",
   planPublication: { ...storeZhixuA.planPublication, planId: "0xplan-b", planHash: "0xhash-b" }
 };
+
+const targetInterfaces = [
+  {
+    interfaceName: "fulfillment_service",
+    orderModes: ["new"],
+    inputs: [{ portName: "execute", label: "执行入口", hook: "fulfillment.intake#EXECUTE" }],
+    outputs: [{ portName: "completed", label: "完成", signal: "seller::fulfillment.delivery.cmp" }]
+  },
+  {
+    interfaceName: "production_evidence",
+    orderModes: ["new", "existing"],
+    inputs: [{ portName: "amend", label: "补证", hook: "fulfillment.review#AMEND" }],
+    outputs: [{ portName: "scrap_declared", label: "报废申报", signal: "seller::fulfillment.review.scrap" }]
+  }
+] as const;
 
 const storeSummary = {
   totalZhixus: 2,
@@ -88,10 +103,23 @@ test.describe("Store docking sandbox target selection", () => {
         return;
       }
       if (pathname === "/store/docking-sessions" && route.request().method() === "POST") {
-        const body = route.request().postDataJSON() as { readonly sourceZhixuId?: string; readonly targetZhixuId?: string };
+        const body = route.request().postDataJSON() as {
+          readonly sourceZhixuId?: string;
+          readonly targetZhixuId?: string;
+          readonly targetInterfaceName?: string;
+          readonly orderMode?: string;
+        };
         dockingRequests.push(body);
-        const source = body.sourceZhixuId === "store-zhixu-b" ? storeZhixuB : storeZhixuA;
-        const target = body.targetZhixuId === "store-zhixu-b" ? storeZhixuB : storeZhixuA;
+        const source = body.sourceZhixuId === storeZhixuB.zhixuId ? storeZhixuB : storeZhixuA;
+        const target = body.targetZhixuId === storeZhixuB.zhixuId ? storeZhixuB : storeZhixuA;
+        const selectedInterface = targetInterfaces.find(
+          (entry) => entry.interfaceName === (body.targetInterfaceName ?? targetInterfaces[0]?.interfaceName)
+        ) ?? targetInterfaces[0]!;
+        const orderMode = selectedInterface.orderModes.includes(
+          (body.orderMode ?? selectedInterface.orderModes[0]) as "new" | "existing"
+        )
+          ? (body.orderMode ?? selectedInterface.orderModes[0])
+          : selectedInterface.orderModes[0];
         await route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -102,7 +130,6 @@ test.describe("Store docking sandbox target selection", () => {
               source: {
                 zhixuId: source.zhixuId,
                 title: source.title,
-                versionLabel: source.versionLabel,
                 lifecycleStatus: source.lifecycleStatus,
                 publicationStatus: source.planPublication.status,
                 planId: source.planId,
@@ -111,12 +138,14 @@ test.describe("Store docking sandbox target selection", () => {
               target: {
                 zhixuId: target.zhixuId,
                 title: target.title,
-                versionLabel: target.versionLabel,
                 lifecycleStatus: target.lifecycleStatus,
                 publicationStatus: target.planPublication.status,
                 planId: target.planId,
                 planHash: target.planHash
               },
+              interfaces: targetInterfaces,
+              selectedInterfaceName: selectedInterface.interfaceName,
+              orderMode,
               candidateMappings: [],
               draftSignalMap: [],
               validation: { ok: false, errors: [], nonPublishing: true },
@@ -140,16 +169,34 @@ test.describe("Store docking sandbox target selection", () => {
     await expect(page.getByText("尚未选择")).toBeVisible();
 
     // 选择与来源相同的秩序：显式拒绝，不发请求
-    await page.getByTestId("store-docking-target-select").selectOption("store-zhixu-a");
+    await page.getByTestId("store-docking-target-select").selectOption(storeZhixuA.zhixuId);
     await expect(page.getByTestId("store-docking-same-target-warning")).toBeVisible();
     await expect(page.getByTestId("store-create-docking-session-button")).toBeDisabled();
 
-    // 选择不同的目标秩序：正常创建会话
-    await page.getByTestId("store-docking-target-select").selectOption("store-zhixu-b");
+    // 选择不同的目标秩序：以默认接口（首个）创建会话
+    await page.getByTestId("store-docking-target-select").selectOption(storeZhixuB.zhixuId);
     await expect(page.getByTestId("store-docking-same-target-warning")).toHaveCount(0);
     await page.getByTestId("store-create-docking-session-button").click();
     await expect(page.getByText("dock_test-0001")).toBeVisible();
-    expect(dockingRequests).toEqual([{ sourceZhixuId: "store-zhixu-a", targetZhixuId: "store-zhixu-b" }]);
+    await expect(page.getByTestId("store-docking-interface-select")).toHaveValue("fulfillment_service");
+    await expect(page.getByTestId("store-docking-mode-select")).toHaveValue("new");
+    expect(dockingRequests).toEqual([{ sourceZhixuId: storeZhixuA.zhixuId, targetZhixuId: storeZhixuB.zhixuId }]);
+
+    // 切换到双模式接口：会话以显式接口参数重建，模式跟随接口开放集
+    await page.getByTestId("store-docking-interface-select").selectOption("production_evidence");
+    await expect(page.getByTestId("store-docking-mode-select")).toHaveValue("new");
+    expect(dockingRequests).toEqual([
+      { sourceZhixuId: storeZhixuA.zhixuId, targetZhixuId: storeZhixuB.zhixuId },
+      { sourceZhixuId: storeZhixuA.zhixuId, targetZhixuId: storeZhixuB.zhixuId, targetInterfaceName: "production_evidence", orderMode: "new" }
+    ]);
+
+    // 切换下单模式：显式 orderMode 重建
+    await page.getByTestId("store-docking-mode-select").selectOption("existing");
+    expect(dockingRequests).toEqual([
+      { sourceZhixuId: storeZhixuA.zhixuId, targetZhixuId: storeZhixuB.zhixuId },
+      { sourceZhixuId: storeZhixuA.zhixuId, targetZhixuId: storeZhixuB.zhixuId, targetInterfaceName: "production_evidence", orderMode: "new" },
+      { sourceZhixuId: storeZhixuA.zhixuId, targetZhixuId: storeZhixuB.zhixuId, targetInterfaceName: "production_evidence", orderMode: "existing" }
+    ]);
   });
 
   test("single-zhixu catalog cannot create a self-docking session", async ({ page }) => {
@@ -195,7 +242,7 @@ test.describe("Store docking sandbox target selection", () => {
 
     const options = page.getByTestId("store-docking-target-select").locator("option");
     await expect(options).toHaveCount(2); // 占位项 + 唯一秩序
-    await page.getByTestId("store-docking-target-select").selectOption("store-zhixu-a");
+    await page.getByTestId("store-docking-target-select").selectOption(storeZhixuA.zhixuId);
     await expect(page.getByTestId("store-docking-same-target-warning")).toBeVisible();
     await expect(page.getByTestId("store-create-docking-session-button")).toBeDisabled();
   });

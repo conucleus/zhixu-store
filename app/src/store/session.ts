@@ -22,6 +22,11 @@ export async function loginStoreSessionWithWallet(
   const challenge = await api.authChallenge({ address, intent: "login" });
   const signature = await personalSignMessage(address, challenge.data.message);
   const verify = await api.authVerify({ nonce: challenge.data.nonce, signature });
+  // 会话过期时间是本地弃置 token 的依据；服务端未声明即视为畸形响应，
+  // 不得把无过期口径的 token 永久落进 localStorage。
+  if (!verify.data.session?.expiresAt) {
+    throw new Error("会话响应缺少过期时间，已放弃本次登录");
+  }
   return { verify: verify.data, address };
 }
 

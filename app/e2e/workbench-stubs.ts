@@ -13,7 +13,8 @@ import { customsDemoTaskConfig } from "../src/product/demo/customs-demo-config";
 export const STUB_API_BASE = "http://127.0.0.1:9";
 
 export const stubZhixu = {
-  zhixuId: "zhixu-cross-border-high-value",
+  // 派生身份演示值（zx-+32hex，与编译产物 zhixuId 同形态）。
+  zhixuId: "zx-3fa636e0229362fa4f6db3db37737a17",
   title: "跨境高价值货物履约秩序",
   subtitle: "买家、卖家、报关、物流、检验方按同一套阶段推进",
   reviewStatus: "approved",
@@ -40,7 +41,15 @@ export const stubZhixu = {
     { slotId: "validation", title: "检验方", label: "验收确认", duty: "验收货物", evidence: ["验收单"], status: "optional", tone: "neutral", required: false }
   ],
   dockableModules: [
-    { moduleId: "funds-protection", title: "资金保障", desc: "付款条件由订单状态约束", ports: ["付款确认"], status: "available" }
+    {
+      interfaceName: "funds_protection",
+      orderModes: ["new"],
+      title: "资金保障",
+      desc: "付款条件由订单状态约束",
+      inputs: [{ portName: "payment_evidence", label: "付款确认", hook: "funding.intake#EXECUTE" }],
+      outputs: [{ portName: "guarantee_proof", label: "担保证明", signal: "guarantor::funding.escrow.guarantee" }],
+      status: "available"
+    }
   ],
   stages: [
     { stageId: "stage-export-customs", index: 1, name: "出口报关", evidence: ["报关单"], ownerRole: "报关物流", status: "active" },
@@ -97,7 +106,8 @@ export const stubTask = {
   evidenceSpec: customsDemoTaskConfig.evidenceSpec,
   status: "open",
   participantRoleLabel: "报关物流",
-  primaryActionLabel: "处理待办",
+  // 提交入口/确认页文案由任务载荷下发：桩值即服务端会下发的动作文案。
+  primaryActionLabel: "确认出口报关完成",
   responsibilityStatements: [
     { title: "凭证真实", desc: "我确认上传的凭证真实有效。" }
   ],
@@ -173,8 +183,7 @@ export const stubInvite = {
   tokenHash: "0xtoken",
   status: "active",
   expiresAt: "2026-12-31T00:00:00.000Z",
-  createdAt: "2026-01-01T00:00:00.000Z",
-  inviteUrl: "/?invite=invite-4001"
+  createdAt: "2026-01-01T00:00:00.000Z"
 };
 
 export const stubEvidence = {
@@ -306,6 +315,11 @@ export async function installWorkbenchRoutes(page: Page, options: WorkbenchStubO
     }
     if (pathname.startsWith("/product/order-drafts/") && pathname.endsWith("/prepare-trigger") && method === "POST") {
       await fulfillJson(route, {
+        // trigger 记录声明的部署地址：签名域交叉核对的对照来源。
+        trigger: {
+          triggerId: "trigger-order-8001",
+          stateMachineAddress: "0x0000000000000000000000000000000000000001"
+        },
         prepared: {
           prepareId: "prepare-order-8001",
           triggerId: "trigger-order-8001",
@@ -345,7 +359,12 @@ export async function installWorkbenchRoutes(page: Page, options: WorkbenchStubO
     }
     if (/^\/product\/orders\/[^/]+\/invites$/.test(pathname) && method === "POST") {
       inviteSequence += 1;
-      await fulfillJson(route, { invite: { ...stubInvite, inviteId: `invite-${4000 + inviteSequence}` } });
+      // 契约对齐：一次性明文 token 只随创建响应出现一次（客户端用它拼
+      // 含 ?inviteToken= 的邀请链接）；invite 记录本身只带 tokenHash。
+      await fulfillJson(route, {
+        invite: { ...stubInvite, inviteId: `invite-${4000 + inviteSequence}` },
+        inviteToken: `one-time-invite-token-${inviteSequence}`
+      });
       return;
     }
     if (/^\/product\/orders\/[^/]+\/participants$/.test(pathname) && method === "GET") {

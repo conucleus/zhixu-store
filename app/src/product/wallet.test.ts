@@ -106,6 +106,37 @@ describe("pre-signature typed data validation", () => {
     }
   });
 
+  it("rejects a domain.chainId that differs from the expected deployment chain", () => {
+    expectMismatch(
+      () => validateTypedDataForSigning(validSubmitTypedData, {
+        ...submitExpectation,
+        chainId: 1
+      }, WALLET),
+      "domain.chainId 31337 与预期 1"
+    );
+    // 期望一致时通过。
+    validateTypedDataForSigning(validSubmitTypedData, { ...submitExpectation, chainId: 31337 }, WALLET);
+  });
+
+  it("rejects a domain.verifyingContract that differs from the expected state machine address", () => {
+    expectMismatch(
+      () => validateTypedDataForSigning(validSubmitTypedData, {
+        ...submitExpectation,
+        verifyingContract: "0x0000000000000000000000000000000000000002"
+      }, WALLET),
+      "domain.verifyingContract 0x0000000000000000000000000000000000000001 与预期 0x0000000000000000000000000000000000000002"
+    );
+    // 地址十六进制大小写差异不算不一致。
+    validateTypedDataForSigning(
+      {
+        ...validSubmitTypedData,
+        domain: { ...validSubmitTypedData.domain, verifyingContract: "0x00000000000000000000000000000000000000AB" }
+      },
+      { ...submitExpectation, verifyingContract: "0x00000000000000000000000000000000000000ab" },
+      WALLET
+    );
+  });
+
   it("rejects when message.submitter differs from the connected wallet", () => {
     expectMismatch(
       () => validateTypedDataForSigning(
@@ -155,6 +186,40 @@ describe("pre-signature typed data validation", () => {
       signTypedData({ address: WALLET }, { ...validSubmitTypedData, primaryType: "Tampered" }, submitExpectation),
       (error: unknown) => error instanceof TypedDataMismatchError
     );
+  });
+
+  it("checks the wallet's current chain against domain.chainId before signing", async () => {
+    const requests: string[] = [];
+    (globalThis as { window?: unknown }).window = {
+      ethereum: {
+        request: async (args: { readonly method: string }): Promise<unknown> => {
+          requests.push(args.method);
+          if (args.method === "eth_chainId") {
+            return "0x7a69";
+          }
+          if (args.method === "eth_signTypedData_v4") {
+            return "0xstub-signature";
+          }
+          throw new Error(`unsupported method ${args.method}`);
+        }
+      }
+    };
+    try {
+      // 31337 = 0x7a69：当前链与域一致才放行。
+      const signature = await signTypedData({ address: WALLET }, validSubmitTypedData, submitExpectation);
+      assert.equal(signature, "0xstub-signature");
+      assert.deepEqual(requests, ["eth_chainId", "eth_signTypedData_v4"]);
+
+      await assert.rejects(
+        signTypedData({ address: WALLET }, {
+          ...validSubmitTypedData,
+          domain: { ...validSubmitTypedData.domain, chainId: 1 }
+        }, submitExpectation),
+        (error: unknown) => error instanceof TypedDataMismatchError && error.message.includes("与签名域 chainId 1 不一致")
+      );
+    } finally {
+      delete (globalThis as { window?: unknown }).window;
+    }
   });
 
   it("validates trigger-order typed data against its own expectation", () => {

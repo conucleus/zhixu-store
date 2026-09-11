@@ -100,6 +100,11 @@ export function joinSuppressionReason(
   verification: StoreAnchorVerificationView | undefined,
   listing: StoreListingView | undefined,
 ): string | undefined {
+  // 健康态早退：listing 已公开且锚核验一致时不输出任何抑制理由，
+  // 否则详情页会在开放加入入口的同时渲染红色"加入不开放"横幅，自相矛盾。
+  if (listing?.status === "public" && verification?.status === "consistent") {
+    return undefined;
+  }
   if (verification?.status === "conflict") {
     return "listing 与链上注册事实不一致，加入入口已被抑制；请以链上数据为准并联系 Store 运营方。";
   }

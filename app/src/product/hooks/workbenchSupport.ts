@@ -1,10 +1,14 @@
 import {
   lifecycleStatusForZhixu,
+  validateTaskEvidenceSpec,
+  type FulfillmentPluginKind,
+  type ProductResourceRequirementDTO,
   type ProductTaskDTO,
   type TaskEvidenceSpecDTO,
   type ZhixuSummaryDTO
 } from "@uvp-eth/product-dto";
 import type { ProductSubmissionStatus } from "../api";
+import type { SubmitMachineStatus } from "./workbenchTypes";
 
 /**
  * Order creation follows the frozen lifecycle DTO.  Review approval alone is
@@ -27,10 +31,19 @@ export function readableError(error: unknown, fallback: string): string {
   if (error.message.includes("evidence_required")) {
     return "请先上传凭证";
   }
-  if (error.message.includes("403")) {
+  if (errorHttpStatus(error) === 403) {
     return "当前账号没有权限执行该操作";
   }
   return error.message && error.message !== "Failed to fetch" ? error.message : fallback;
+}
+
+/**
+ * 权限判定只认结构化的 HTTP 状态字段（产品 API 错误对象携带的 status），
+ * 不做消息子串匹配：消息里出现"403"数字（单号、块高等）不是权限错误。
+ */
+function errorHttpStatus(error: Error): number | undefined {
+  const status = (error as { readonly status?: unknown }).status;
+  return typeof status === "number" ? status : undefined;
 }
 
 export function delay(ms: number): Promise<void> {
@@ -38,10 +51,12 @@ export function delay(ms: number): Promise<void> {
 }
 
 /**
- * 任务证据计划的输入：仅消费凝结核随 zhixu 配置携带的结构化 evidenceSpec。
+ * 任务证据计划的输入：凝结核随 zhixu 配置携带的结构化 evidenceSpec，
+ * 以及任务投影下发的结构化资源要求（spec 缺失/非法时的证据槽位来源）。
  */
 export interface TaskEvidencePlanInput {
   readonly evidenceSpec?: readonly TaskEvidenceSpecDTO[] | undefined;
+  readonly resourceRequirements?: readonly ProductResourceRequirementDTO[] | undefined;
 }
 
 export type TaskEvidenceSlotInputKind = "file" | "text" | "date";
@@ -50,6 +65,12 @@ export type TaskEvidenceSlotInputKind = "file" | "text" | "date";
 export interface TaskEvidenceSlot {
   readonly key: string;
   readonly label: string;
+  /**
+   * 上传时送出的证据类型（进入服务端指纹）。spec 槽位即 spec key（product-dto
+   * 约定）；资源降级槽位用资源自身类型，与 uvp-order-app 同口径——两端对同一
+   * 任务不能因入口不同签出不同 documentType 的指纹。槽位 key 只是前端归档键。
+   */
+  readonly documentType: string;
   readonly inputKind: TaskEvidenceSlotInputKind;
   /** 文件槽位的 accept 约束（MIME 或扩展名）；空数组表示不限制格式。 */
   readonly accept: readonly string[];
@@ -63,18 +84,20 @@ export interface TaskEvidencePlan {
 }
 
 /**
- * 把任务的证据要求解析为可渲染槽位。
+ * 把任务的证据要求解析为可渲染槽位。spec 缺失或非法时保留服务端结构化
+ * 资源要求槽位（metadata 型除外）——与 uvp-order-app planTaskEvidence 同口径。
  *
- * 框架红线：商店不含业务标签匹配表。任务未携带 spec 时没有证据槽位
- * （纯字段确认或按业务约定线下提交），既不臆造通用槽位，也不在上传前拒绝。
+ * 框架红线：商店不含业务标签匹配表。spec 与资源要求都不存在时没有证据
+ * 槽位（纯字段确认或按业务约定线下提交），不臆造通用槽位，也不在上传前拒绝。
  */
 export function planTaskEvidence(task: TaskEvidencePlanInput): TaskEvidencePlan {
   const spec = task.evidenceSpec;
-  if (spec && spec.length > 0) {
+  if (spec && spec.length > 0 && validateTaskEvidenceSpec(spec).length === 0) {
     return {
       mode: "spec",
       slots: spec.map((entry): TaskEvidenceSlot => ({
         key: entry.key,
+        documentType: entry.key,
         label: entry.label,
         inputKind: entry.inputKind ?? "file",
         accept: entry.inputKind === undefined || entry.inputKind === "file" ? [...(entry.accept ?? [])] : [],
@@ -83,7 +106,17 @@ export function planTaskEvidence(task: TaskEvidencePlanInput): TaskEvidencePlan 
       }))
     };
   }
-  return { mode: "none", slots: [] };
+  const resourceSlots = (task.resourceRequirements ?? [])
+    .filter((resource) => (resource.resourceType ?? resource.resourceId) !== "metadata")
+    .map((resource): TaskEvidenceSlot => ({
+      key: `resource-requirement:${resource.resourceId}`,
+      documentType: resource.resourceType ?? resource.resourceId,
+      label: resource.label,
+      inputKind: "file",
+      accept: [],
+      required: resource.required
+    }));
+  return { mode: "none", slots: resourceSlots };
 }
 
 /** 与后端 Evidence Service 一致的限制：解码后最大 10MB（HTTP body 上限 16MB）。 */
@@ -119,8 +152,26 @@ export function acceptAllowsFile(accept: readonly string[], file: EvidenceFileMe
   const mime = file.type.trim().toLowerCase();
   const extension = extensionOf(file.name);
   return rules.some((rule) =>
-    (mime.length > 0 && rule === mime) || (extension.length > 0 && rule === extension)
+    ruleAcceptsMime(rule, mime) || (extension.length > 0 && rule === extension)
   );
+}
+
+/**
+ * MIME 条目按全等或 <type>/* 通配命中。协议校验器放行通配 MIME（如 image/*），
+ * 若前端只做全等匹配，该槽位任何文件都匹配不上，永远无法上传。
+ */
+function ruleAcceptsMime(rule: string, mime: string): boolean {
+  if (mime.length === 0) {
+    return false;
+  }
+  if (rule === mime) {
+    return true;
+  }
+  if (!rule.endsWith("/*")) {
+    return false;
+  }
+  const typePrefix = rule.slice(0, -1);
+  return typePrefix === "*/" || mime.startsWith(typePrefix);
 }
 
 const PDF_MIME = "application/pdf";
@@ -277,8 +328,31 @@ export function evidenceMetadataSignature(fields: TaskEvidenceFieldValues): stri
       entries.push([key, trimmed]);
     }
   }
-  entries.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  // 键序用码点序，与 uvp-core/uvp-protocol/uvp-order-app 的 canonical 口径一致；
+  // UTF-16 码元序会让增补平面字符的键排错位，跨端指纹对不上。
+  entries.sort(([left], [right]) => compareByCodePoint(left, right));
   return JSON.stringify(entries);
+}
+
+// 码点序等价 UTF-8 字节序；localeCompare 依赖 ICU/locale，同一份字段在不同
+// 环境会签出不同指纹。按码点而非 UTF-16 码元比较：增补平面字符的代理对在
+// 码元序里会排到 U+E000..U+FFFF 之前，偏离字节序。
+function compareByCodePoint(left: string, right: string): number {
+  if (left === right) {
+    return 0;
+  }
+  let leftIndex = 0;
+  let rightIndex = 0;
+  while (leftIndex < left.length && rightIndex < right.length) {
+    const leftCode = left.codePointAt(leftIndex)!;
+    const rightCode = right.codePointAt(rightIndex)!;
+    if (leftCode !== rightCode) {
+      return leftCode < rightCode ? -1 : 1;
+    }
+    leftIndex += leftCode > 0xffff ? 2 : 1;
+    rightIndex += rightCode > 0xffff ? 2 : 1;
+  }
+  return leftIndex < left.length ? 1 : rightIndex < right.length ? -1 : 0;
 }
 
 /** 槽位是否 stale：无快照（该槽位没有上传记录）恒为 false；字段签名与上传时不一致即 stale。 */
@@ -308,19 +382,123 @@ export function resolveWorkbenchTask(
   return selected ?? fallback;
 }
 
+/**
+ * 邀请链接（发送给受邀参与方）：一次性 token 由服务端在创建响应中下发一次，
+ * 链接必须带 ?invite=&inviteToken=（uvp-order-app 入口格式，accept/reject/
+ * preview 都按 token 哈希比对）。基地址取部署配置注入，缺省同源部署。
+ */
+export function inviteLinkForInvite(
+  inviteId: string,
+  inviteToken: string,
+  baseUrl?: string
+): string {
+  const origin = baseUrl?.trim() ||
+    (import.meta.env?.VITE_UVP_ORDER_APP_URL as string | undefined)?.trim() ||
+    (typeof window === "undefined" ? "" : window.location.origin);
+  const params = new URLSearchParams({ invite: inviteId, inviteToken });
+  return `${origin.replace(/\/+$/u, "")}/?${params.toString()}`;
+}
+
 export type TaskSubmitIntent = "confirm_stage" | "reject_stage" | "raise_dispute" | "resolve_dispute";
 
+/** 无 manifest 声明时的兜底映射：争议任务不得以 confirm_stage 提交。 */
+const submitIntentByPluginKind: Readonly<Record<FulfillmentPluginKind, TaskSubmitIntent>> = {
+  payment_placeholder: "confirm_stage",
+  evidence_submission: "confirm_stage",
+  delivery_update: "confirm_stage",
+  validation_confirm: "confirm_stage",
+  dispute_material: "raise_dispute"
+};
+
 /**
- * 提交 intent 以任务携带的 spec（addOnManifest 的 submit_signal 动作声明）驱动，
- * 与订单工作台的 manifest 口径一致；spec 未声明 intent 时才回落 confirm_stage。
+ * 提交意图与 uvp-order-app 同源同序：manifest 显式声明的 submit_signal intent
+ * 优先（发布者声明是权威），无 manifest 声明时按能力插件类型推导。
+ * 两端各自单源推导会在 manifest 与插件类型不一致时得出不同 intent。
  */
 export function taskSubmitIntent(
-  task: Pick<ProductTaskDTO, "addOnManifest">
+  task: Pick<ProductTaskDTO, "addOnManifest" | "capabilityPlugin">
 ): TaskSubmitIntent {
   const submitActions = (task.addOnManifest?.actions ?? [])
     .filter((action) => action.actionKind === "submit_signal");
   const primary = submitActions.find((action) => action.primary) ?? submitActions[0];
-  return primary?.intent ?? "confirm_stage";
+  if (primary?.intent) {
+    return primary.intent;
+  }
+  const pluginKind = task.capabilityPlugin?.pluginKind;
+  return pluginKind ? submitIntentByPluginKind[pluginKind] ?? "confirm_stage" : "confirm_stage";
+}
+
+/**
+ * 提交入口与确认页的动作文案由服务端随任务下发，前端不按意图推导。
+ * 取值顺序与 uvp-order-app 的 taskPrimaryActionLabel 同源：
+ * manifest 主 submit_signal 动作 label（发布者声明）→ 能力插件
+ * primaryActionLabel → 任务级 primaryActionLabel → 中性兜底（不含意图语义）。
+ * intent 只决定提交的协议意图（taskSubmitIntent），不决定文案。
+ */
+export const NEUTRAL_SUBMIT_ACTION_LABEL = "提交待办结果";
+
+export function taskSubmitActionLabel(
+  task: Pick<ProductTaskDTO, "addOnManifest" | "capabilityPlugin" | "primaryActionLabel">
+): string {
+  const submitActions = (task.addOnManifest?.actions ?? [])
+    .filter((action) => action.actionKind === "submit_signal");
+  const primary = submitActions.find((action) => action.primary) ?? submitActions[0];
+  const manifestLabel = primary?.label?.trim();
+  if (manifestLabel) {
+    return manifestLabel;
+  }
+  const pluginLabel = task.capabilityPlugin?.primaryActionLabel?.trim();
+  if (pluginLabel) {
+    return pluginLabel;
+  }
+  const taskLabel = task.primaryActionLabel?.trim();
+  if (taskLabel) {
+    return taskLabel;
+  }
+  return NEUTRAL_SUBMIT_ACTION_LABEL;
+}
+
+/**
+ * 签名域交叉核对的预期值独立来源：构建期部署配置注入（Vite 内联的静态
+ * import.meta.env 成员），不来自被核对的同一 BFF 响应——被攻陷的 BFF 可以
+ * 让 typedData.domain 与任务投影/prepare 信封自洽，但改不了部署配置。
+ * 与 uvp-order-app 的 submitSignExpectation 同范式；缺预期值即拒绝签名
+ * （fail-closed），不再条件性跳过比对。
+ */
+export interface SignDomainEnv {
+  readonly VITE_UVP_STATE_MACHINE_ADDRESS?: string | undefined;
+}
+
+export function stateMachineSignExpectation(env: SignDomainEnv = buildTimeSignDomainEnv()): {
+  readonly verifyingContract: string;
+} {
+  const address = env.VITE_UVP_STATE_MACHINE_ADDRESS?.trim();
+  if (!address || !/^0x[0-9a-fA-F]{40}$/u.test(address)) {
+    throw new Error("状态机部署地址未配置（构建期环境变量 VITE_UVP_STATE_MACHINE_ADDRESS），无法交叉核对签名域，已拒绝签名");
+  }
+  return { verifyingContract: address };
+}
+
+function buildTimeSignDomainEnv(): SignDomainEnv {
+  return {
+    VITE_UVP_STATE_MACHINE_ADDRESS: import.meta.env?.VITE_UVP_STATE_MACHINE_ADDRESS
+  };
+}
+
+/**
+ * 提交入口终态门：DTO 的 status/canSubmit 是服务端权威门（已关闭/待索引/
+ * 受阻任务不呈现可提交入口，order-app 同功能面 fail-closed），submitStatus
+ * confirmed 是本次会话的终态闸——提交确认后不得再触发完整签名提交，除非
+ * 刷新后的投影把任务改回 open（新会话/新状态）。
+ */
+export function canSubmitWorkbenchTask(
+  task: Pick<ProductTaskDTO, "status" | "canSubmit">,
+  submitStatus: SubmitMachineStatus
+): boolean {
+  if (task.status !== "open" || task.canSubmit === false) {
+    return false;
+  }
+  return submitStatus !== "confirmed";
 }
 
 export type SubmissionPollOutcome = "confirmed" | "terminal_failure" | "pending";
@@ -355,4 +533,24 @@ export function submissionTerminalMessage(
     default:
       return errorCode ?? "提交失败，可重试";
   }
+}
+
+/**
+ * 作用域代数推进：作用域键（目录/任务标识）在 A→B→A 回切时会复用，
+ * 按裸键比较的 stale 检查在回切后"键又对上了"——旧作用域的在途请求
+ * 续作通过检查，把旧结果写回当前界面。代数只在键变化时单调推进且从不
+ * 回退，作用域值 = 键+代数，回切得到的是新值。
+ */
+export interface ScopeGeneration<in out K> {
+  key: K;
+  generation: number;
+}
+
+export function advanceScopeGeneration<K>(current: ScopeGeneration<K>, key: K): ScopeGeneration<K> {
+  return current.key === key ? current : { key, generation: current.generation + 1 };
+}
+
+/** 作用域值：同一代数内保持不变（投影刷新不误伤），跨代永不重复。 */
+export function scopeGenerationValue(scope: ScopeGeneration<string | undefined>): string {
+  return `${String(scope.key)}#${scope.generation}`;
 }

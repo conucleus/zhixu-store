@@ -2,13 +2,23 @@ import { AlertTriangle, GitBranch, Loader2, ShieldCheck } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { StoreZhixuConsoleDTO } from "@uvp-eth/product-dto";
 import { readableStoreError, type StoreApiClient } from "./api";
-import type { StoreAccessState, StoreDockingSessionDTO } from "./types";
+import type {
+  StoreAccessState,
+  StoreDockOrderMode,
+  StoreDockingSessionDTO,
+} from "./types";
 
 type DockingState =
   | { readonly status: "idle" }
   | { readonly status: "pending" }
   | { readonly status: "ready"; readonly session: StoreDockingSessionDTO }
   | { readonly status: "error"; readonly message: string };
+
+/** 会话外的待切换选择：变更后以显式参数重建会话（沙箱会话即草稿）。 */
+interface InterfaceSelection {
+  readonly targetInterfaceName: string;
+  readonly orderMode: StoreDockOrderMode;
+}
 
 export function StoreDockingPage({
   access,
@@ -26,13 +36,23 @@ export function StoreDockingPage({
     [initialSourceZhixuId, zhixus]
   );
   // 目标秩序必须由操作员显式选择：不再静默取“第一个非来源秩序”，
-  // 也不允许回落到来源秩序自身（自试拼没有意义且服务端暂不拒绝）。
+  // 也不允许回落到来源秩序自身——自试拼无业务意义，服务端 STORE-03
+  // 也会以 self_docking_forbidden 拒绝。
   const [selectedTargetZhixuId, setSelectedTargetZhixuId] = useState("");
   const targetZhixu = zhixus.find((item) => item.zhixuId === selectedTargetZhixuId);
   const sameAsSource = Boolean(targetZhixu && sourceZhixu && targetZhixu.zhixuId === sourceZhixu.zhixuId);
   const [state, setState] = useState<DockingState>({ status: "idle" });
+  const [selection, setSelection] = useState<InterfaceSelection | undefined>(undefined);
 
-  async function createSession(): Promise<void> {
+  const selectedInterface = state.status === "ready"
+    ? state.session.interfaces.find((entry) => entry.interfaceName === (
+        selection?.targetInterfaceName ?? state.session.selectedInterfaceName
+      ))
+    : undefined;
+  const effectiveOrderMode = selection?.orderMode
+    ?? (state.status === "ready" ? state.session.orderMode : undefined);
+
+  async function createSession(nextSelection?: InterfaceSelection): Promise<void> {
     if (!sourceZhixu) {
       setState({ status: "error", message: "缺少可试拼的秩序版本" });
       return;
@@ -49,12 +69,43 @@ export function StoreDockingPage({
     try {
       const result = await api.createDockingSession({
         sourceZhixuId: sourceZhixu.zhixuId,
-        targetZhixuId: targetZhixu.zhixuId
+        targetZhixuId: targetZhixu.zhixuId,
+        ...(nextSelection ? { targetInterfaceName: nextSelection.targetInterfaceName } : {}),
+        ...(nextSelection ? { orderMode: nextSelection.orderMode } : {})
       });
+      setSelection(undefined);
       setState({ status: "ready", session: result.data });
     } catch (error) {
       setState({ status: "error", message: readableStoreError(error, "试拼会话创建失败") });
     }
+  }
+
+  /** 接口/模式切换即换试拼对象：以显式参数重建会话，旧会话保持草稿不被复用。 */
+  function switchInterface(interfaceName: string): void {
+    if (state.status !== "ready") {
+      return;
+    }
+    const nextInterface = state.session.interfaces.find(
+      (entry) => entry.interfaceName === interfaceName
+    );
+    if (!nextInterface) {
+      return;
+    }
+    const currentMode = selection?.orderMode ?? state.session.orderMode;
+    const orderMode = nextInterface.orderModes.includes(currentMode)
+      ? currentMode
+      : nextInterface.orderModes[0]!;
+    void createSession({ targetInterfaceName: interfaceName, orderMode });
+  }
+
+  function switchOrderMode(orderMode: StoreDockOrderMode): void {
+    if (state.status !== "ready") {
+      return;
+    }
+    void createSession({
+      targetInterfaceName: selection?.targetInterfaceName ?? state.session.selectedInterfaceName,
+      orderMode
+    });
   }
 
   return (
@@ -62,14 +113,14 @@ export function StoreDockingPage({
       <div className="page-title-row">
         <div>
           <h2>试拼沙箱</h2>
-          <p>只创建非发布草稿，用来检查两个秩序之间的信号接口是否能对齐。</p>
+          <p>只创建非发布草稿，用来检查两个秩序之间的具名接口与信号映射是否能对齐。</p>
         </div>
         {access.canWrite ? (
           <button
             className="primary-button"
             data-testid="store-create-docking-session-button"
             disabled={state.status === "pending" || !targetZhixu || sameAsSource}
-            onClick={createSession}
+            onClick={() => createSession()}
           >
             {state.status === "pending" ? <Loader2 className="spin" /> : <GitBranch />}
             创建试拼会话
@@ -99,6 +150,7 @@ export function StoreDockingPage({
                 onChange={(event) => {
                   setSelectedTargetZhixuId(event.currentTarget.value);
                   setState({ status: "idle" });
+                  setSelection(undefined);
                 }}
               >
                 <option value="">请选择目标秩序</option>
@@ -120,17 +172,60 @@ export function StoreDockingPage({
               </div>
             </div>
           ) : null}
+          {state.status === "ready" ? (
+            <div className="store-docking-pair" style={{ marginBottom: "1rem" }}>
+              <label className="field" style={{ flex: 1 }}>
+                <span>目标接口<em>*</em></span>
+                <div className="input-wrap">
+                  <select
+                    data-testid="store-docking-interface-select"
+                    value={selection?.targetInterfaceName ?? state.session.selectedInterfaceName}
+                    onChange={(event) => switchInterface(event.currentTarget.value)}
+                  >
+                    {state.session.interfaces.map((entry) => (
+                      <option key={entry.interfaceName} value={entry.interfaceName}>
+                        {entry.interfaceName}（下单模式：{entry.orderModes.join("、")}）
+                      </option>
+                    ))}
+                  </select>
+                  <i aria-hidden="true">▾</i>
+                </div>
+              </label>
+              <label className="field" style={{ flex: 1 }}>
+                <span>下单模式<em>*</em></span>
+                <div className="input-wrap">
+                  <select
+                    data-testid="store-docking-mode-select"
+                    value={effectiveOrderMode ?? ""}
+                    disabled={(selectedInterface?.orderModes.length ?? 0) < 2}
+                    onChange={(event) => switchOrderMode(event.currentTarget.value as StoreDockOrderMode)}
+                  >
+                    {(selectedInterface?.orderModes ?? []).map((mode) => (
+                      <option key={mode} value={mode}>
+                        {mode === "new" ? "new（为目标创建子订单）" : "existing（挂接目标已有订单）"}
+                      </option>
+                    ))}
+                  </select>
+                  <i aria-hidden="true">▾</i>
+                </div>
+              </label>
+            </div>
+          ) : null}
           <div className="store-docking-pair">
             <div className="kpi-card">
               <span>来源秩序</span>
               <strong>{sourceZhixu?.title ?? "暂无"}</strong>
-              <small>{sourceZhixu?.versionLabel ?? "无版本"} · {sourceZhixu?.planPublication.label ?? "无发布状态"}</small>
+              <small>{sourceZhixu?.planPublication.label ?? "无发布状态"}</small>
             </div>
             <div className="store-docking-arrow" aria-hidden="true">→</div>
             <div className="kpi-card">
               <span>目标秩序</span>
               <strong>{targetZhixu?.title ?? "尚未选择"}</strong>
-              <small>{targetZhixu ? `${targetZhixu.versionLabel} · ${targetZhixu.planPublication.label}` : "从上方列表选择目标秩序"}</small>
+              <small>
+                {targetZhixu
+                  ? `${selectedInterface ? `接口 ${selectedInterface.interfaceName} · ` : ""}${targetZhixu.planPublication.label}`
+                  : "从上方列表选择目标秩序"}
+              </small>
             </div>
           </div>
           <div className="store-access-note compact">
@@ -153,6 +248,8 @@ export function StoreDockingPage({
                 </span>
               </div>
               <div className="store-check-list">
+                <span><ShieldCheck /> 所选接口：{selection?.targetInterfaceName ?? state.session.selectedInterfaceName}</span>
+                <span><ShieldCheck /> 下单模式：{effectiveOrderMode ?? state.session.orderMode}</span>
                 <span><ShieldCheck /> 候选映射：{state.session.candidateMappings.length}</span>
                 <span><ShieldCheck /> 草稿映射：{state.session.draftSignalMap.length}</span>
                 <span><ShieldCheck /> 阻断项：{state.session.validation.errors.length}</span>
@@ -161,7 +258,7 @@ export function StoreDockingPage({
           ) : (
             <div className="store-docking-result empty">
               <strong>尚未创建试拼会话</strong>
-              <p>选择来源和目标秩序并创建会话后，这里会显示候选映射、草稿映射和验证阻断项；结果只属于沙箱。</p>
+              <p>选择来源和目标秩序并创建会话后，这里会显示所选接口、下单模式、候选映射和验证阻断项；结果只属于沙箱。</p>
             </div>
           )}
         </aside>

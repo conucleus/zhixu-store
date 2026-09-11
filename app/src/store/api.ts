@@ -179,22 +179,47 @@ export function createStoreApiClient(
   });
 }
 
-/** 钱包会话 token 的本地持久化（仅 token，不含任何链上签名材料）。 */
+/**
+ * 钱包会话 token 的本地持久化（仅 token + 服务端声明的过期时间，不含任何
+ * 链上签名材料）。过期时间是本地卫生线：服务端仍按会话 TTL 拒绝过期 token，
+ * 本地按同一时间点弃置，避免长期持有必然失效的凭据。
+ */
 export const STORE_SESSION_TOKEN_STORAGE_KEY = "uvp-store-session-token";
+
+interface StoredStoreSession {
+  readonly token: string;
+  readonly expiresAt?: string | undefined;
+}
 
 export function readStoredStoreSessionToken(): string | undefined {
   try {
-    const value = window.localStorage.getItem(STORE_SESSION_TOKEN_STORAGE_KEY);
-    return value && value.startsWith("uvs_") ? value : undefined;
+    const raw = window.localStorage.getItem(STORE_SESSION_TOKEN_STORAGE_KEY);
+    if (!raw) {
+      return undefined;
+    }
+    const parsed = JSON.parse(raw) as Partial<StoredStoreSession>;
+    const token = typeof parsed.token === "string" && parsed.token.startsWith("uvs_") ? parsed.token : undefined;
+    const expiresAt = Date.parse(parsed.expiresAt ?? "");
+    if (!token) {
+      window.localStorage.removeItem(STORE_SESSION_TOKEN_STORAGE_KEY);
+      return undefined;
+    }
+    if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) {
+      window.localStorage.removeItem(STORE_SESSION_TOKEN_STORAGE_KEY);
+      return undefined;
+    }
+    return token;
   } catch {
     return undefined;
   }
 }
 
-export function storeStoreSessionToken(token: string | undefined): void {
+export function storeStoreSessionToken(
+  session: { readonly token: string; readonly expiresAt?: string | undefined } | undefined,
+): void {
   try {
-    if (token) {
-      window.localStorage.setItem(STORE_SESSION_TOKEN_STORAGE_KEY, token);
+    if (session) {
+      window.localStorage.setItem(STORE_SESSION_TOKEN_STORAGE_KEY, JSON.stringify(session));
     } else {
       window.localStorage.removeItem(STORE_SESSION_TOKEN_STORAGE_KEY);
     }
@@ -826,6 +851,10 @@ async function fetchStoreJson<TResponse>(
       method: init.method,
       headers,
       ...(body !== undefined ? { body } : {}),
+      // 禁止跟随重定向（executor-kit 同款）：这些请求携带钱包会话头
+      // （x-uvp-store-session），3xx 会让凭据头随重定向重放到 Location
+      // 指向的任意主机。
+      redirect: "manual",
       signal: AbortSignal.timeout(STORE_FETCH_TIMEOUT_MS),
     });
   } catch (error) {
@@ -836,6 +865,14 @@ async function fetchStoreJson<TResponse>(
       pathname,
       error instanceof Error ? error.message : "network_error",
     );
+  }
+
+  // manual 模式下浏览器的跨源重定向是 status 0 的 opaqueredirect：与所有
+  // 3xx 一样按错误处理，凭据头绝不重放。
+  if (response.status === 0 || (response.status >= 300 && response.status < 400)) {
+    throw new StoreApiError(pathname, response.status, `redirect_refused:${response.status}`, {
+      code: "redirect_refused",
+    });
   }
 
   if (!response.ok) {
@@ -1351,7 +1388,7 @@ function normalizeStoreAccessLevel(
 }
 
 function resolveStoreApiBaseUrl(): string | undefined {
-  return resolveFrontendApiBaseUrl(import.meta.env);
+  return resolveFrontendApiBaseUrl(import.meta.env.VITE_UVP_CHAIN_SERVICES_URL);
 }
 
 function numberValue(value: unknown): number | undefined {

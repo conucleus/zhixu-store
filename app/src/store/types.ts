@@ -129,7 +129,10 @@ export interface StoreCompilePreviewDTO {
 export interface StoreZhixuDraftDTO {
   readonly draftId: string;
   readonly status: StoreZhixuDraftStatus;
+  /** 定义派生身份（编译产物 zhixuId）。 */
   readonly zhixuId?: string;
+  /** N6 显示口径：name(uid 去 zx- 后前 8 hex)。 */
+  readonly zhixuDisplay?: string;
   readonly title: string;
   readonly maintainer: string;
   readonly compilePreview?: StoreCompilePreviewDTO;
@@ -199,11 +202,18 @@ export interface StoreSupplierMutationResultDTO {
 /** Frozen Store runtime DTO; this consumer must not rename or drop fields. */
 export type StoreRuntimeSummaryDTO = FrozenStoreRuntimeSummaryDTO;
 
+/** dock 下单模式（{new, existing}）。 */
+export type StoreDockOrderMode = "new" | "existing";
+/** 草稿映射行方向：input=本地通道→接口输入端口，output=本地信号→接口输出端口。 */
+export type StoreDockBindingKind = "input" | "output";
+
 export interface StoreDockingSessionCreateDTO {
   readonly sourceZhixuId: string;
   readonly targetZhixuId: string;
-  readonly sourceVersionId?: string;
-  readonly targetVersionId?: string;
+  /** 目标具名接口；缺省取目标首个接口。 */
+  readonly targetInterfaceName?: string;
+  /** 下单模式；缺省取所选接口的首个开放模式。 */
+  readonly orderMode?: StoreDockOrderMode;
 }
 
 export type StoreDockingSessionStatus = "draft" | "valid" | "invalid";
@@ -211,18 +221,33 @@ export type StoreDockingSessionStatus = "draft" | "valid" | "invalid";
 export interface StoreDockingZhixuRefDTO {
   readonly zhixuId: string;
   readonly title: string;
-  readonly versionId?: string;
-  readonly versionLabel: string;
   readonly lifecycleStatus: StoreZhixuLifecycleStatus;
   readonly publicationStatus: PlanPublicationStatus;
   readonly planId: string;
   readonly planHash: string;
 }
 
+export interface StoreDockingInterfacePortDTO {
+  readonly portName: string;
+  readonly label: string;
+  /** input 端口的目标侧 hook 引用（<task>.<stage>#<channel>）。 */
+  readonly hook?: string;
+  /** output 端口的目标侧 canonical signal。 */
+  readonly signal?: string;
+}
+
+/** 目标定义发布的具名 dock 接口（试拼沙箱消费的 v2 接口形状）。 */
+export interface StoreDockingInterfaceDTO {
+  readonly interfaceName: string;
+  readonly orderModes: readonly StoreDockOrderMode[];
+  readonly inputs: readonly StoreDockingInterfacePortDTO[];
+  readonly outputs: readonly StoreDockingInterfacePortDTO[];
+}
+
 export interface StoreDockingSignalPortDTO {
   readonly signalId: string;
   readonly label: string;
-  readonly direction: "output" | "input";
+  readonly bindingKind: StoreDockBindingKind;
   readonly stageId?: string;
   readonly stageName?: string;
   readonly roleSlotId?: string;
@@ -233,6 +258,7 @@ export interface StoreDockingSignalPortDTO {
 
 export interface StoreSignalMappingCandidateDTO {
   readonly candidateId: string;
+  readonly bindingKind: StoreDockBindingKind;
   readonly sourceSignal: StoreDockingSignalPortDTO;
   readonly targetSignal: StoreDockingSignalPortDTO;
   readonly confidence: "high" | "medium" | "low";
@@ -241,21 +267,23 @@ export interface StoreSignalMappingCandidateDTO {
 
 export interface StoreDraftSignalMapEntryDTO {
   readonly entryId?: string;
+  readonly bindingKind: StoreDockBindingKind;
   readonly sourceSignalId: string;
   readonly targetSignalId: string;
   readonly note?: string;
 }
 
 export type StoreDockingValidationErrorCode =
-  | "source_output_not_found"
-  | "target_input_not_found"
-  | "incompatible_payload_hash"
-  | "target_role_slot_mismatch"
-  | "source_version_not_published"
-  | "target_version_not_published"
-  | "source_version_revoked"
-  | "target_version_revoked"
-  | "empty_signal_map";
+  | "source_zhixu_not_published"
+  | "target_zhixu_not_published"
+  | "source_zhixu_revoked"
+  | "target_zhixu_revoked"
+  | "target_interface_not_found"
+  | "order_mode_not_supported"
+  | "empty_signal_map"
+  | "source_port_not_found"
+  | "target_port_not_found"
+  | "duplicate_target_port";
 
 export interface StoreDockingValidationErrorDTO {
   readonly code: StoreDockingValidationErrorCode;
@@ -276,6 +304,10 @@ export interface StoreDockingSessionDTO {
   readonly status: StoreDockingSessionStatus;
   readonly source: StoreDockingZhixuRefDTO;
   readonly target: StoreDockingZhixuRefDTO;
+  /** 目标定义当前发布的具名接口全集（供操作员切换试拼对象）。 */
+  readonly interfaces: readonly StoreDockingInterfaceDTO[];
+  readonly selectedInterfaceName: string;
+  readonly orderMode: StoreDockOrderMode;
   readonly candidateMappings: readonly StoreSignalMappingCandidateDTO[];
   readonly draftSignalMap: readonly StoreDraftSignalMapEntryDTO[];
   readonly validation: StoreDockingValidationDTO;

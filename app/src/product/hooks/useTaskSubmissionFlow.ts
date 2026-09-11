@@ -17,12 +17,14 @@ import {
 import { idleAction, type ActionState, type SubmitMachineState } from "./workbenchTypes";
 import {
   FRAMEWORK_STAGE_FIELD_KEY,
+  canSubmitWorkbenchTask,
   delay,
   evidenceMetadataSignature,
   isEvidenceSlotStale,
   missingTaskEvidenceSlotLabels,
   planTaskEvidence,
   readableError,
+  stateMachineSignExpectation,
   submissionPollOutcome,
   submissionTerminalMessage,
   taskSubmitIntent,
@@ -50,6 +52,8 @@ export function useTaskSubmissionFlow(input: {
   readonly evidenceProofsBySlot: EvidenceProofsBySlot;
   /** 上传后相关字段发生变更的槽位标签：存在 stale 槽位时禁止提交。 */
   readonly staleSlotLabels: readonly string[];
+  /** 已上传但未取到核验记录（proof 拉取失败）的槽位标签：禁止提交。 */
+  readonly unverifiedSlotLabels: readonly string[];
   readonly evidenceAction: ActionState;
   readonly submitMachine: SubmitMachineState;
   readonly disputeAction: ActionState;
@@ -59,7 +63,8 @@ export function useTaskSubmissionFlow(input: {
 } {
   const { api, activeTask, fieldValues, onMutationSuccess } = input;
   const evidencePlan = planTaskEvidence({
-    evidenceSpec: activeTask?.evidenceSpec
+    evidenceSpec: activeTask?.evidenceSpec,
+    resourceRequirements: activeTask?.resourceRequirements
   });
   const [evidenceBySlot, setEvidenceBySlot] = useState<EvidenceBySlot>({});
   const [proofsBySlot, setProofsBySlot] = useState<EvidenceProofsBySlot>({});
@@ -70,6 +75,7 @@ export function useTaskSubmissionFlow(input: {
     message: "等待上传凭证并确认提交"
   });
   const [disputeAction, setDisputeAction] = useState<ActionState>(idleAction);
+  const submitInflightRef = useRef(false);
   const taskScopeKey = activeTask
     ? `${activeTask.orderId}:${activeTask.taskId}:${activeTask.stageId}`
     : "none";
@@ -86,6 +92,11 @@ export function useTaskSubmissionFlow(input: {
   // fail-closed：上传时把表单字段快照进指纹，之后任何相关字段变更都会让对应槽位过期。
   const staleSlotLabels = Object.keys(evidenceBySlot)
     .filter((key) => isEvidenceSlotStale(fieldSnapshotsBySlot[key], fieldValues))
+    .map((key) => evidencePlan.slots.find((slot) => slot.key === key)?.label ?? key);
+  // 已上传但没有核验记录（proof 拉取失败）的槽位：核验防线看不见它，
+  // 与 stale 一样禁锁提交，不得静默放行。
+  const unverifiedSlotLabels = Object.keys(evidenceBySlot)
+    .filter((key) => !proofsBySlot[key])
     .map((key) => evidencePlan.slots.find((slot) => slot.key === key)?.label ?? key);
 
   async function handleUploadEvidence(
@@ -135,10 +146,10 @@ export function useTaskSubmissionFlow(input: {
         orderId: activeTask.orderId,
         taskId: activeTask.taskId,
         stageIdentifier: activeTask.stageId,
-        documentType: slot.key,
+        documentType: slot.documentType,
         metadata: {
           businessLabel: slot.label,
-          documentType: slot.key,
+          documentType: slot.documentType,
           fields: metadataFields
         }
       });
@@ -148,17 +159,29 @@ export function useTaskSubmissionFlow(input: {
         return;
       }
       setEvidenceBySlot((current) => ({ ...current, [slot.key]: result.data }));
-      const proofResult = await api.getEvidenceProof(result.data.evidenceId);
+      // 快照与证据同进同退：指纹由上传时刻的字段参与生成，只落证据不落快照
+      // 会让该槽位绕过 stale 判定（无快照恒为不过期）。
+      setFieldSnapshotsBySlot((current) => ({
+        ...current,
+        [slot.key]: evidenceMetadataSignature(fieldValues)
+      }));
+      let proofResult: Awaited<ReturnType<typeof api.getEvidenceProof>>;
+      try {
+        proofResult = await api.getEvidenceProof(result.data.evidenceId);
+      } catch (proofError) {
+        if (taskScopeRef.current !== requestScopeKey) {
+          return;
+        }
+        // 核验记录拉取失败（含服务端拒绝给出核验结果的路径）时，槽位停在
+        // "已上传但未确认"：提交门槛按未确认禁锁，不得在无核验记录时放行。
+        setEvidenceAction({ phase: "error", message: readableError(proofError, "凭证核验状态获取失败，请重新上传该凭证") });
+        return;
+      }
       if (taskScopeRef.current !== requestScopeKey) {
         return;
       }
       // 证据核验态与上传归档统一按槽位 key 记录，渲染层按同一 key 读取。
       setProofsBySlot((current) => ({ ...current, [slot.key]: proofResult.data }));
-      // 记录上传时刻的字段快照：指纹由这些字段参与生成，后续字段变更据此判 stale。
-      setFieldSnapshotsBySlot((current) => ({
-        ...current,
-        [slot.key]: evidenceMetadataSignature(fieldValues)
-      }));
       setEvidenceAction({ phase: "success", message: "凭证已上传，指纹已生成", source: result.source });
       onMutationSuccess?.();
     } catch (error) {
@@ -170,8 +193,30 @@ export function useTaskSubmissionFlow(input: {
   }
 
   async function handleConfirmSubmit(): Promise<void> {
+    // 连击互斥：提交是 prepare→签名→上链→轮询的长链路，按钮的 pending 禁用
+    // 要等状态落盘+重渲染才生效，同步 ref 互斥挡住重渲染前的第二次点击
+    // （服务端 first-writer-wins 只是兜底，不能依赖）。
+    if (submitInflightRef.current) {
+      return;
+    }
     if (!activeTask) {
       setSubmitMachine({ status: "failed", message: "暂无可提交的待办" });
+      return;
+    }
+    // 终态门（fail-closed）：投影任务状态不是 open 或钱包无提交权时拒绝
+    // 进入签名链路——confirmed 后的重复提交在这里被硬闸住，不再依赖按钮
+    // 状态；入口禁用（canSubmitWorkbenchTask）只是第一道防线。
+    if (!canSubmitWorkbenchTask(activeTask, submitMachine.status)) {
+      setSubmitMachine({
+        status: "failed",
+        message: activeTask.status === "submitted"
+          ? "已提交，正在等待链上确认，请勿重复提交"
+          : activeTask.status === "done"
+            ? "该待办已确认完成"
+            : activeTask.canSubmit === false
+              ? "当前钱包暂不能提交此待办"
+              : (activeTask.blockedReason ?? "当前待办不可提交")
+      });
       return;
     }
     const requestScopeKey = taskScopeKey;
@@ -210,6 +255,18 @@ export function useTaskSubmissionFlow(input: {
       });
       return;
     }
+    // 已上传但无核验记录的槽位按"未确认"禁锁：重新上传可恢复核验链路。
+    const unverifiedLabels = Object.keys(evidenceBySlot)
+      .filter((key) => !proofsBySlot[key])
+      .map((key) => evidencePlan.slots.find((slot) => slot.key === key)?.label ?? key);
+    if (unverifiedLabels.length > 0) {
+      setSubmitMachine({
+        status: "failed",
+        message: `凭证核验状态未知（未取到核验记录），请重新上传：${unverifiedLabels.join("、")}`
+      });
+      return;
+    }
+    submitInflightRef.current = true;
     try {
       setSubmitMachine({ status: "preparing", message: "正在准备签名前摘要" });
       const account = await requestWalletAccount();
@@ -233,11 +290,14 @@ export function useTaskSubmissionFlow(input: {
       });
       // 与 executor-kit 同边界：签名前校验 typedData 的 primaryType、domain 和 submitter，
       // prepared 记录与 typedData 声明的提交方必须一致，防止换签名对象。
+      // verifyingContract 预期来自部署配置注入（独立来源，不读同一 BFF 响应
+      // 里的任务投影地址），缺配置即拒绝签名，不再条件性跳过比对。
       const signature = await signTypedData(account, preparedResult.data.typedData, {
         primaryType: "UVPStateMachineSignal",
         domainName: "UVPStateMachine",
         // 协议冻结面：domain.version 以 protocol-bindings 导出的常量为唯一来源。
         domainVersion: PRODUCT_SUBMIT_DOMAIN_VERSION,
+        verifyingContract: stateMachineSignExpectation().verifyingContract,
         submitter: account.address,
         preparedSubmitters: [preparedResult.data.summary.walletAddress]
       });
@@ -273,6 +333,8 @@ export function useTaskSubmissionFlow(input: {
         return;
       }
       setSubmitMachine({ status: "failed", message: readableError(error, "确认提交失败") });
+    } finally {
+      submitInflightRef.current = false;
     }
   }
 
@@ -355,6 +417,7 @@ export function useTaskSubmissionFlow(input: {
     evidenceBySlot,
     evidenceProofsBySlot: proofsBySlot,
     staleSlotLabels,
+    unverifiedSlotLabels,
     evidenceAction,
     submitMachine,
     disputeAction,

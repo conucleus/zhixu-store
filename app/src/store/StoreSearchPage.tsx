@@ -1,7 +1,7 @@
 import { AlertTriangle, CheckCircle2, ClipboardCheck, FileCheck2, GitBranch, Layers3, Loader2, RefreshCw, Save, Search, ShieldCheck, SlidersHorizontal, Truck, UploadCloud, Users, Wand2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import type { StoreProductSchemaDTO, StoreProductSchemaValidationDTO, StoreSearchType } from "@uvp-eth/product-dto";
+import type { SlotCapabilityPluginDTO, StoreProductSchemaDTO, StoreProductSchemaValidationDTO, StoreSearchType } from "@uvp-eth/product-dto";
 import type { StoreZhixuConsoleDTO } from "@uvp-eth/product-dto";
 import { readableStoreError, type StoreApiClient } from "./api";
 import { StoreListingPanel } from "./StoreListingPanel";
@@ -88,6 +88,13 @@ export function StoreSearchPage({
   const [reviewDraft, setReviewDraft] = useState<StoreZhixuDraftDTO | undefined>();
   const [productSchema, setProductSchema] = useState<StoreProductSchemaDTO | undefined>();
   const [schemaText, setSchemaText] = useState("");
+  const [pluginConfirmations, setPluginConfirmations] = useState<Record<string, boolean>>({});
+
+  // 逐条确认状态跟随 schema 版本同步：服务端已判 explicit 的条目视为已确认，
+  // 其余条目保留发布者在本轮编辑中的勾选（校验/保存不会清掉未提交的选择）。
+  useEffect(() => {
+    setPluginConfirmations((current) => syncPluginConfirmations(productSchema, current));
+  }, [productSchema]);
 
   const schemaLocked = reviewDraft ? isSchemaLockedStatus(reviewDraft.status) : false;
   const summaryMetricsObserved = result.zhixus.every((zhixu) => zhixu.metricsStatus === "observed");
@@ -217,10 +224,27 @@ export function StoreSearchPage({
     if (!reviewDraft || !productSchema) {
       return;
     }
-    const explicitSchema = confirmSchemaPluginsExplicit(productSchema);
-    setSchemaText(prettySchema(explicitSchema));
-    setSchemaAction({ phase: "pending", message: "正在确认所有插件为 explicit" });
+    const items = collectPluginReviewItems(productSchema);
+    const confirmedKeys = new Set(
+      items.filter((item) => pluginConfirmations[item.key]).map((item) => item.key)
+    );
+    // 已是 explicit 的预确认不构成写入：没有新的逐条确认时不发请求。
+    const pendingCount = items.filter(
+      (item) => item.plugin.source !== "explicit" && pluginConfirmations[item.key]
+    ).length;
+    if (pendingCount === 0) {
+      setSchemaAction({ phase: "error", message: "尚未勾选任何待确认插件；每条 inferred/missing 插件都必须由发布者逐条确认后才会写入 explicit。" });
+      return;
+    }
+    setSchemaAction({ phase: "pending", message: `正在把 ${confirmedKeys.size} 条勾选插件写入 explicit` });
     try {
+      // 从编辑器当前内容构建：勾选保存不得用旧 state 覆盖编辑器，丢弃未保存的 JSON 编辑。
+      const parsed = parseSchemaText(schemaText, productSchema);
+      if (!parsed) {
+        throw new Error("当前没有可保存的 schema");
+      }
+      const explicitSchema = confirmSchemaPluginsExplicit(parsed, confirmedKeys);
+      setSchemaText(prettySchema(explicitSchema));
       const result = await onUpdateDraftProductSchema(reviewDraft.draftId, explicitSchema);
       setReviewDraft(result.data.draft);
       setProductSchema(result.data.productSchema);
@@ -228,12 +252,27 @@ export function StoreSearchPage({
       setSchemaAction({
         phase: result.data.validation.ok ? "success" : "error",
         message: result.data.validation.ok
-          ? "所有插件已确认 explicit，可提交 Store 审核"
+          ? `${confirmedKeys.size} 条插件已逐条确认 explicit，可提交 Store 审核`
           : `${result.data.validation.issues.length} 个阻断项仍需处理`
       });
     } catch (error) {
       setSchemaAction({ phase: "error", message: readableStoreError(error, "确认插件失败") });
     }
+  }
+
+  function togglePluginConfirmation(key: string): void {
+    setPluginConfirmations((current) => ({ ...current, [key]: !current[key] }));
+  }
+
+  function toggleAllPluginConfirmations(): void {
+    if (!productSchema) {
+      return;
+    }
+    const items = collectPluginReviewItems(productSchema);
+    const nextChecked = !items.every((item) => pluginConfirmations[item.key]);
+    setPluginConfirmations(
+      Object.fromEntries(items.map((item) => [item.key, nextChecked]))
+    );
   }
 
   async function handleSubmitReview(): Promise<void> {
@@ -253,8 +292,12 @@ export function StoreSearchPage({
   return (
     <section className="page-shell store-console-page" data-testid="store-search-page">
 
-        {access.capabilities.includes("store.listing.manage") ? (
-          <StoreListingPanel api={api} />
+        {/* 服务端口径：导入上架可由运营方（store.listing.manage）或锚定
+            publisher（导入自己的秩序）发起——两种会话都要有渲染入口，
+            否则 publisher 导入路径是客户端可过、界面无门的功能死角。
+            审核/下架等治理动作仍只对运营方渲染（见 StoreListingPanel）。 */}
+        {access.capabilities.includes("store.listing.manage") || access.anchoredAddress ? (
+          <StoreListingPanel access={access} api={api} />
         ) : null}
       <div className="store-dashboard-grid">
         <div className="store-dashboard-main">
@@ -447,7 +490,9 @@ export function StoreSearchPage({
           <div className="panel-heading">
             <div>
               <h2>能力插件审查</h2>
-              <p>{reviewDraft.title} · {reviewDraft.status} · {reviewDraft.draftId}</p>
+              <p>
+                {reviewDraft.zhixuDisplay ?? reviewDraft.title} · {reviewDraft.status} · {reviewDraft.draftId}
+              </p>
             </div>
             <div className="button-row store-toolbar-actions">
               <button className="secondary-button" disabled={schemaAction.phase === "pending" || schemaLocked} onClick={() => void handleCompileDraft()}>
@@ -510,12 +555,15 @@ export function StoreSearchPage({
                   ))}
                 </div>
               ) : null}
-              <div className="button-row schema-review-actions">
-                <button className="secondary-button" disabled={schemaAction.phase === "pending" || schemaLocked} onClick={() => void handleConfirmExplicitPlugins()}>
-                  <CheckCircle2 />
-                  全部确认为 explicit
-                </button>
-              </div>
+              <PluginExplicitConfirmationPanel
+                confirmations={pluginConfirmations}
+                locked={schemaLocked}
+                productSchema={productSchema}
+                pending={schemaAction.phase === "pending"}
+                onSave={() => void handleConfirmExplicitPlugins()}
+                onToggle={togglePluginConfirmation}
+                onToggleAll={toggleAllPluginConfirmations}
+              />
               <label className="field schema-json-editor" data-testid="store-schema-textarea-label">
                 <span>Product Schema Bundle JSON</span>
                 <textarea value={schemaText} onChange={(event) => setSchemaText(event.target.value)} />
@@ -551,6 +599,22 @@ function DraftGovernancePanel({
   readonly orderCreatable: boolean;
   readonly onRefreshCatalog?: (() => Promise<StoreZhixuSearchResultDTO>) | undefined;
 }) {
+  const [refreshAction, setRefreshAction] = useState<ActionState>({ phase: "idle" });
+
+  async function handleRefreshCatalog(): Promise<void> {
+    if (!onRefreshCatalog || refreshAction.phase === "pending") {
+      return;
+    }
+    setRefreshAction({ phase: "pending", message: "正在刷新秩序目录" });
+    try {
+      await onRefreshCatalog();
+      setRefreshAction({ phase: "idle" });
+    } catch (error) {
+      // 刷新失败必须回到界面（目录数据未更新），不能静默吞掉。
+      setRefreshAction({ phase: "error", message: readableStoreError(error, "秩序目录刷新失败") });
+    }
+  }
+
   return (
     <section className="governance-publish-card" data-testid="store-governance-publishing">
       <div className="governance-publish-head">
@@ -589,13 +653,15 @@ function DraftGovernancePanel({
               <button
                 className="primary-button"
                 data-testid="store-refresh-catalog-button"
-                onClick={() => void onRefreshCatalog()}
+                disabled={refreshAction.phase === "pending"}
+                onClick={() => void handleRefreshCatalog()}
               >
-                <Layers3 />
+                {refreshAction.phase === "pending" ? <Loader2 className="spin" /> : <Layers3 />}
                 刷新秩序目录
               </button>
             </div>
           ) : null}
+          <ActionNotice state={refreshAction} testId="store-refresh-catalog-notice" />
           <p className="help-text">Store 目录刷新后，对应的秩序卡片将显示"可创建订单"生命周期，表示标准信号容器 docking 已完成。</p>
         </div>
       ) : null}
@@ -918,7 +984,7 @@ function publishingChecklistItems(
       id: "compile",
       label: "compile valid",
       detail: draft.compilePreview
-        ? `${shortHash(draft.compilePreview.planId, { prefixLength: 8, suffixLength: 8 })} / ${shortHash(draft.compilePreview.planHash, { prefixLength: 8, suffixLength: 8 })}`
+        ? `${draft.zhixuDisplay ? `${draft.zhixuDisplay} · ` : ""}${shortHash(draft.compilePreview.planId, { prefixLength: 8, suffixLength: 8 })} / ${shortHash(draft.compilePreview.planHash, { prefixLength: 8, suffixLength: 8 })}`
         : "等待编译预览生成 deterministic plan identity。",
       state: draft.compilePreview ? "done" : draft.status === "compile_failed" ? "blocked" : "pending",
       tone: draft.compilePreview ? "success" : draft.status === "compile_failed" ? "warning" : "default"
@@ -1057,22 +1123,181 @@ function parseSchemaText(
   return parsed as unknown as StoreProductSchemaDTO;
 }
 
-function confirmSchemaPluginsExplicit(schema: StoreProductSchemaDTO): StoreProductSchemaDTO {
-  // 只把 source 改为 explicit：槽位插件与顶层插件清单的成员关系保持原样，
-  // 不用槽位集合重建顶层清单（那会丢掉未挂在槽位上的顶层插件）。
+type PluginReviewScope = "top-level" | "slot";
+
+interface PluginReviewItem {
+  readonly key: string;
+  readonly scope: PluginReviewScope;
+  readonly slotId?: string;
+  readonly slotLabel?: string;
+  readonly plugin: SlotCapabilityPluginDTO;
+}
+
+function pluginReviewKey(scope: PluginReviewScope, slotId: string | undefined, index: number): string {
+  return scope === "top-level" ? `top-level:${index}` : `slot:${slotId}:${index}`;
+}
+
+// 顶层清单与每个插槽的插件全部逐条列出（含 missing），供发布者逐条确认。
+function collectPluginReviewItems(schema: StoreProductSchemaDTO): readonly PluginReviewItem[] {
+  const slotPlugins = schema.roleSlots.flatMap((slot) =>
+    (slot.capabilityPlugins ?? []).map((plugin, index) => ({
+      key: pluginReviewKey("slot", slot.slotId, index),
+      scope: "slot" as const,
+      slotId: slot.slotId,
+      slotLabel: slot.performanceSlotLabel ?? slot.label,
+      plugin
+    }))
+  );
+  const topLevelPlugins = schema.capabilityPlugins.map((plugin, index) => ({
+    key: pluginReviewKey("top-level", undefined, index),
+    scope: "top-level" as const,
+    plugin
+  }));
+  return [...slotPlugins, ...topLevelPlugins];
+}
+
+function syncPluginConfirmations(
+  schema: StoreProductSchemaDTO | undefined,
+  current: Record<string, boolean>
+): Record<string, boolean> {
+  if (!schema) {
+    return {};
+  }
+  const next: Record<string, boolean> = {};
+  for (const item of collectPluginReviewItems(schema)) {
+    next[item.key] = item.plugin.source === "explicit"
+      ? true
+      : current[item.key] ?? false;
+  }
+  return next;
+}
+
+function PluginExplicitConfirmationPanel({
+  productSchema,
+  confirmations,
+  pending,
+  locked,
+  onToggle,
+  onToggleAll,
+  onSave
+}: {
+  readonly productSchema: StoreProductSchemaDTO;
+  readonly confirmations: Record<string, boolean>;
+  readonly pending: boolean;
+  readonly locked: boolean;
+  readonly onToggle: (key: string) => void;
+  readonly onToggleAll: () => void;
+  readonly onSave: () => void;
+}) {
+  const items = collectPluginReviewItems(productSchema);
+  if (items.length === 0) {
+    return (
+      <div className="inline-empty" data-testid="store-plugin-confirm-empty">
+        当前 schema 没有能力插件需要确认。
+      </div>
+    );
+  }
+  const confirmedCount = items.filter((item) => confirmations[item.key]).length;
+  const allConfirmed = confirmedCount === items.length;
+  // 服务端已判 explicit 的条目视为预确认；只有新勾选的非 explicit 条目
+  // 才构成一次写请求，避免对未变更 schema 发空写。
+  const pendingConfirmCount = items.filter(
+    (item) => item.plugin.source !== "explicit" && confirmations[item.key]
+  ).length;
+  return (
+    <section className="schema-plugin-confirm" data-testid="store-plugin-confirm-panel">
+      <div className="schema-plugin-confirm-head">
+        <div>
+          <h3>逐条确认能力插件</h3>
+          <p>顶层清单与每个插槽的插件都逐条展示；只有发布者逐条勾选的条目才会写入 explicit。</p>
+        </div>
+        <span
+          className={`status-badge ${allConfirmed ? "success" : "warning"}`}
+          data-testid="store-plugin-confirm-summary"
+        >
+          {confirmedCount}/{items.length} 已确认
+        </span>
+      </div>
+      <ul className="schema-plugin-confirm-list">
+        {items.map((item) => (
+          <li
+            className="schema-plugin-confirm-item"
+            data-plugin-source={item.plugin.source}
+            data-plugin-scope={item.scope}
+            data-testid="store-plugin-confirm-item"
+            key={item.key}
+          >
+            <label>
+              <input
+                checked={confirmations[item.key] ?? false}
+                disabled={pending || locked}
+                onChange={() => onToggle(item.key)}
+                type="checkbox"
+              />
+              <span className="schema-plugin-confirm-body">
+                <strong>{item.plugin.pluginKind}</strong>
+                <small>
+                  {item.scope === "slot" ? `插槽 ${item.slotLabel ?? item.slotId}` : "顶层清单"}
+                  {" · "}
+                  {item.plugin.stageIds.length > 0 ? item.plugin.stageIds.join(" / ") : "未覆盖阶段"}
+                  {item.plugin.title ? ` · ${item.plugin.title}` : ""}
+                </small>
+              </span>
+              <span className={`status-badge ${item.plugin.source === "explicit" ? "success" : "warning"}`}>
+                {item.plugin.source}
+                {item.plugin.source !== "explicit" && confirmations[item.key] ? " · 待写入 explicit" : ""}
+              </span>
+            </label>
+          </li>
+        ))}
+      </ul>
+      <div className="button-row schema-review-actions">
+        <button
+          className="secondary-button"
+          data-testid="store-plugin-confirm-select-all"
+          disabled={pending || locked}
+          onClick={onToggleAll}
+          type="button"
+        >
+          <CheckCircle2 />
+          {allConfirmed ? "取消全选" : "全选"}
+        </button>
+        <button
+          className="primary-button"
+          data-testid="store-plugin-confirm-save"
+          disabled={pending || locked || pendingConfirmCount === 0}
+          onClick={onSave}
+          type="button"
+        >
+          {pending ? <Loader2 className="spin" /> : <Save />}
+          保存勾选项为 explicit（{confirmedCount}/{items.length}）
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function confirmSchemaPluginsExplicit(
+  schema: StoreProductSchemaDTO,
+  confirmedKeys: ReadonlySet<string>
+): StoreProductSchemaDTO {
+  // 只把发布者逐条勾选的插件 source 改为 explicit：槽位插件与顶层插件清单的
+  // 成员关系保持原样，不用槽位集合重建顶层清单（那会丢掉未挂在槽位上的顶层插件）。
   const roleSlots = schema.roleSlots.map((slot) => ({
     ...slot,
-    capabilityPlugins: (slot.capabilityPlugins ?? []).map((plugin) => ({
-      ...plugin,
-      source: "explicit" as const
-    }))
+    capabilityPlugins: (slot.capabilityPlugins ?? []).map((plugin, index) =>
+      confirmedKeys.has(pluginReviewKey("slot", slot.slotId, index))
+        ? { ...plugin, source: "explicit" as const }
+        : plugin
+    )
   }));
   return {
     ...schema,
     roleSlots,
-    capabilityPlugins: schema.capabilityPlugins.map((plugin) => ({
-      ...plugin,
-      source: "explicit" as const
-    }))
+    capabilityPlugins: schema.capabilityPlugins.map((plugin, index) =>
+      confirmedKeys.has(pluginReviewKey("top-level", undefined, index))
+        ? { ...plugin, source: "explicit" as const }
+        : plugin
+    )
   };
 }

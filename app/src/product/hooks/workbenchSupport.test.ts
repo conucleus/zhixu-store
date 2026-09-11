@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { ProductTaskDTO } from "@uvp-eth/product-dto";
+import type { FulfillmentPluginKind, ProductTaskDTO } from "@uvp-eth/product-dto";
 import {
   EVIDENCE_MAX_FILE_BYTES,
   FRAMEWORK_METADATA_PREFIX,
@@ -10,17 +10,24 @@ import {
   acceptAttribute,
   acceptHint,
   canCreateProductOrder,
+  canSubmitWorkbenchTask,
   acceptIncludesPdf,
   evidenceMetadataSignature,
   formatAcceptLabel,
+  inviteLinkForInvite,
   isEvidenceSlotStale,
   missingTaskEvidenceSlotLabels,
   planTaskEvidence,
+  readableError,
   resolveWorkbenchTask,
+  stateMachineSignExpectation,
   submissionPollOutcome,
   submissionTerminalMessage,
+  taskSubmitActionLabel,
   taskSubmitIntent,
-  validateEvidenceFileForSlot
+  validateEvidenceFileForSlot,
+  advanceScopeGeneration,
+  scopeGenerationValue
 } from "./workbenchSupport";
 import { customsDemoTaskConfig } from "../demo/customs-demo-config";
 
@@ -101,16 +108,62 @@ describe("task evidence plan (schema-driven)", () => {
     });
     assert.equal(plan.mode, "spec");
     assert.deepEqual(plan.slots, [
-      { key: "report", label: "报告", inputKind: "file", accept: ["application/pdf"], required: true }
+      { key: "report", documentType: "report", label: "报告", inputKind: "file", accept: ["application/pdf"], required: true }
     ]);
   });
 
-  it("renders no evidence slots for spec-less tasks instead of a fabricated generic upload (F-06)", () => {
-    // 单轨口径：仅消费 evidenceSpec。无 spec 的任务不再回退解析
-    // requiredEvidence 臆造通用槽位——没有槽位就是没有槽位。
+  it("renders no evidence slots for tasks without spec or resource requirements instead of a fabricated generic upload", () => {
+    // 单轨口径：仅消费 evidenceSpec 与结构化资源要求。两者皆无的任务
+    // 不回退解析 requiredEvidence 臆造通用槽位——没有槽位就是没有槽位。
     assert.deepEqual(planTaskEvidence({}), { mode: "none", slots: [] });
     assert.deepEqual(planTaskEvidence({ evidenceSpec: [] }), { mode: "none", slots: [] });
     assert.deepEqual(planTaskEvidence({ evidenceSpec: undefined }), { mode: "none", slots: [] });
+  });
+
+  it("keeps structured resource requirement slots when the spec is missing (aligned with uvp-order-app)", () => {
+    const plan = planTaskEvidence({
+      resourceRequirements: [
+        { resourceId: "inspection_report", label: "第三方检验证明", required: true, source: "resource_patch", resourceType: "document" },
+        { resourceId: "internal_meta", label: "内部元数据", required: false, source: "plan_default", resourceType: "metadata" }
+      ]
+    });
+    assert.equal(plan.mode, "none");
+    assert.deepEqual(plan.slots, [
+      { key: "resource-requirement:inspection_report", documentType: "document", label: "第三方检验证明", inputKind: "file", accept: [], required: true }
+    ]);
+  });
+
+  it("uploads resource fallback slots with the resource's own documentType, not the slot key (aligned with uvp-order-app)", () => {
+    // documentType 参与服务端指纹：两端对同一资源任务必须送出同一
+    // documentType，槽位 key 只是前端归档键，不得进入上传载荷。
+    const plan = planTaskEvidence({
+      resourceRequirements: [
+        { resourceId: "inspection_report", label: "第三方检验证明", required: true, source: "resource_patch", resourceType: "document" },
+        { resourceId: "site_photo", label: "现场照片", required: true, source: "participant_input" }
+      ]
+    });
+    assert.deepEqual(
+      plan.slots.map((slot) => [slot.key, slot.documentType]),
+      [
+        ["resource-requirement:inspection_report", "document"],
+        ["resource-requirement:site_photo", "site_photo"]
+      ]
+    );
+  });
+
+  it("drops an invalid evidenceSpec entirely instead of rendering duplicate slots (aligned with uvp-order-app)", () => {
+    const plan = planTaskEvidence({
+      evidenceSpec: [
+        { key: "", label: "空 key" },
+        { key: "dup", label: "重复" },
+        { key: "dup", label: "重复" }
+      ],
+      resourceRequirements: [
+        { resourceId: "fallback_doc", label: "兜底凭证", required: true, source: "resource_patch" }
+      ]
+    });
+    assert.equal(plan.mode, "none");
+    assert.deepEqual(plan.slots.map((slot) => slot.key), ["resource-requirement:fallback_doc"]);
   });
 });
 
@@ -120,6 +173,13 @@ describe("evidence accept constraints", () => {
     assert.equal(acceptAllowsFile(["application/pdf"], { size: 10, name: "凭证.pdf", type: "application/pdf" }), true);
     assert.equal(acceptAllowsFile([".pdf"], { size: 10, name: "照片.jpg", type: "image/jpeg" }), false);
     assert.equal(acceptAllowsFile([], { size: 10, name: "任意.bin", type: "" }), true);
+  });
+
+  it("expands wildcard MIME entries so image/* slots are uploadable", () => {
+    assert.equal(acceptAllowsFile(["image/*"], { size: 10, name: "照片.png", type: "image/png" }), true);
+    assert.equal(acceptAllowsFile(["image/*"], { size: 10, name: "照片.jpg", type: "image/jpeg" }), true);
+    assert.equal(acceptAllowsFile(["image/*"], { size: 10, name: "凭证.pdf", type: "application/pdf" }), false);
+    assert.equal(acceptAllowsFile(["*/*"], { size: 10, name: "任意.png", type: "image/png" }), true);
   });
 
   it("normalizes bare extension entries so accept=[\"pdf\"] cannot bypass checks", () => {
@@ -304,6 +364,15 @@ describe("evidence metadata snapshot staleness", () => {
     const snapshot = evidenceMetadataSignature({ port: "洋山港" });
     assert.equal(isEvidenceSlotStale(snapshot, { port: "  洋山港  " }), false);
   });
+
+  it("orders signature keys by code point, not UTF-16 code units", () => {
+    const astral = "\u{1F600}键";
+    const bmp = "\uFFFF键";
+    assert.equal(
+      evidenceMetadataSignature({ [astral]: "1", [bmp]: "2" }),
+      JSON.stringify([[bmp, "2"], [astral, "1"]])
+    );
+  });
 });
 
 describe("framework reserved keys are namespaced", () => {
@@ -343,6 +412,69 @@ describe("submission poll tiering", () => {
     assert.match(submissionTerminalMessage("expired"), /可重新提交/u);
     assert.equal(submissionTerminalMessage("failed", "signal_rejected"), "signal_rejected");
     assert.equal(submissionTerminalMessage("failed"), "提交失败，可重试");
+  });
+});
+
+describe("submit terminal gate (server authority + session final state)", () => {
+  const task = (status: ProductTaskDTO["status"], canSubmit?: boolean): Pick<ProductTaskDTO, "status" | "canSubmit"> => ({
+    status,
+    ...(canSubmit === undefined ? {} : { canSubmit })
+  });
+
+  it("keeps non-open or unauthorized tasks out of the submit entry (fail-closed)", () => {
+    // status/canSubmit 是 DTO 的服务端权威门：已提交待索引、已完成、受阻、
+    // 钱包无提交权的任务都不呈现可提交入口。
+    assert.equal(canSubmitWorkbenchTask(task("open"), "idle"), true);
+    assert.equal(canSubmitWorkbenchTask(task("open", false), "idle"), false);
+    assert.equal(canSubmitWorkbenchTask(task("submitted"), "idle"), false);
+    assert.equal(canSubmitWorkbenchTask(task("done"), "idle"), false);
+    assert.equal(canSubmitWorkbenchTask(task("blocked"), "idle"), false);
+  });
+
+  it("forbids re-submitting in the same session after confirmation", () => {
+    // confirmed 是本次会话终态闸：提交确认后不得再触发完整签名提交。
+    assert.equal(canSubmitWorkbenchTask(task("open"), "confirmed"), false);
+    assert.equal(canSubmitWorkbenchTask(task("open"), "failed"), true);
+    // 刷新后投影仍未改判任务状态时（open）也保持闸住。
+    assert.equal(canSubmitWorkbenchTask(task("open"), "tx_pending"), true);
+  });
+});
+
+describe("signing domain expectation from deployment config", () => {
+  it("derives the expectation from build-time config, not the checked response", () => {
+    assert.deepEqual(
+      stateMachineSignExpectation({ VITE_UVP_STATE_MACHINE_ADDRESS: " 0x0000000000000000000000000000000000000001 " }),
+      { verifyingContract: "0x0000000000000000000000000000000000000001" }
+    );
+  });
+
+  it("refuses to sign when the deployment config is missing or invalid (no conditional skip)", () => {
+    assert.throws(() => stateMachineSignExpectation({}), /VITE_UVP_STATE_MACHINE_ADDRESS/u);
+    assert.throws(() => stateMachineSignExpectation({ VITE_UVP_STATE_MACHINE_ADDRESS: "0x1234" }), /VITE_UVP_STATE_MACHINE_ADDRESS/u);
+  });
+});
+
+describe("invite link carries the one-time token", () => {
+  it("builds the uvp-order-app entry link with invite + inviteToken query", () => {
+    const link = inviteLinkForInvite("invite-9", "one-time-token", "https://order-app.test/");
+    assert.equal(link, "https://order-app.test/?invite=invite-9&inviteToken=one-time-token");
+  });
+});
+
+describe("readableError permission judgement", () => {
+  it("maps permission errors only from the structured http status", () => {
+    const forbidden = new Error("forbidden");
+    (forbidden as { status?: number }).status = 403;
+    assert.equal(readableError(forbidden, "fallback"), "当前账号没有权限执行该操作");
+  });
+
+  it("does not treat message substrings like 403 as a permission error", () => {
+    // 订单号/块高等数字撞上"403"子串时不得误标为权限错误。
+    const notForbidden = new Error("order 4031 not found");
+    assert.equal(readableError(notForbidden, "fallback"), "order 4031 not found");
+    const withOtherStatus = new Error("not found");
+    (withOtherStatus as { status?: number }).status = 404;
+    assert.equal(readableError(withOtherStatus, "fallback"), "not found");
   });
 });
 
@@ -391,5 +523,95 @@ describe("spec-driven submit intent", () => {
       }
     };
     assert.equal(taskSubmitIntent(task), "confirm_stage");
+  });
+
+  it("falls back to the capability plugin kind mapping when the manifest declares no intent (aligned with uvp-order-app)", () => {
+    const withPluginKind = (taskId: string, pluginKind: FulfillmentPluginKind): ProductTaskDTO => ({
+      ...minimalTask(taskId),
+      capabilityPlugin: { pluginKind, source: "explicit" }
+    });
+    assert.equal(taskSubmitIntent(withPluginKind("task-dispute", "dispute_material")), "raise_dispute");
+    assert.equal(taskSubmitIntent(withPluginKind("task-confirm", "delivery_update")), "confirm_stage");
+  });
+
+  it("prefers the manifest intent over a disagreeing capability plugin kind", () => {
+    const task: ProductTaskDTO = {
+      ...minimalTask("task-4"),
+      capabilityPlugin: { pluginKind: "dispute_material", source: "explicit" },
+      addOnManifest: {
+        schemaVersion: "participant-addon-manifest.v1",
+        manifestId: "manifest-3",
+        roleSlotId: "delivery",
+        addOnKind: "submit_signal",
+        title: "插件",
+        summary: "",
+        stageBindings: [],
+        pages: [],
+        actions: [
+          { actionId: "a-primary", actionKind: "submit_signal", label: "主操作", primary: true, inputBindings: {}, intent: "reject_stage" }
+        ]
+      }
+    };
+    assert.equal(taskSubmitIntent(task), "reject_stage");
+  });
+
+  it("derives the submit action copy from the server task payload, not from the intent", () => {
+    // 提交文案由服务端随任务下发（manifest 主 submit_signal
+    // 动作 label → 插件 primaryActionLabel → 任务级 primaryActionLabel →
+    // 中性兜底），前端不再维护 intent→文案表。
+    const manifestTask: ProductTaskDTO = {
+      ...minimalTask("task-copy-1"),
+      addOnManifest: {
+        schemaVersion: "participant-addon-manifest.v1",
+        manifestId: "manifest-copy",
+        roleSlotId: "delivery",
+        addOnKind: "submit_signal",
+        title: "插件",
+        summary: "",
+        stageBindings: [],
+        pages: [],
+        actions: [
+          { actionId: "a-primary", actionKind: "submit_signal", label: "拒绝本阶段", primary: true, inputBindings: {}, intent: "reject_stage" },
+          { actionId: "a-secondary", actionKind: "submit_signal", label: "次要动作", inputBindings: {} }
+        ]
+      }
+    };
+    assert.equal(taskSubmitActionLabel(manifestTask), "拒绝本阶段");
+
+    const pluginTask: ProductTaskDTO = {
+      ...minimalTask("task-copy-2"),
+      capabilityPlugin: { pluginKind: "evidence_submission", source: "explicit", primaryActionLabel: "上传报关凭证" }
+    };
+    assert.equal(taskSubmitActionLabel(pluginTask), "上传报关凭证");
+
+    const taskLevelLabel = { ...minimalTask("task-copy-3"), primaryActionLabel: "处理待办" };
+    assert.equal(taskSubmitActionLabel(taskLevelLabel), "处理待办");
+
+    // 无任何服务端文案时使用中性兜底：不含 confirm/reject 意图语义。
+    assert.equal(taskSubmitActionLabel(minimalTask("task-copy-4")), "提交待办结果");
+    // 争议插件类型本身也不改写文案——intent 只决定协议意图，不决定文案。
+    const disputeTask: ProductTaskDTO = {
+      ...minimalTask("task-copy-5"),
+      capabilityPlugin: { pluginKind: "dispute_material", source: "explicit" }
+    };
+    assert.equal(taskSubmitActionLabel(disputeTask), "提交待办结果");
+    assert.equal(taskSubmitIntent(disputeTask), "raise_dispute");
+  });
+});
+
+describe("scope generation", () => {
+  it("A→B→A 回切不复用作用域值：旧请求的 stale 检查不因键回切而失效", () => {
+    let scope = { key: "zhixu-a" as string | undefined, generation: 1 };
+    const aFirst = scopeGenerationValue(scope);
+    // 同键重渲染（投影刷新）：代数不变，值稳定。
+    scope = advanceScopeGeneration(scope, "zhixu-a");
+    assert.equal(scopeGenerationValue(scope), aFirst);
+    // 切到 B 再切回 A：键复用，代数推进——值不同于首次进入 A。
+    scope = advanceScopeGeneration(scope, "zhixu-b");
+    scope = advanceScopeGeneration(scope, "zhixu-a");
+    assert.notEqual(scopeGenerationValue(scope), aFirst);
+    // undefined 键（未选中目录）也参与同一口径。
+    scope = advanceScopeGeneration(scope, undefined);
+    assert.notEqual(scopeGenerationValue(scope), aFirst);
   });
 });
