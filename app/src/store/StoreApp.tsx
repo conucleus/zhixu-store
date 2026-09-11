@@ -110,9 +110,9 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
     return result.data;
   }
 
-  function handleSessionChanged(token?: string | undefined): void {
+  function handleSessionChanged(token?: string | undefined, expiresAt?: string | undefined): void {
     if (token !== undefined) {
-      storeStoreSessionToken(token);
+      storeStoreSessionToken({ token, ...(expiresAt ? { expiresAt } : {}) });
       setSessionToken(token);
       return;
     }
@@ -130,7 +130,7 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
     setLoginMessage(undefined);
     try {
       const result = await loginStoreSessionWithWallet(api);
-      storeStoreSessionToken(result.verify.token);
+      storeStoreSessionToken({ token: result.verify.token, expiresAt: result.verify.session.expiresAt });
       setSessionToken(result.verify.token);
       setLoginMessage(`已登录 ${shortValue(result.address)}`);
     } catch (error) {
@@ -196,7 +196,10 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
             <ShieldCheck /> {access.label}
             {access.anchoredAddress ? <span className="store-anchored-chip" data-testid="store-anchored-chip">锚定 {shortValue(access.anchoredAddress)}</span> : null}
           </span>
-          {access.anchoredAddress ? (
+          {/* 退出以"本地持有会话 token"为准渲染：服务端会话过期/锚定被撤后
+              session 可能不再回锚定地址，但仍持有的 token 必须可主动退出，
+              否则过期凭据既清不掉也换不成登录入口。 */}
+          {sessionToken !== undefined || access.anchoredAddress ? (
             <button className="secondary-button" onClick={() => void handleHeaderLogout()} disabled={loginBusy} data-testid="store-head-logout">
               退出
             </button>
@@ -256,11 +259,13 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
         />
       ) : null}
 
-      {loadState.status === "ready" && view === "suppliers" ? (
+      {/* suppliers/runtime 自带数据与加载态，不依赖目录首屏加载结果；
+          目录加载态只门控消费目录数据的页面（检索/详情/试拼）。 */}
+      {view === "suppliers" ? (
         <StoreSupplierPage access={access} api={api} />
       ) : null}
 
-      {loadState.status === "ready" && view === "runtime" ? (
+      {view === "runtime" ? (
         <StoreRuntimePage api={api} />
       ) : null}
 

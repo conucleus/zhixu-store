@@ -33,6 +33,10 @@ export interface SignTypedDataExpectation {
   readonly domainName: string;
   /** EIP-712 domain.version 预期值；不提供时不比对 version。 */
   readonly domainVersion?: string;
+  /** 期望的部署链 ID；提供时与 domain.chainId 严格比对。 */
+  readonly chainId?: number;
+  /** 期望的状态机部署地址；提供时与 domain.verifyingContract 比对（不区分大小写）。 */
+  readonly verifyingContract?: string;
   /** 当前连接并用于签名的钱包地址。 */
   readonly submitter: string;
   /**
@@ -94,6 +98,18 @@ export async function signTypedData(
   if (!ethereum) {
     throw new WalletNotConnectedError();
   }
+  // 域校验不只看格式：签名前至少核对钱包当前连接的链与 domain.chainId 一致，
+  // 否则被攻陷的 BFF 可以让参与者把"确认"签到另一条链的无效域上。
+  const domainChainId = parseDomainChainId(requireTypedDataRecord(typedData).domain);
+  const walletChainIdHex = await ethereum.request({ method: "eth_chainId" });
+  const walletChainId = typeof walletChainIdHex === "string"
+    ? Number.parseInt(walletChainIdHex, 16)
+    : Number.NaN;
+  if (walletChainId !== domainChainId) {
+    throw new TypedDataMismatchError(
+      `钱包当前连接链 ${Number.isNaN(walletChainId) ? String(walletChainIdHex) : walletChainId} 与签名域 chainId ${domainChainId} 不一致，请切换到部署链后再签名`
+    );
+  }
   try {
     const signature = await ethereum.request({
       method: "eth_signTypedData_v4",
@@ -117,6 +133,21 @@ function asAddress(value: unknown): string | undefined {
 
 function sameAddress(left: string, right: string): boolean {
   return left.toLowerCase() === right.toLowerCase();
+}
+
+/** EIP-712 domain.chainId 可能以 number 或十进制字符串到达；解析失败返回 undefined。 */
+function parseChainId(value: unknown): number | undefined {
+  const parsed = typeof value === "number" ? value : typeof value === "string" && /^\d+$/u.test(value) ? Number(value) : Number.NaN;
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function parseDomainChainId(domainValue: unknown): number {
+  const chainId = requireTypedDataRecord(domainValue).chainId;
+  const parsed = parseChainId(chainId);
+  if (parsed === undefined) {
+    throw new TypedDataMismatchError(`domain.chainId ${String(chainId)} 不是有效的链 ID`);
+  }
+  return parsed;
 }
 
 function requireTypedDataRecord(typedData: unknown): Record<string, unknown> {
@@ -152,13 +183,19 @@ export function validateTypedDataForSigning(
     throw new TypedDataMismatchError(`domain.version ${String(domain.version)} 与预期 ${expected.domainVersion} 不一致`);
   }
   const chainId = domain.chainId;
-  const chainIdNumber = typeof chainId === "number" ? chainId : typeof chainId === "string" ? Number(chainId) : Number.NaN;
-  if (!Number.isSafeInteger(chainIdNumber) || chainIdNumber <= 0) {
+  const chainIdNumber = parseChainId(chainId);
+  if (chainIdNumber === undefined) {
     throw new TypedDataMismatchError(`domain.chainId ${String(chainId)} 不是有效的链 ID`);
+  }
+  if (expected.chainId !== undefined && chainIdNumber !== expected.chainId) {
+    throw new TypedDataMismatchError(`domain.chainId ${chainIdNumber} 与预期 ${expected.chainId} 不一致`);
   }
   const verifyingContract = asAddress(domain.verifyingContract);
   if (!verifyingContract) {
     throw new TypedDataMismatchError("domain.verifyingContract 缺失或不是有效地址");
+  }
+  if (expected.verifyingContract !== undefined && !sameAddress(verifyingContract, expected.verifyingContract)) {
+    throw new TypedDataMismatchError(`domain.verifyingContract ${verifyingContract} 与预期 ${expected.verifyingContract} 不一致`);
   }
 
   const messageSubmitter = asAddress(message.submitter);

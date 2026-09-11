@@ -42,7 +42,7 @@ test.describe("Store and participant entry split", () => {
     // UI 层的契约是只读会话不提供任何写入口。
     await expect(page.getByTestId("store-import-draft-button")).toHaveCount(0);
 
-    // ND-1 裁决：Store Console 的 E2E 注入桥已整体删除，window 上不应再有该桥。
+    // Store Console 的 E2E 注入桥已整体删除，window 上不应再有该桥。
     const bridge = await page.evaluate(() => {
       return (window as { __uvpStoreConsoleE2E?: unknown }).__uvpStoreConsoleE2E;
     });

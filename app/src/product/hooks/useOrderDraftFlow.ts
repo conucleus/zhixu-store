@@ -1,4 +1,4 @@
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { ZhixuDetailDTO } from "@uvp-eth/product-dto";
 import type {
   DraftParticipantDTO,
@@ -7,7 +7,13 @@ import type {
   ProductOrderDraftDTO
 } from "../api";
 import { idleAction, type ActionState } from "./workbenchTypes";
-import { canCreateProductOrder, readableError } from "./workbenchSupport";
+import {
+  advanceScopeGeneration,
+  canCreateProductOrder,
+  readableError,
+  scopeGenerationValue,
+  type ScopeGeneration
+} from "./workbenchSupport";
 
 export interface OrderDraftFormValues {
   readonly title: string;
@@ -87,11 +93,17 @@ export function useOrderDraftFlow(input: {
   readonly draftParticipantsError?: string | undefined;
   readonly draftAction: ActionState;
   readonly saveDraftAction: ActionState;
-  readonly inviteActions: Record<string, ActionState & { readonly invite?: ProductInviteDTO | undefined }>;
+  /** inviteToken 是一次性明文（只在创建响应出现一次），随动作状态留存供复制链接。 */
+  readonly inviteActions: Record<string, ActionState & {
+    readonly invite?: ProductInviteDTO | undefined;
+    readonly inviteToken?: string | undefined;
+  }>;
   readonly ensureDraft: () => Promise<ProductOrderDraftDTO | undefined>;
   readonly handleCreateDraft: (values: OrderDraftFormValues) => Promise<ProductOrderDraftDTO | undefined>;
   readonly handleSaveDraft: (values: OrderDraftFormValues) => Promise<void>;
   readonly handleSendInvite: (participant: DraftParticipantDTO) => Promise<void>;
+  /** 参与方清单的手动重试入口（清单加载失败后不重建草稿即可重拉）。 */
+  readonly reloadParticipants: () => Promise<void>;
 } {
   const { api, selectedZhixu, onMutationSuccess } = input;
   const [draft, setDraft] = useState<ProductOrderDraftDTO | undefined>();
@@ -100,11 +112,25 @@ export function useOrderDraftFlow(input: {
   const [draftParticipantsError, setDraftParticipantsError] = useState<string | undefined>();
   const [draftAction, setDraftAction] = useState<ActionState>(idleAction);
   const [saveDraftAction, setSaveDraftAction] = useState<ActionState>(idleAction);
-  const [inviteActions, setInviteActions] = useState<Record<string, ActionState & { readonly invite?: ProductInviteDTO | undefined }>>({});
+  const [inviteActions, setInviteActions] = useState<Record<string, ActionState & {
+    readonly invite?: ProductInviteDTO | undefined;
+    readonly inviteToken?: string | undefined;
+  }>>({});
 
-  // A catalog switch must not carry a previous order/draft or its participant
-  // confirmations into the newly selected frozen DTO.
-  useEffect(() => {
+  // 目录作用域键在 A→B→A 回切时会复用：按裸键比较的 stale 检查在回切后
+  // "键又对上了"，旧目录的在途请求（建草稿/存草稿/发邀请）会把旧结果写进
+  // 当前界面。代数单调递增且从不复用，键变化即推进；同键重渲染保持不变。
+  const scopeKey = selectedZhixu?.zhixuId;
+  const generationRef = useRef<ScopeGeneration<string | undefined>>({ key: scopeKey, generation: 1 });
+  generationRef.current = advanceScopeGeneration(generationRef.current, scopeKey);
+  const effectiveScopeKey = scopeGenerationValue(generationRef.current);
+  const scopeRef = useRef(effectiveScopeKey);
+
+  // A catalog switch (including re-entering a previously left catalog) must not
+  // carry a previous order/draft or its participant confirmations into the
+  // newly selected frozen DTO.
+  useLayoutEffect(() => {
+    scopeRef.current = effectiveScopeKey;
     setDraft(undefined);
     setDraftParticipants([]);
     setDraftParticipantsStatus("unknown");
@@ -112,17 +138,24 @@ export function useOrderDraftFlow(input: {
     setDraftAction(idleAction);
     setSaveDraftAction(idleAction);
     setInviteActions({});
-  }, [selectedZhixu?.zhixuId]);
+  }, [effectiveScopeKey]);
 
   async function loadDraftParticipants(draftId: string): Promise<readonly DraftParticipantDTO[]> {
+    const requestScope = scopeRef.current;
     setDraftParticipantsStatus("loading");
     setDraftParticipantsError(undefined);
     try {
       const result = await api.listParticipants(draftId);
+      if (scopeRef.current !== requestScope) {
+        return result.data;
+      }
       setDraftParticipants(result.data);
       setDraftParticipantsStatus("ready");
       return result.data;
     } catch (error) {
+      if (scopeRef.current !== requestScope) {
+        throw error;
+      }
       const message = readableError(error, "参与方清单加载失败");
       setDraftParticipantsStatus("error");
       setDraftParticipantsError(message);
@@ -153,6 +186,7 @@ export function useOrderDraftFlow(input: {
       return undefined;
     }
     setDraftAction({ phase: "pending", message: "正在创建订单草稿" });
+    const requestScope = scopeRef.current;
     try {
       const goods = goodsFromValues(values);
       const notes = values.notes.trim();
@@ -165,12 +199,34 @@ export function useOrderDraftFlow(input: {
         currency: values.currency.trim(),
         ...(notes ? { notes } : {})
       });
+      if (scopeRef.current !== requestScope) {
+        return undefined;
+      }
       setDraft(result.data);
       setDraftAction({ phase: "success", message: "订单草稿已创建", source: result.source });
-      await loadDraftParticipants(result.data.draftId);
+      try {
+        await loadDraftParticipants(result.data.draftId);
+      } catch (listError) {
+        if (scopeRef.current !== requestScope) {
+          return undefined;
+        }
+        // 草稿已创建是既成事实：清单加载失败不得回滚为"创建失败"定性。
+        setDraftAction({
+          phase: "success",
+          message: `订单草稿已创建；参与方清单加载失败（${readableError(listError, "请稍后重试")}），可在参与方页重试加载`,
+          source: result.source
+        });
+        return result.data;
+      }
+      if (scopeRef.current !== requestScope) {
+        return undefined;
+      }
       onMutationSuccess?.();
       return result.data;
     } catch (error) {
+      if (scopeRef.current !== requestScope) {
+        return undefined;
+      }
       setDraftAction({ phase: "error", message: readableError(error, "订单草稿创建失败") });
       return undefined;
     }
@@ -187,6 +243,7 @@ export function useOrderDraftFlow(input: {
       return;
     }
     setSaveDraftAction({ phase: "pending", message: "正在保存草稿" });
+    const requestScope = scopeRef.current;
     try {
       const result = await api.updateOrderDraft(currentDraft.draftId, {
         title: values.title.trim(),
@@ -196,15 +253,33 @@ export function useOrderDraftFlow(input: {
         currency: values.currency.trim(),
         notes: values.notes.trim()
       });
+      if (scopeRef.current !== requestScope) {
+        return;
+      }
       setDraft(result.data);
       setSaveDraftAction({ phase: "success", message: "草稿已保存", source: result.source });
       onMutationSuccess?.();
     } catch (error) {
+      if (scopeRef.current !== requestScope) {
+        return;
+      }
       setSaveDraftAction({ phase: "error", message: readableError(error, "草稿保存失败") });
     }
   }
 
   async function handleSendInvite(participant: DraftParticipantDTO): Promise<void> {
+    // 服务端对 contact 必填（空值 400）：前端同一口径先拦并给出可操作提示，
+    // 不再发出注定失败的请求，也不为缺失联系方式编造占位值。
+    if (!participant.contact.trim()) {
+      setInviteActions((current) => ({
+        ...current,
+        [participant.participantId]: {
+          phase: "error",
+          message: "该参与方未填写联系方式：请先补填联系方式再发送邀请"
+        }
+      }));
+      return;
+    }
     const currentDraft = await ensureDraft();
     if (!currentDraft) {
       return;
@@ -213,9 +288,8 @@ export function useOrderDraftFlow(input: {
       ...current,
       [participant.participantId]: { phase: "pending", message: "正在发送邀请" }
     }));
+    const requestScope = scopeRef.current;
     try {
-      // 不为缺失的联系方式编造占位值：contact 为空就如实传空，
-      // 页面会显示"未填写"并提示用其他渠道送达邀请链接。
       const result = await api.createInvite(currentDraft.draftId, {
         participantId: participant.participantId,
         roleSlotId: participant.roleSlotId,
@@ -224,24 +298,64 @@ export function useOrderDraftFlow(input: {
         displayName: participant.displayName || participant.roleLabel,
         required: participant.required
       });
-      await loadDraftParticipants(currentDraft.draftId);
+      if (scopeRef.current !== requestScope) {
+        return;
+      }
+      // 一次性明文 token 只在本响应出现：先把成功态与 token 落进动作状态
+      // （复制链接出口就绪），清单刷新失败也不得回滚为失败定性——回滚会把
+      // token 一起丢掉，用户只能重发一份新邀请。
+      const inviteSuccess: ActionState & {
+        readonly invite?: ProductInviteDTO | undefined;
+        readonly inviteToken?: string | undefined;
+      } = {
+        phase: "success",
+        message: "邀请已生成，可复制邀请链接发送给对方",
+        source: result.source,
+        invite: result.data.invite,
+        inviteToken: result.data.inviteToken
+      };
       setInviteActions((current) => ({
         ...current,
-        [participant.participantId]: {
-          phase: "success",
-          message: participant.contact.trim()
-            ? "邀请已生成，可复制链接发送给对方"
-            : "邀请已生成；该参与方未填写联系方式，请通过其他渠道把邀请链接送达，并请其补填联系方式",
-          source: result.source,
-          invite: result.data
-        }
+        [participant.participantId]: inviteSuccess
       }));
+      try {
+        await loadDraftParticipants(currentDraft.draftId);
+      } catch (listError) {
+        if (scopeRef.current !== requestScope) {
+          return;
+        }
+        setInviteActions((current) => ({
+          ...current,
+          [participant.participantId]: {
+            ...inviteSuccess,
+            message: `邀请已生成，可复制邀请链接发送给对方；参与方清单刷新失败（${readableError(listError, "请稍后重试")}），清单状态未同步`
+          }
+        }));
+        return;
+      }
+      if (scopeRef.current !== requestScope) {
+        return;
+      }
       onMutationSuccess?.();
     } catch (error) {
+      if (scopeRef.current !== requestScope) {
+        return;
+      }
       setInviteActions((current) => ({
         ...current,
         [participant.participantId]: { phase: "error", message: readableError(error, "邀请发送失败") }
       }));
+    }
+  }
+
+  async function reloadParticipants(): Promise<void> {
+    if (!draft) {
+      return;
+    }
+    try {
+      await loadDraftParticipants(draft.draftId);
+    } catch {
+      // 失败态已由 loadDraftParticipants 落进 draftParticipantsStatus/Error。
     }
   }
 
@@ -258,6 +372,7 @@ export function useOrderDraftFlow(input: {
     ensureDraft,
     handleCreateDraft,
     handleSaveDraft,
-    handleSendInvite
+    handleSendInvite,
+    reloadParticipants
   };
 }
