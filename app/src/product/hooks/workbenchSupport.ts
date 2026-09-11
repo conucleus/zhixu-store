@@ -65,6 +65,12 @@ export type TaskEvidenceSlotInputKind = "file" | "text" | "date";
 export interface TaskEvidenceSlot {
   readonly key: string;
   readonly label: string;
+  /**
+   * 上传时送出的证据类型（进入服务端指纹）。spec 槽位即 spec key（product-dto
+   * 约定）；资源降级槽位用资源自身类型，与 uvp-order-app 同口径——两端对同一
+   * 任务不能因入口不同签出不同 documentType 的指纹。槽位 key 只是前端归档键。
+   */
+  readonly documentType: string;
   readonly inputKind: TaskEvidenceSlotInputKind;
   /** 文件槽位的 accept 约束（MIME 或扩展名）；空数组表示不限制格式。 */
   readonly accept: readonly string[];
@@ -91,6 +97,7 @@ export function planTaskEvidence(task: TaskEvidencePlanInput): TaskEvidencePlan 
       mode: "spec",
       slots: spec.map((entry): TaskEvidenceSlot => ({
         key: entry.key,
+        documentType: entry.key,
         label: entry.label,
         inputKind: entry.inputKind ?? "file",
         accept: entry.inputKind === undefined || entry.inputKind === "file" ? [...(entry.accept ?? [])] : [],
@@ -103,6 +110,7 @@ export function planTaskEvidence(task: TaskEvidencePlanInput): TaskEvidencePlan 
     .filter((resource) => (resource.resourceType ?? resource.resourceId) !== "metadata")
     .map((resource): TaskEvidenceSlot => ({
       key: `resource-requirement:${resource.resourceId}`,
+      documentType: resource.resourceType ?? resource.resourceId,
       label: resource.label,
       inputKind: "file",
       accept: [],

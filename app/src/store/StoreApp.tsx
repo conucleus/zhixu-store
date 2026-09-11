@@ -259,11 +259,13 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
         />
       ) : null}
 
-      {loadState.status === "ready" && view === "suppliers" ? (
+      {/* suppliers/runtime 自带数据与加载态，不依赖目录首屏加载结果；
+          目录加载态只门控消费目录数据的页面（检索/详情/试拼）。 */}
+      {view === "suppliers" ? (
         <StoreSupplierPage access={access} api={api} />
       ) : null}
 
-      {loadState.status === "ready" && view === "runtime" ? (
+      {view === "runtime" ? (
         <StoreRuntimePage api={api} />
       ) : null}
 

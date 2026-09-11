@@ -53,6 +53,10 @@ import {
   type ProductOrderDraftDTO,
   type ProductWorkbenchData
 } from "./product/api";
+import { WalletLoginPanel } from "./product/WalletLoginPanel";
+import { createStoreApiClient, storeStoreSessionToken } from "./store/api";
+import { loginStoreSessionWithWallet } from "./store/session";
+import { hasStoreWallet } from "./store/wallet";
 import {
   emptyOrderDraftFormValues,
   useOrderDraftFlow,
@@ -133,7 +137,8 @@ export function ProductWorkbenchApp() {
     ensureDraft,
     handleCreateDraft,
     handleSaveDraft,
-    handleSendInvite
+    handleSendInvite,
+    reloadParticipants
   } = draftFlow;
   // 订单启动后的"同步中"只做过渡桥：等订单投影落地（有界轮询）再跳转/清标志，
   // 绝不永久挂起；索引迟迟未落地时保持"同步中"中间态，不把空订单页当"启动失败"
@@ -187,6 +192,7 @@ export function ProductWorkbenchApp() {
     evidenceBySlot,
     evidenceProofsBySlot,
     staleSlotLabels,
+    unverifiedSlotLabels,
     evidenceAction,
     submitMachine,
     disputeAction,
@@ -208,21 +214,33 @@ export function ProductWorkbenchApp() {
     taskEvidenceFields,
     Object.keys(evidenceBySlot)
   );
-  // 上传后相关字段变更的槽位（指纹已分叉）与缺失槽位一样禁锁提交。
-  // 凭证核验异常（mismatch/missing_file）的隔离凭证不得作为有效业务凭证，同样禁锁。
+  // 上传后相关字段变更的槽位（指纹已分叉）、核验异常的隔离凭证与未取到
+  // 核验记录的凭证一样禁锁提交。
   const verificationFailedLabels = Object.entries(evidenceProofsBySlot)
     .filter(([, proof]) => proof.verificationStatus === "mismatch" || proof.verificationStatus === "missing_file")
     .map(([key]) => evidencePlan.slots.find((slot) => slot.key === key)?.label ?? key);
   // 服务端权威门 + 本次会话终态闸：status/canSubmit 不满足或已 confirmed
   // 的任务不呈现可提交入口（order-app 同功能面 fail-closed）。
   const taskSubmitGate = activeTask ? canSubmitWorkbenchTask(activeTask, submitMachine.status) : false;
-  const canConfirmSubmit = taskSubmitGate && missingEvidenceSlotLabels.length === 0 && staleSlotLabels.length === 0 && verificationFailedLabels.length === 0;
+  const canConfirmSubmit = taskSubmitGate &&
+    missingEvidenceSlotLabels.length === 0 &&
+    staleSlotLabels.length === 0 &&
+    verificationFailedLabels.length === 0 &&
+    unverifiedSlotLabels.length === 0;
 
   async function handleNextParticipants(): Promise<void> {
     const currentDraft = await ensureDraft();
     if (currentDraft) {
       setView("participants");
     }
+  }
+
+  async function handleWalletLogin(): Promise<void> {
+    // 与 Store 入口同一身份通道：挑战-签名-verify 换会话 token，落进
+    // localStorage（product client 每次请求现读该 token，登录后立即生效）。
+    const result = await loginStoreSessionWithWallet(createStoreApiClient());
+    storeStoreSessionToken({ token: result.verify.token, expiresAt: result.verify.session.expiresAt });
+    await reloadWorkbench();
   }
 
   const workbenchState = {
@@ -268,6 +286,21 @@ export function ProductWorkbenchApp() {
         <main className="product-main">
           <section className="page-shell">
             <StatePanel icon={<AlertTriangle />} title="订单工作台加载失败" desc={loadState.message} tone="error" />
+          </section>
+        </main>
+      </div>
+    );
+  }
+
+  if (loadState.status === "unauthenticated") {
+    // 非 local 部署的无会话态：登录是唯一可用入口，不渲染待办工作区
+    // （渲染了也只是一整屏 401 派生错误）。
+    return (
+      <div className="product-app" data-testid="product-workbench" data-uvp-mode={import.meta.env.MODE}>
+        <TopNav active={activeNav} onGo={setView} />
+        <main className="product-main">
+          <section className="page-shell">
+            <WalletLoginPanel hasWallet={hasStoreWallet()} onLogin={handleWalletLogin} />
           </section>
         </main>
       </div>
@@ -371,14 +404,14 @@ export function ProductWorkbenchApp() {
         {loadState.status === "ready" && view === "home" && selectedZhixu ? <CatalogPage zhixu={selectedZhixu} order={selectedOrder} task={activeTask} onViewDetail={() => setView("zhixu")} onCreate={() => setView("create")} onOrder={() => setView("order")} onTask={(taskId) => openTask(taskId)} /> : null}
         {loadState.status === "ready" && view === "zhixu" && selectedZhixu ? <ZhixuDetailPage zhixu={selectedZhixu} onBack={() => setView("home")} onCreate={() => setView("create")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : null}
         {loadState.status === "ready" && view === "create" && selectedZhixu ? <CreateOrderPage zhixu={selectedZhixu} draft={draft} createAction={draftAction} saveAction={saveDraftAction} values={draftFormValues} onValuesChange={(patch) => setDraftFormValues((current) => ({ ...current, ...patch }))} onBack={() => setView("zhixu")} onCreate={(values) => void handleCreateDraft(values)} onSave={(values) => void handleSaveDraft(values)} onNext={handleNextParticipants} /> : null}
-        {loadState.status === "ready" && view === "participants" ? <ParticipantsPage order={selectedOrder} draft={draft} draftParticipants={draftParticipants} draftParticipantsStatus={draftFlow.draftParticipantsStatus} draftParticipantsError={draftFlow.draftParticipantsError} inviteActions={inviteActions} registerAction={registerDraftAction} onBack={() => setView("create")} onInvite={handleSendInvite} onRegister={handleRegisterDraft} onOrder={() => setView("order")} /> : null}
+        {loadState.status === "ready" && view === "participants" ? <ParticipantsPage order={selectedOrder} draft={draft} draftParticipants={draftParticipants} draftParticipantsStatus={draftFlow.draftParticipantsStatus} draftParticipantsError={draftFlow.draftParticipantsError} inviteActions={inviteActions} registerAction={registerDraftAction} onBack={() => setView("create")} onInvite={handleSendInvite} onRegister={handleRegisterDraft} onOrder={() => setView("order")} onReloadParticipants={() => void reloadParticipants()} /> : null}
         {loadState.status === "ready" && view === "order" ? selectedOrder ? <OrderOverviewPage order={selectedOrder} syncing={data.syncState === "syncing" || awaitingOrderSync} onBack={() => setView("home")} onTask={() => setView("task")} onDispute={() => setView("dispute")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : awaitingOrderSync ? (
           <section className="page-shell">
             <StatePanel icon={<RefreshCw className="spin" />} title="订单状态同步中" desc="订单已启动，正在等待链上投影同步；请勿重复启动，稍后刷新即可查看订单总览。" tone="info" />
           </section>
         ) : <EmptyState title="暂无进行中订单" desc="创建并启动订单后，这里会展示订单总览、当前待办和最近事件。" /> : null}
-        {loadState.status === "ready" && view === "task" ? activeTask ? <TaskPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} evidenceProofsBySlot={evidenceProofsBySlot} uploadAction={evidenceAction} canConfirm={canConfirmSubmit} missingEvidenceLabels={missingEvidenceSlotLabels} staleSlotLabels={staleSlotLabels} verificationFailedLabels={verificationFailedLabels} fieldValues={taskEvidenceFields} onFieldValuesChange={(patch) => setTaskEvidenceFields((current) => ({ ...current, ...patch }))} onBack={() => setView("order")} onUpload={(slotKey, file) => void handleUploadEvidence(slotKey, file)} onSubmit={() => setView("submit")} onDispute={() => setView("dispute")} /> : <EmptyState title="暂无待办" desc="当前没有需要你处理的任务。" /> : null}
-        {loadState.status === "ready" && view === "submit" ? activeTask ? <SubmitPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} submitMachine={submitMachine} canSubmit={canConfirmSubmit} staleSlotLabels={staleSlotLabels} verificationFailedLabels={verificationFailedLabels} onBack={() => setView("task")} onSubmit={() => void handleConfirmSubmit()} onOrder={() => setView("order")} /> : <EmptyState title="暂无可提交的待办" desc="待办完成凭证上传后，可在这里确认提交。" /> : null}
+        {loadState.status === "ready" && view === "task" ? activeTask ? <TaskPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} evidenceProofsBySlot={evidenceProofsBySlot} uploadAction={evidenceAction} canConfirm={canConfirmSubmit} missingEvidenceLabels={missingEvidenceSlotLabels} staleSlotLabels={staleSlotLabels} unverifiedEvidenceLabels={unverifiedSlotLabels} verificationFailedLabels={verificationFailedLabels} fieldValues={taskEvidenceFields} onFieldValuesChange={(patch) => setTaskEvidenceFields((current) => ({ ...current, ...patch }))} onBack={() => setView("order")} onUpload={(slotKey, file) => void handleUploadEvidence(slotKey, file)} onSubmit={() => setView("submit")} onDispute={() => setView("dispute")} /> : <EmptyState title="暂无待办" desc="当前没有需要你处理的任务。" /> : null}
+        {loadState.status === "ready" && view === "submit" ? activeTask ? <SubmitPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} submitMachine={submitMachine} canSubmit={canConfirmSubmit} staleSlotLabels={staleSlotLabels} unverifiedEvidenceLabels={unverifiedSlotLabels} verificationFailedLabels={verificationFailedLabels} onBack={() => setView("task")} onSubmit={() => void handleConfirmSubmit()} onOrder={() => setView("order")} /> : <EmptyState title="暂无可提交的待办" desc="待办完成凭证上传后，可在这里确认提交。" /> : null}
         {loadState.status === "ready" && view === "dispute" ? activeTask ? <DisputePage task={activeTask} action={disputeAction} onBack={() => setView("order")} onSave={handleDisputeSave} /> : <EmptyState title="暂无可争议事项" desc="订单出现可处理待办后，可以补充争议材料。" /> : null}
       </main>
     </div>
@@ -829,7 +862,8 @@ function ParticipantsPage({
   onBack,
   onInvite,
   onRegister,
-  onOrder
+  onOrder,
+  onReloadParticipants
 }: {
   order?: ProductOrderDTO | undefined;
   draft?: ProductOrderDraftDTO | undefined;
@@ -845,6 +879,7 @@ function ParticipantsPage({
   onInvite: (participant: DraftParticipantDTO) => void;
   onRegister: () => void;
   onOrder: () => void;
+  onReloadParticipants: () => void;
 }) {
   if (!draft) {
     return (
@@ -881,6 +916,9 @@ function ParticipantsPage({
                 <strong>参与方清单加载失败</strong>
                 <p>{draftParticipantsError ?? "无法确认参与方状态，请稍后重试。"}</p>
               </div>
+              <button className="secondary-button" data-testid="participants-retry-button" onClick={onReloadParticipants}>
+                <RefreshCw /> 重试加载
+              </button>
             </div>
           ) : null}
           {draftParticipantsStatus === "ready" && draftParticipants.length === 0 ? (
@@ -1048,6 +1086,7 @@ function TaskPage({
   canConfirm,
   missingEvidenceLabels,
   staleSlotLabels,
+  unverifiedEvidenceLabels,
   verificationFailedLabels,
   fieldValues,
   onFieldValuesChange,
@@ -1064,6 +1103,7 @@ function TaskPage({
   canConfirm: boolean;
   missingEvidenceLabels: readonly string[];
   staleSlotLabels: readonly string[];
+  unverifiedEvidenceLabels: readonly string[];
   verificationFailedLabels: readonly string[];
   fieldValues: TaskEvidenceFieldValues;
   onFieldValuesChange: (patch: TaskEvidenceFieldValues) => void;
@@ -1114,6 +1154,15 @@ function TaskPage({
               <div>
                 <strong>字段已变更，请重新上传以更新指纹</strong>
                 <p>以下凭证上传后相关字段又发生了变化：{staleSlotLabels.join("、")}。重新上传对应凭证之前无法提交。</p>
+              </div>
+            </div>
+          ) : null}
+          {unverifiedEvidenceLabels.length > 0 ? (
+            <div className="warning-box" data-testid="task-evidence-unverified-warning" role="alert">
+              <AlertTriangle />
+              <div>
+                <strong>凭证核验状态未知，暂不能提交</strong>
+                <p>以下凭证已上传但未取到核验记录：{unverifiedEvidenceLabels.join("、")}。请重新上传对应凭证后再提交。</p>
               </div>
             </div>
           ) : null}
@@ -1236,6 +1285,7 @@ function SubmitPage({
   submitMachine,
   canSubmit,
   staleSlotLabels,
+  unverifiedEvidenceLabels,
   verificationFailedLabels,
   onBack,
   onSubmit,
@@ -1247,6 +1297,7 @@ function SubmitPage({
   submitMachine: SubmitMachineState;
   canSubmit: boolean;
   staleSlotLabels: readonly string[];
+  unverifiedEvidenceLabels: readonly string[];
   verificationFailedLabels: readonly string[];
   onBack: () => void;
   onSubmit: () => void;
@@ -1318,6 +1369,15 @@ function SubmitPage({
               <div>
                 <strong>字段已变更，请重新上传以更新指纹</strong>
                 <p>以下凭证上传后相关字段又发生了变化：{staleSlotLabels.join("、")}。返回待办页重新上传对应凭证后再提交。</p>
+              </div>
+            </div>
+          ) : null}
+          {unverifiedEvidenceLabels.length > 0 ? (
+            <div className="warning-box" data-testid="submit-unverified-warning" role="alert">
+              <AlertTriangle />
+              <div>
+                <strong>凭证核验状态未知，禁止提交</strong>
+                <p>以下凭证已上传但未取到核验记录：{unverifiedEvidenceLabels.join("、")}。返回待办页重新上传对应凭证后再提交。</p>
               </div>
             </div>
           ) : null}
@@ -1798,8 +1858,7 @@ function participantTaskStatusTone(status: ProductTaskDTO["status"]): "info" | "
       return "info";
     case "blocked":
       return "warning";
-    // submitted 是等待链上确认的中间态：标签如实说"已提交"，色调不得
-    // 提前用成功色宣布完成（9991262 只修了列表归类，这里是残留表面）。
+    // submitted 是等待链上确认的中间态：标签如实说"已提交"，色调不得提前用成功色宣布完成。
     case "submitted":
       return "info";
     case "done":

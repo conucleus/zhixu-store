@@ -236,10 +236,15 @@ export function StoreSearchPage({
       setSchemaAction({ phase: "error", message: "尚未勾选任何待确认插件；每条 inferred/missing 插件都必须由发布者逐条确认后才会写入 explicit。" });
       return;
     }
-    const explicitSchema = confirmSchemaPluginsExplicit(productSchema, confirmedKeys);
-    setSchemaText(prettySchema(explicitSchema));
     setSchemaAction({ phase: "pending", message: `正在把 ${confirmedKeys.size} 条勾选插件写入 explicit` });
     try {
+      // 从编辑器当前内容构建：勾选保存不得用旧 state 覆盖编辑器，丢弃未保存的 JSON 编辑。
+      const parsed = parseSchemaText(schemaText, productSchema);
+      if (!parsed) {
+        throw new Error("当前没有可保存的 schema");
+      }
+      const explicitSchema = confirmSchemaPluginsExplicit(parsed, confirmedKeys);
+      setSchemaText(prettySchema(explicitSchema));
       const result = await onUpdateDraftProductSchema(reviewDraft.draftId, explicitSchema);
       setReviewDraft(result.data.draft);
       setProductSchema(result.data.productSchema);

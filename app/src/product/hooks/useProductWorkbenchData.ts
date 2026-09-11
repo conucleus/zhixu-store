@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   WorkbenchLoadError,
   type ProductApiClient,
@@ -9,10 +9,34 @@ import {
 
 export type ProductWorkbenchLoadState =
   | { readonly status: "loading" }
+  | { readonly status: "unauthenticated" }
   | { readonly status: "ready"; readonly data: ProductWorkbenchData }
   | { readonly status: "empty"; readonly data: ProductWorkbenchData }
   | { readonly status: "error"; readonly message: string; readonly source?: ProductApiSource }
   | { readonly status: "diagnostic"; readonly diagnostics: readonly WorkbenchEndpointDiagnostic[]; readonly source: ProductApiSource };
+
+/**
+ * 参与者面在非 local 部署强制钱包会话锚定：无会话时关键接口全部 401
+ * （wallet_identity_required）。这不是诊断可排查的服务端异常，重试同一
+ * 无会话请求只会再吃一次 401——按"未登录"分流给登录入口。
+ */
+function isUnauthenticatedLoadFailure(error: unknown): boolean {
+  if (error instanceof WorkbenchLoadError) {
+    return error.diagnostics.length > 0 && error.diagnostics.every((diag) => diag.status === 401);
+  }
+  const status = (error as { readonly status?: unknown }).status;
+  return status === 401;
+}
+
+function loadStateFromError(error: unknown): ProductWorkbenchLoadState {
+  if (isUnauthenticatedLoadFailure(error)) {
+    return { status: "unauthenticated" };
+  }
+  if (error instanceof WorkbenchLoadError) {
+    return { status: "diagnostic", diagnostics: error.diagnostics, source: error.source };
+  }
+  return { status: "error", message: error instanceof Error ? error.message : "工作台加载失败" };
+}
 
 export function useProductWorkbenchData(api: ProductApiClient): {
   readonly loadState: ProductWorkbenchLoadState;
@@ -26,34 +50,39 @@ export function useProductWorkbenchData(api: ProductApiClient): {
   readonly refresh: () => Promise<ProductWorkbenchData | undefined>;
 } {
   const [loadState, setLoadState] = useState<ProductWorkbenchLoadState>({ status: "loading" });
+  // 慢网下旧响应不得覆盖新响应：所有加载路径共用单调序号，晚到响应作废。
+  const loadSequenceRef = useRef(0);
 
   const reload = useCallback(async () => {
+    const sequence = loadSequenceRef.current + 1;
+    loadSequenceRef.current = sequence;
     setLoadState({ status: "loading" });
     try {
       const loaded = await api.loadWorkbenchData();
+      if (loadSequenceRef.current !== sequence) {
+        return;
+      }
       setLoadState({
         status: loaded.zhixus.length === 0 ? "empty" : "ready",
         data: loaded
       });
     } catch (error) {
-      if (error instanceof WorkbenchLoadError) {
-        setLoadState({
-          status: "diagnostic",
-          diagnostics: error.diagnostics,
-          source: error.source
-        });
-      } else {
-        setLoadState({
-          status: "error",
-          message: error instanceof Error ? error.message : "工作台加载失败"
-        });
+      if (loadSequenceRef.current !== sequence) {
+        return;
       }
+      setLoadState(loadStateFromError(error));
     }
   }, [api]);
 
   const refresh = useCallback(async (): Promise<ProductWorkbenchData | undefined> => {
+    const sequence = loadSequenceRef.current + 1;
+    loadSequenceRef.current = sequence;
     try {
       const loaded = await api.loadWorkbenchData();
+      if (loadSequenceRef.current !== sequence) {
+        // 已有更新的加载接管状态：本次结果既不落地也不作为"最新投影"上报。
+        return undefined;
+      }
       setLoadState({
         status: loaded.zhixus.length === 0 ? "empty" : "ready",
         data: loaded
@@ -66,34 +95,23 @@ export function useProductWorkbenchData(api: ProductApiClient): {
   }, [api]);
 
   useEffect(() => {
-    let cancelled = false;
+    const sequence = loadSequenceRef.current + 1;
+    loadSequenceRef.current = sequence;
     setLoadState({ status: "loading" });
     void api.loadWorkbenchData().then((loaded) => {
-      if (!cancelled) {
-        setLoadState({
-          status: loaded.zhixus.length === 0 ? "empty" : "ready",
-          data: loaded
-        });
+      if (loadSequenceRef.current !== sequence) {
+        return;
       }
+      setLoadState({
+        status: loaded.zhixus.length === 0 ? "empty" : "ready",
+        data: loaded
+      });
     }).catch((error) => {
-      if (!cancelled) {
-        if (error instanceof WorkbenchLoadError) {
-          setLoadState({
-            status: "diagnostic",
-            diagnostics: error.diagnostics,
-            source: error.source
-          });
-        } else {
-          setLoadState({
-            status: "error",
-            message: error instanceof Error ? error.message : "工作台加载失败"
-          });
-        }
+      if (loadSequenceRef.current !== sequence) {
+        return;
       }
+      setLoadState(loadStateFromError(error));
     });
-    return () => {
-      cancelled = true;
-    };
   }, [api]);
 
   return { loadState, reload, refresh };

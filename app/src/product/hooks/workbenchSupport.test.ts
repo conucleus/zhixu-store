@@ -108,7 +108,7 @@ describe("task evidence plan (schema-driven)", () => {
     });
     assert.equal(plan.mode, "spec");
     assert.deepEqual(plan.slots, [
-      { key: "report", label: "报告", inputKind: "file", accept: ["application/pdf"], required: true }
+      { key: "report", documentType: "report", label: "报告", inputKind: "file", accept: ["application/pdf"], required: true }
     ]);
   });
 
@@ -129,8 +129,26 @@ describe("task evidence plan (schema-driven)", () => {
     });
     assert.equal(plan.mode, "none");
     assert.deepEqual(plan.slots, [
-      { key: "resource-requirement:inspection_report", label: "第三方检验证明", inputKind: "file", accept: [], required: true }
+      { key: "resource-requirement:inspection_report", documentType: "document", label: "第三方检验证明", inputKind: "file", accept: [], required: true }
     ]);
+  });
+
+  it("uploads resource fallback slots with the resource's own documentType, not the slot key (aligned with uvp-order-app)", () => {
+    // documentType 参与服务端指纹：两端对同一资源任务必须送出同一
+    // documentType，槽位 key 只是前端归档键，不得进入上传载荷。
+    const plan = planTaskEvidence({
+      resourceRequirements: [
+        { resourceId: "inspection_report", label: "第三方检验证明", required: true, source: "resource_patch", resourceType: "document" },
+        { resourceId: "site_photo", label: "现场照片", required: true, source: "participant_input" }
+      ]
+    });
+    assert.deepEqual(
+      plan.slots.map((slot) => [slot.key, slot.documentType]),
+      [
+        ["resource-requirement:inspection_report", "document"],
+        ["resource-requirement:site_photo", "site_photo"]
+      ]
+    );
   });
 
   it("drops an invalid evidenceSpec entirely instead of rendering duplicate slots (aligned with uvp-order-app)", () => {

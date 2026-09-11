@@ -52,6 +52,8 @@ export function useTaskSubmissionFlow(input: {
   readonly evidenceProofsBySlot: EvidenceProofsBySlot;
   /** 上传后相关字段发生变更的槽位标签：存在 stale 槽位时禁止提交。 */
   readonly staleSlotLabels: readonly string[];
+  /** 已上传但未取到核验记录（proof 拉取失败）的槽位标签：禁止提交。 */
+  readonly unverifiedSlotLabels: readonly string[];
   readonly evidenceAction: ActionState;
   readonly submitMachine: SubmitMachineState;
   readonly disputeAction: ActionState;
@@ -90,6 +92,11 @@ export function useTaskSubmissionFlow(input: {
   // fail-closed：上传时把表单字段快照进指纹，之后任何相关字段变更都会让对应槽位过期。
   const staleSlotLabels = Object.keys(evidenceBySlot)
     .filter((key) => isEvidenceSlotStale(fieldSnapshotsBySlot[key], fieldValues))
+    .map((key) => evidencePlan.slots.find((slot) => slot.key === key)?.label ?? key);
+  // 已上传但没有核验记录（proof 拉取失败）的槽位：核验防线看不见它，
+  // 与 stale 一样禁锁提交，不得静默放行。
+  const unverifiedSlotLabels = Object.keys(evidenceBySlot)
+    .filter((key) => !proofsBySlot[key])
     .map((key) => evidencePlan.slots.find((slot) => slot.key === key)?.label ?? key);
 
   async function handleUploadEvidence(
@@ -139,10 +146,10 @@ export function useTaskSubmissionFlow(input: {
         orderId: activeTask.orderId,
         taskId: activeTask.taskId,
         stageIdentifier: activeTask.stageId,
-        documentType: slot.key,
+        documentType: slot.documentType,
         metadata: {
           businessLabel: slot.label,
-          documentType: slot.key,
+          documentType: slot.documentType,
           fields: metadataFields
         }
       });
@@ -152,17 +159,29 @@ export function useTaskSubmissionFlow(input: {
         return;
       }
       setEvidenceBySlot((current) => ({ ...current, [slot.key]: result.data }));
-      const proofResult = await api.getEvidenceProof(result.data.evidenceId);
+      // 快照与证据同进同退：指纹由上传时刻的字段参与生成，只落证据不落快照
+      // 会让该槽位绕过 stale 判定（无快照恒为不过期）。
+      setFieldSnapshotsBySlot((current) => ({
+        ...current,
+        [slot.key]: evidenceMetadataSignature(fieldValues)
+      }));
+      let proofResult: Awaited<ReturnType<typeof api.getEvidenceProof>>;
+      try {
+        proofResult = await api.getEvidenceProof(result.data.evidenceId);
+      } catch (proofError) {
+        if (taskScopeRef.current !== requestScopeKey) {
+          return;
+        }
+        // 核验记录拉取失败（含服务端拒绝给出核验结果的路径）时，槽位停在
+        // "已上传但未确认"：提交门槛按未确认禁锁，不得在无核验记录时放行。
+        setEvidenceAction({ phase: "error", message: readableError(proofError, "凭证核验状态获取失败，请重新上传该凭证") });
+        return;
+      }
       if (taskScopeRef.current !== requestScopeKey) {
         return;
       }
       // 证据核验态与上传归档统一按槽位 key 记录，渲染层按同一 key 读取。
       setProofsBySlot((current) => ({ ...current, [slot.key]: proofResult.data }));
-      // 记录上传时刻的字段快照：指纹由这些字段参与生成，后续字段变更据此判 stale。
-      setFieldSnapshotsBySlot((current) => ({
-        ...current,
-        [slot.key]: evidenceMetadataSignature(fieldValues)
-      }));
       setEvidenceAction({ phase: "success", message: "凭证已上传，指纹已生成", source: result.source });
       onMutationSuccess?.();
     } catch (error) {
@@ -233,6 +252,17 @@ export function useTaskSubmissionFlow(input: {
       setSubmitMachine({
         status: "failed",
         message: `凭证核验异常（内容与指纹不符或文件缺失），请重新上传：${verificationFailedLabels.join("、")}`
+      });
+      return;
+    }
+    // 已上传但无核验记录的槽位按"未确认"禁锁：重新上传可恢复核验链路。
+    const unverifiedLabels = Object.keys(evidenceBySlot)
+      .filter((key) => !proofsBySlot[key])
+      .map((key) => evidencePlan.slots.find((slot) => slot.key === key)?.label ?? key);
+    if (unverifiedLabels.length > 0) {
+      setSubmitMachine({
+        status: "failed",
+        message: `凭证核验状态未知（未取到核验记录），请重新上传：${unverifiedLabels.join("、")}`
       });
       return;
     }
@@ -387,6 +417,7 @@ export function useTaskSubmissionFlow(input: {
     evidenceBySlot,
     evidenceProofsBySlot: proofsBySlot,
     staleSlotLabels,
+    unverifiedSlotLabels,
     evidenceAction,
     submitMachine,
     disputeAction,
