@@ -1,7 +1,7 @@
 import { useEffect } from "react";
-import { ProductWorkbenchApp } from "./ProductWorkbenchApp";
-import { configuredStoreAccessLevel } from "./store/api";
-import { StoreApp } from "./store/StoreApp";
+import { ProductWorkbenchApp } from "../product/workbench/ProductWorkbenchApp";
+import { configuredStoreAccessLevel } from "../store/api";
+import { StoreApp } from "../store/StoreApp";
 
 type FrontendEntry = "participant" | "store";
 

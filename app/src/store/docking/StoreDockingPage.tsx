@@ -1,12 +1,12 @@
 import { AlertTriangle, GitBranch, Loader2, ShieldCheck } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { StoreZhixuConsoleDTO } from "@uvp-eth/product-dto";
-import { readableStoreError, type StoreApiClient } from "./api";
+import { readableStoreError, type StoreApiClient } from "../api";
 import type {
   StoreAccessState,
   StoreDockOrderMode,
   StoreDockingSessionDTO,
-} from "./types";
+} from "../types";
 
 type DockingState =
   | { readonly status: "idle" }

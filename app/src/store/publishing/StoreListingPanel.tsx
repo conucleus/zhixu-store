@@ -1,9 +1,9 @@
 import { ListChecks, Loader2, PackagePlus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { readableStoreError, type StoreApiClient } from "./api";
-import { listingStatusLabel } from "./StoreAnchorPanel";
-import type { StoreAccessState, StoreListingView } from "./types";
-import { shortValue } from "../shared/frontend";
+import { readableStoreError, type StoreApiClient } from "../api";
+import { listingStatusLabel } from "../StoreAnchorPanel";
+import type { StoreAccessState, StoreListingView } from "../types";
+import { shortValue } from "../../shared/frontend";
 
 type ListingsState =
   | { readonly status: "loading" }

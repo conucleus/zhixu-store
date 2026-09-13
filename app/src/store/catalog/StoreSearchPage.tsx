@@ -3,8 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type { SlotCapabilityPluginDTO, StoreProductSchemaDTO, StoreProductSchemaValidationDTO, StoreSearchType } from "@uvp-eth/product-dto";
 import type { StoreZhixuConsoleDTO } from "@uvp-eth/product-dto";
-import { readableStoreError, type StoreApiClient } from "./api";
-import { StoreListingPanel } from "./StoreListingPanel";
+import { readableStoreError, type StoreApiClient } from "../api";
+import { StoreListingPanel } from "../publishing/StoreListingPanel";
 import type {
   StoreAccessState,
   StoreApiResult,
@@ -16,8 +16,8 @@ import type {
   StoreZhixuDraftStatus,
   StoreZhixuDraftSourceKind,
   StoreZhixuSearchResultDTO
-} from "./types";
-import { isRecord, shortHash } from "../shared/frontend";
+} from "../types";
+import { isRecord, shortHash } from "../../shared/frontend";
 
 type ActionPhase = "idle" | "pending" | "success" | "error";
 

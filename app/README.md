@@ -19,6 +19,39 @@ Zhixu Store 是 UVP 的链下经营入口。它面向现实中的机构与人员
 - Store 对自己的供应商资料和推荐负责；推荐结果停留在 Store 数据域。
 - 交易和业务签名遵循对应链上合约的权限规则。
 
+## 目录结构
+
+`src/` 按"装配 / 运营侧 / 参与者侧 / 共享"组织（意见书 B3）：
+
+```text
+src/
+├── app/            # 装配与入口路由：App.tsx（/store 与 /app、/orders 分流）
+├── main.tsx        # Vite 入口（index.html 固定引用 /src/main.tsx）
+├── store/          # 运营侧（Store Console）
+│   ├── StoreApp.tsx            # 运营台壳：会话、导航与视图装配
+│   ├── api.ts / session.ts / types.ts / wallet.ts   # Store API、会话与类型
+│   ├── StoreAccountPage / StoreJoinPage / StoreJoinEntry / StoreAnchorPanel
+│   ├── catalog/    # 检索（StoreSearchPage）、目录与详情查看（StoreZhixuDetailPage）
+│   ├── authoring/  # 装修与任务定义编辑（StoreDecorationEditor）
+│   ├── publishing/ # listing 导入与发布面板（StoreListingPanel，只消费既有编译/API）
+│   ├── suppliers/  # 供应商资料（StoreSupplierPage）
+│   ├── docking/    # 试拼沙箱（StoreDockingPage）
+│   └── runtime/    # 运行态观察（StoreRuntimePage）
+├── product/        # 参与者侧（订单工作台）
+│   ├── api.ts / wallet.ts / WalletLoginPanel.tsx / demo/  # 参与者侧共享模块
+│   ├── workbench/  # 编排入口 ProductWorkbenchApp + 流程/状态（useOrderDraftFlow、
+│   │               # useOrderRegistrationFlow、useTaskSubmissionFlow、
+│   │               # useProductWorkbenchData、workbenchSupport/Types）与
+│   │               # 工作台壳/通用组件/秩序库视图
+│   ├── order/      # CreateOrderPage、OrderOverviewPage、draftStatusLabel
+│   ├── signing/    # ParticipantsPage（参与方确认与订单启动）
+│   ├── tasks/      # TaskPage、SubmitPage、DisputePage
+│   └── evidence/   # EvidenceUploadZone
+└── shared/         # 两面共用的纯前端工具（frontend.ts）
+```
+
+页面归属与职责的迁移对照见 git 历史 `refactor(govern)` 提交（意见书 B3 工作包）。
+
 ## 运行
 
 ```bash

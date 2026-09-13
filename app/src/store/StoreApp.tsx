@@ -9,12 +9,12 @@ import {
   storeStoreSessionToken,
 } from "./api";
 import { StoreAccountPage } from "./StoreAccountPage";
-import { StoreDockingPage } from "./StoreDockingPage";
+import { StoreDockingPage } from "./docking/StoreDockingPage";
 import { StoreJoinPage } from "./StoreJoinPage";
-import { StoreRuntimePage } from "./StoreRuntimePage";
-import { StoreSearchPage } from "./StoreSearchPage";
-import { StoreSupplierPage } from "./StoreSupplierPage";
-import { StoreZhixuDetailPage } from "./StoreZhixuDetailPage";
+import { StoreRuntimePage } from "./runtime/StoreRuntimePage";
+import { StoreSearchPage } from "./catalog/StoreSearchPage";
+import { StoreSupplierPage } from "./suppliers/StoreSupplierPage";
+import { StoreZhixuDetailPage } from "./catalog/StoreZhixuDetailPage";
 import { loginStoreSessionWithWallet } from "./session";
 import type { StoreApiClient } from "./api";
 import type { StoreApiSource, StoreSearchInput, StoreSessionDTO, StoreZhixuSearchResultDTO } from "./types";

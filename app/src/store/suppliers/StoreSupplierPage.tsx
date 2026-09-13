@@ -12,8 +12,8 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { readableStoreError, type StoreApiClient } from "./api";
-import type { StoreAccessState, StoreSupplierDTO } from "./types";
+import { readableStoreError, type StoreApiClient } from "../api";
+import type { StoreAccessState, StoreSupplierDTO } from "../types";
 
 type SupplierState =
   | { readonly status: "loading" }
