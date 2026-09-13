@@ -17,6 +17,7 @@ import {
 import { idleAction, type ActionState, type SubmitMachineState } from "./workbenchTypes";
 import {
   FRAMEWORK_STAGE_FIELD_KEY,
+  advanceScopeGeneration,
   canSubmitWorkbenchTask,
   delay,
   evidenceMetadataSignature,
@@ -24,11 +25,13 @@ import {
   missingTaskEvidenceSlotLabels,
   planTaskEvidence,
   readableError,
+  scopeGenerationValue,
   stateMachineSignExpectation,
   submissionPollOutcome,
   submissionTerminalMessage,
   taskSubmitIntent,
   validateEvidenceFileForSlot,
+  type ScopeGeneration,
   type TaskEvidenceFieldValues,
   type TaskEvidencePlan
 } from "./workbenchSupport";
@@ -55,6 +58,8 @@ export function useTaskSubmissionFlow(input: {
   /** 已上传但未取到核验记录（proof 拉取失败）的槽位标签：禁止提交。 */
   readonly unverifiedSlotLabels: readonly string[];
   readonly evidenceAction: ActionState;
+  /** 正在上传中的槽位 key：槽位级串行化守卫的渲染面（file input 禁用）。 */
+  readonly uploadingSlotKeys: readonly string[];
   readonly submitMachine: SubmitMachineState;
   readonly disputeAction: ActionState;
   readonly handleUploadEvidence: (slotKey: string, file: File) => Promise<void>;
@@ -70,25 +75,53 @@ export function useTaskSubmissionFlow(input: {
   const [proofsBySlot, setProofsBySlot] = useState<EvidenceProofsBySlot>({});
   const [fieldSnapshotsBySlot, setFieldSnapshotsBySlot] = useState<FieldSnapshotsBySlot>({});
   const [evidenceAction, setEvidenceAction] = useState<ActionState>(idleAction);
+  const [uploadingSlotKeys, setUploadingSlotKeys] = useState<readonly string[]>([]);
   const [submitMachine, setSubmitMachine] = useState<SubmitMachineState>({
     status: "idle",
     message: "等待上传凭证并确认提交"
   });
   const [disputeAction, setDisputeAction] = useState<ActionState>(idleAction);
   const submitInflightRef = useRef(false);
+  // 同槽上传串行化（uvp-order-app EvidencePanel 同款防护）：同槽位先选大
+  // 文件 A 再选小文件 B 时，B 先返回、A 后返回会覆盖槽位，最终提交的不是
+  // 参与者最后选择的文件。ref 是同步判定的真源（连续选择发生在重渲染前），
+  // state 只镜像给渲染层禁用 file input。
+  const uploadingSlotsRef = useRef<ReadonlySet<string>>(new Set());
+
+  function markSlotUploading(slotKey: string, uploading: boolean): void {
+    const next = new Set(uploadingSlotsRef.current);
+    if (uploading) {
+      next.add(slotKey);
+    } else {
+      next.delete(slotKey);
+    }
+    uploadingSlotsRef.current = next;
+    setUploadingSlotKeys([...next]);
+  }
+
   const taskScopeKey = activeTask
     ? `${activeTask.orderId}:${activeTask.taskId}:${activeTask.stageId}`
     : "none";
-  const taskScopeRef = useRef(taskScopeKey);
+  // 作用域键在 A→B→A 回切时会复用：按裸键比较的 stale 检查在回切后
+  // "键又对上了"，旧作用域的在途请求（上传/提交/轮询）续作通过检查，把旧
+  // 结果写回当前视图。代数单调递增且从不复用（useOrderDraftFlow /
+  // useOrderRegistrationFlow 同方案），作用域值 = 键+代数，回切得到新值。
+  const generationRef = useRef<ScopeGeneration<string | undefined>>({ key: taskScopeKey, generation: 1 });
+  generationRef.current = advanceScopeGeneration(generationRef.current, taskScopeKey);
+  const effectiveScopeKey = scopeGenerationValue(generationRef.current);
+  const taskScopeRef = useRef(effectiveScopeKey);
   useLayoutEffect(() => {
-    taskScopeRef.current = taskScopeKey;
+    taskScopeRef.current = effectiveScopeKey;
     setEvidenceBySlot({});
     setProofsBySlot({});
     setFieldSnapshotsBySlot({});
     setEvidenceAction(idleAction);
     setSubmitMachine({ status: "idle", message: "等待上传凭证并确认提交" });
     setDisputeAction(idleAction);
-  }, [taskScopeKey]);
+    // 作用域切换不这里清 uploadingSlotsRef：旧作用域的在途上传会在下一个
+    // 作用域检查点自行作废，其 finally 负责释放槽位；提前清掉会让新作用域
+    // 对同 key 槽位并发起传，随后旧请求的 finally 又误删新请求的占用标记。
+  }, [effectiveScopeKey]);
   // fail-closed：上传时把表单字段快照进指纹，之后任何相关字段变更都会让对应槽位过期。
   const staleSlotLabels = Object.keys(evidenceBySlot)
     .filter((key) => isEvidenceSlotStale(fieldSnapshotsBySlot[key], fieldValues))
@@ -103,10 +136,15 @@ export function useTaskSubmissionFlow(input: {
     slotKey: string,
     file: File
   ): Promise<void> {
-    const requestScopeKey = taskScopeKey;
     const slot = evidencePlan.slots.find((item) => item.key === slotKey);
     if (!activeTask || !slot) {
       setEvidenceAction({ phase: "error", message: "暂无可处理的待办" });
+      return;
+    }
+    // 槽位级串行化守卫：上传（含本地校验与核验拉取）进行中拒绝再选文件。
+    // 静默返回不覆盖第一次上传的 pending 提示（uvp-order-app 同款），
+    // 晚到的旧上传由此不再有机会覆盖参与者最后选择的文件。
+    if (uploadingSlotsRef.current.has(slotKey)) {
       return;
     }
     // 元数据会随上传进入指纹：必填的文本/日期字段缺失时在上传前拦截。
@@ -120,16 +158,18 @@ export function useTaskSubmissionFlow(input: {
       setEvidenceAction({ phase: "error", message: `请填写必填字段：${slotMissing.join("、")}` });
       return;
     }
-    const fileError = await validateEvidenceFileForSlot(file, slot);
-    if (taskScopeRef.current !== requestScopeKey) {
-      return;
-    }
-    if (fileError) {
-      setEvidenceAction({ phase: "error", message: fileError });
-      return;
-    }
-    setEvidenceAction({ phase: "pending", message: "正在上传凭证并生成指纹" });
+    markSlotUploading(slotKey, true);
+    const requestScopeKey = taskScopeRef.current;
     try {
+      const fileError = await validateEvidenceFileForSlot(file, slot);
+      if (taskScopeRef.current !== requestScopeKey) {
+        return;
+      }
+      if (fileError) {
+        setEvidenceAction({ phase: "error", message: fileError });
+        return;
+      }
+      setEvidenceAction({ phase: "pending", message: "正在上传凭证并生成指纹" });
       const metadataFields: Record<string, string> = {
         // 框架保留键带命名空间前缀，不与凝结核 spec 的任意 key 冲突。
         [FRAMEWORK_STAGE_FIELD_KEY]: activeTask.stageName
@@ -189,6 +229,8 @@ export function useTaskSubmissionFlow(input: {
         return;
       }
       setEvidenceAction({ phase: "error", message: readableError(error, "凭证上传失败") });
+    } finally {
+      markSlotUploading(slotKey, false);
     }
   }
 
@@ -219,7 +261,7 @@ export function useTaskSubmissionFlow(input: {
       });
       return;
     }
-    const requestScopeKey = taskScopeKey;
+    const requestScopeKey = taskScopeRef.current;
     const uploadedEntries = Object.entries(evidenceBySlot);
     // 提交门槛与确认页一致：必填槽位全部满足即可提交；
     // 任务没有文件要求时允许纯字段确认提交（evidenceIds 可为空），不再硬性要求至少一份上传。
@@ -419,6 +461,7 @@ export function useTaskSubmissionFlow(input: {
     staleSlotLabels,
     unverifiedSlotLabels,
     evidenceAction,
+    uploadingSlotKeys,
     submitMachine,
     disputeAction,
     handleUploadEvidence,

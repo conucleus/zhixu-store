@@ -52,7 +52,7 @@ export function delay(ms: number): Promise<void> {
 
 /**
  * 任务证据计划的输入：凝结核随 zhixu 配置携带的结构化 evidenceSpec，
- * 以及任务投影下发的结构化资源要求（spec 缺失/非法时的证据槽位来源）。
+ * 以及任务投影下发的结构化资源要求（与 spec 合并进同一待办视图）。
  */
 export interface TaskEvidencePlanInput {
   readonly evidenceSpec?: readonly TaskEvidenceSpecDTO[] | undefined;
@@ -84,18 +84,20 @@ export interface TaskEvidencePlan {
 }
 
 /**
- * 把任务的证据要求解析为可渲染槽位。spec 缺失或非法时保留服务端结构化
- * 资源要求槽位（metadata 型除外）——与 uvp-order-app planTaskEvidence 同口径。
+ * 把任务的证据要求解析为可渲染槽位（文档《证据与存证规则》§二.2 的合并
+ * 去重视图）：结构化 spec 与服务端资源要求并存时两者都进上传槽位；
+ * 同一 documentType 只保留一个槽位（spec 声明优先），重复槽位会强迫
+ * 参与者对同一份凭证上传两次。spec 缺失或非法时保留服务端结构化资源
+ * 要求槽位（metadata 型除外）——该降级路径与 uvp-order-app 同口径。
  *
  * 框架红线：商店不含业务标签匹配表。spec 与资源要求都不存在时没有证据
  * 槽位（纯字段确认或按业务约定线下提交），不臆造通用槽位，也不在上传前拒绝。
  */
 export function planTaskEvidence(task: TaskEvidencePlanInput): TaskEvidencePlan {
   const spec = task.evidenceSpec;
-  if (spec && spec.length > 0 && validateTaskEvidenceSpec(spec).length === 0) {
-    return {
-      mode: "spec",
-      slots: spec.map((entry): TaskEvidenceSlot => ({
+  const specSlots: readonly TaskEvidenceSlot[] =
+    spec && spec.length > 0 && validateTaskEvidenceSpec(spec).length === 0
+      ? spec.map((entry): TaskEvidenceSlot => ({
         key: entry.key,
         documentType: entry.key,
         label: entry.label,
@@ -104,10 +106,13 @@ export function planTaskEvidence(task: TaskEvidencePlanInput): TaskEvidencePlan 
         required: entry.required ?? true,
         ...(entry.description ? { description: entry.description } : {})
       }))
-    };
-  }
+    : [];
+  // 去重键是 documentType（进入服务端指纹的证据类型），不是前端槽位 key：
+  // spec 的 documentType 是 spec key，资源槽位的是 resourceType ?? resourceId。
+  const specDocumentTypes = new Set(specSlots.map((slot) => slot.documentType));
   const resourceSlots = (task.resourceRequirements ?? [])
     .filter((resource) => (resource.resourceType ?? resource.resourceId) !== "metadata")
+    .filter((resource) => !specDocumentTypes.has(resource.resourceType ?? resource.resourceId))
     .map((resource): TaskEvidenceSlot => ({
       key: `resource-requirement:${resource.resourceId}`,
       documentType: resource.resourceType ?? resource.resourceId,
@@ -116,7 +121,10 @@ export function planTaskEvidence(task: TaskEvidencePlanInput): TaskEvidencePlan 
       accept: [],
       required: resource.required
     }));
-  return { mode: "none", slots: resourceSlots };
+  return {
+    mode: specSlots.length > 0 ? "spec" : "none",
+    slots: [...specSlots, ...resourceSlots]
+  };
 }
 
 /** 与后端 Evidence Service 一致的限制：解码后最大 10MB（HTTP body 上限 16MB）。 */
@@ -383,18 +391,31 @@ export function resolveWorkbenchTask(
 }
 
 /**
+ * 邀请链接的 uvp-order-app 基地址：只认部署配置注入（VITE_UVP_ORDER_APP_URL）。
+ * ?invite=&inviteToken= 的消费逻辑只存在于 uvp-order-app，本仓任何页面都不读
+ * 这组参数——缺配置时回落本站 origin 只会产出打不开的死链，还把一次性令牌
+ * 泄露给无关域名，因此 fail-closed 显式抛错（stateMachineSignExpectation 同范式）。
+ */
+export function resolveOrderAppInviteBaseUrl(baseUrl?: string): string {
+  const origin = baseUrl?.trim() ||
+    (import.meta.env?.VITE_UVP_ORDER_APP_URL as string | undefined)?.trim();
+  if (!origin) {
+    throw new Error("邀请链接基地址未配置（构建期环境变量 VITE_UVP_ORDER_APP_URL，指向 uvp-order-app 部署地址），已拒绝生成邀请链接");
+  }
+  return origin;
+}
+
+/**
  * 邀请链接（发送给受邀参与方）：一次性 token 由服务端在创建响应中下发一次，
  * 链接必须带 ?invite=&inviteToken=（uvp-order-app 入口格式，accept/reject/
- * preview 都按 token 哈希比对）。基地址取部署配置注入，缺省同源部署。
+ * preview 都按 token 哈希比对）。基地址缺配置即抛错，不生成看似可用的死链。
  */
 export function inviteLinkForInvite(
   inviteId: string,
   inviteToken: string,
   baseUrl?: string
 ): string {
-  const origin = baseUrl?.trim() ||
-    (import.meta.env?.VITE_UVP_ORDER_APP_URL as string | undefined)?.trim() ||
-    (typeof window === "undefined" ? "" : window.location.origin);
+  const origin = resolveOrderAppInviteBaseUrl(baseUrl);
   const params = new URLSearchParams({ invite: inviteId, inviteToken });
   return `${origin.replace(/\/+$/u, "")}/?${params.toString()}`;
 }

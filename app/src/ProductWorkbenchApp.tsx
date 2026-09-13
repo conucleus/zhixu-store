@@ -76,6 +76,7 @@ import {
   emptyTaskEvidenceFieldValues,
   inviteLinkForInvite,
   missingTaskEvidenceSlotLabels,
+  resolveOrderAppInviteBaseUrl,
   resolveWorkbenchTask,
   taskSubmitActionLabel,
   type TaskEvidenceFieldValues,
@@ -92,6 +93,9 @@ export function ProductWorkbenchApp() {
   const [proofOpen, setProofOpen] = useState(false);
   // 每张待办卡片携带自己的 taskId：这里记录选中的任务，未选中时回退到投影的 activeTask。
   const [selectedTaskId, setSelectedTaskId] = useState<string | undefined>(undefined);
+  // 目录里多个秩序时记录选中的秩序：未选中时回退到投影的 activeTask。
+  // 参与者面不再只渲染第一条秩序（RC-H：多秩序目录只有第一条可达）。
+  const [selectedZhixuId, setSelectedZhixuId] = useState<string | undefined>(undefined);
   // 订单信息与待办凭证表单状态提升到本组件：视图切换会卸载页面组件，
   // 未保存的用户输入不能因为切换视图被静默清空。
   const [draftFormValues, setDraftFormValues] = useState<OrderDraftFormValues>(emptyOrderDraftFormValues);
@@ -117,7 +121,7 @@ export function ProductWorkbenchApp() {
   }, [view]);
 
   const data = loadState.status === "ready" || loadState.status === "empty" ? loadState.data : undefined;
-  const selectedZhixu = data?.zhixu;
+  const selectedZhixu = data?.zhixus.find((zhixu) => zhixu.zhixuId === selectedZhixuId) ?? data?.zhixu;
   const selectedOrder = data?.order;
   const activeTask = resolveWorkbenchTask(data?.tasks ?? [], selectedTaskId, data?.activeTask);
   const taskScopeKey = activeTask?.taskId ?? "none";
@@ -194,6 +198,7 @@ export function ProductWorkbenchApp() {
     staleSlotLabels,
     unverifiedSlotLabels,
     evidenceAction,
+    uploadingSlotKeys,
     submitMachine,
     disputeAction,
     handleUploadEvidence,
@@ -206,6 +211,14 @@ export function ProductWorkbenchApp() {
       setAwaitingOrderSync(false);
     }
   }, [awaitingOrderSync, data]);
+  // 新订单投影滞后时页面可能仍在展示旧订单：旧订单本身不是"同步中"，
+  // 两个状态必须区分开——"同步中"只描述投影追赶，等待新订单落地用独立提示。
+  const awaitingNewOrderProjection = Boolean(
+    awaitingOrderSync &&
+    awaitedOrderIdRef.current &&
+    selectedOrder &&
+    selectedOrder.orderId !== awaitedOrderIdRef.current
+  );
   const firstEvidence = Object.values(evidenceBySlot)[0];
   // 提交门槛：必填证据槽位全部满足（文件已上传或该任务没有文件要求）即可提交；
   // 纯 text/date 或无槽位任务允许零上传的纯字段确认提交。
@@ -400,17 +413,17 @@ export function ProductWorkbenchApp() {
       <main className="product-main">
         <RuntimeBanner syncing={data.syncState === "syncing"} degradedCount={data.diagnostics.length} />
         {loadState.status === "empty" ? <EmptyCatalogPage /> : null}
-        {loadState.status === "ready" && view === "app" ? <ParticipantAppPage data={data} onCatalog={() => setView("home")} onViewDetail={() => setView("zhixu")} onCreate={() => setView("create")} onOrder={() => setView("order")} onTask={(taskId) => openTask(taskId)} /> : null}
-        {loadState.status === "ready" && view === "home" && selectedZhixu ? <CatalogPage zhixu={selectedZhixu} order={selectedOrder} task={activeTask} onViewDetail={() => setView("zhixu")} onCreate={() => setView("create")} onOrder={() => setView("order")} onTask={(taskId) => openTask(taskId)} /> : null}
+        {loadState.status === "ready" && view === "app" ? <ParticipantAppPage data={data} selectedZhixuId={selectedZhixu?.zhixuId} onSelectZhixu={setSelectedZhixuId} onCatalog={() => setView("home")} onViewDetail={() => setView("zhixu")} onCreate={() => setView("create")} onOrder={() => setView("order")} onTask={(taskId) => openTask(taskId)} /> : null}
+        {loadState.status === "ready" && view === "home" && selectedZhixu ? <CatalogPage zhixu={selectedZhixu} zhixus={data.zhixus} onSelectZhixu={setSelectedZhixuId} order={selectedOrder} task={activeTask} onViewDetail={() => setView("zhixu")} onCreate={() => setView("create")} onOrder={() => setView("order")} onTask={(taskId) => openTask(taskId)} /> : null}
         {loadState.status === "ready" && view === "zhixu" && selectedZhixu ? <ZhixuDetailPage zhixu={selectedZhixu} onBack={() => setView("home")} onCreate={() => setView("create")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : null}
         {loadState.status === "ready" && view === "create" && selectedZhixu ? <CreateOrderPage zhixu={selectedZhixu} draft={draft} createAction={draftAction} saveAction={saveDraftAction} values={draftFormValues} onValuesChange={(patch) => setDraftFormValues((current) => ({ ...current, ...patch }))} onBack={() => setView("zhixu")} onCreate={(values) => void handleCreateDraft(values)} onSave={(values) => void handleSaveDraft(values)} onNext={handleNextParticipants} /> : null}
         {loadState.status === "ready" && view === "participants" ? <ParticipantsPage order={selectedOrder} draft={draft} draftParticipants={draftParticipants} draftParticipantsStatus={draftFlow.draftParticipantsStatus} draftParticipantsError={draftFlow.draftParticipantsError} inviteActions={inviteActions} registerAction={registerDraftAction} onBack={() => setView("create")} onInvite={handleSendInvite} onRegister={handleRegisterDraft} onOrder={() => setView("order")} onReloadParticipants={() => void reloadParticipants()} /> : null}
-        {loadState.status === "ready" && view === "order" ? selectedOrder ? <OrderOverviewPage order={selectedOrder} syncing={data.syncState === "syncing" || awaitingOrderSync} onBack={() => setView("home")} onTask={() => setView("task")} onDispute={() => setView("dispute")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : awaitingOrderSync ? (
+        {loadState.status === "ready" && view === "order" ? selectedOrder ? <OrderOverviewPage order={selectedOrder} syncing={data.syncState === "syncing"} awaitingNewOrderProjection={awaitingNewOrderProjection} onBack={() => setView("home")} onTask={() => setView("task")} onDispute={() => setView("dispute")} proofOpen={proofOpen} setProofOpen={setProofOpen} /> : awaitingOrderSync ? (
           <section className="page-shell">
             <StatePanel icon={<RefreshCw className="spin" />} title="订单状态同步中" desc="订单已启动，正在等待链上投影同步；请勿重复启动，稍后刷新即可查看订单总览。" tone="info" />
           </section>
         ) : <EmptyState title="暂无进行中订单" desc="创建并启动订单后，这里会展示订单总览、当前待办和最近事件。" /> : null}
-        {loadState.status === "ready" && view === "task" ? activeTask ? <TaskPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} evidenceProofsBySlot={evidenceProofsBySlot} uploadAction={evidenceAction} canConfirm={canConfirmSubmit} missingEvidenceLabels={missingEvidenceSlotLabels} staleSlotLabels={staleSlotLabels} unverifiedEvidenceLabels={unverifiedSlotLabels} verificationFailedLabels={verificationFailedLabels} fieldValues={taskEvidenceFields} onFieldValuesChange={(patch) => setTaskEvidenceFields((current) => ({ ...current, ...patch }))} onBack={() => setView("order")} onUpload={(slotKey, file) => void handleUploadEvidence(slotKey, file)} onSubmit={() => setView("submit")} onDispute={() => setView("dispute")} /> : <EmptyState title="暂无待办" desc="当前没有需要你处理的任务。" /> : null}
+        {loadState.status === "ready" && view === "task" ? activeTask ? <TaskPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} evidenceProofsBySlot={evidenceProofsBySlot} uploadAction={evidenceAction} uploadingSlotKeys={uploadingSlotKeys} canConfirm={canConfirmSubmit} missingEvidenceLabels={missingEvidenceSlotLabels} staleSlotLabels={staleSlotLabels} unverifiedEvidenceLabels={unverifiedSlotLabels} verificationFailedLabels={verificationFailedLabels} fieldValues={taskEvidenceFields} onFieldValuesChange={(patch) => setTaskEvidenceFields((current) => ({ ...current, ...patch }))} onBack={() => setView("order")} onUpload={(slotKey, file) => void handleUploadEvidence(slotKey, file)} onSubmit={() => setView("submit")} onDispute={() => setView("dispute")} /> : <EmptyState title="暂无待办" desc="当前没有需要你处理的任务。" /> : null}
         {loadState.status === "ready" && view === "submit" ? activeTask ? <SubmitPage task={activeTask} evidencePlan={evidencePlan} evidenceBySlot={evidenceBySlot} submitMachine={submitMachine} canSubmit={canConfirmSubmit} staleSlotLabels={staleSlotLabels} unverifiedEvidenceLabels={unverifiedSlotLabels} verificationFailedLabels={verificationFailedLabels} onBack={() => setView("task")} onSubmit={() => void handleConfirmSubmit()} onOrder={() => setView("order")} /> : <EmptyState title="暂无可提交的待办" desc="待办完成凭证上传后，可在这里确认提交。" /> : null}
         {loadState.status === "ready" && view === "dispute" ? activeTask ? <DisputePage task={activeTask} action={disputeAction} onBack={() => setView("order")} onSave={handleDisputeSave} /> : <EmptyState title="暂无可争议事项" desc="订单出现可处理待办后，可以补充争议材料。" /> : null}
       </main>
@@ -472,6 +485,8 @@ function TopNav({
 
 function ParticipantAppPage({
   data,
+  selectedZhixuId,
+  onSelectZhixu,
   onCatalog,
   onViewDetail,
   onCreate,
@@ -479,6 +494,9 @@ function ParticipantAppPage({
   onTask
 }: {
   data: ProductWorkbenchData;
+  /** 当前选中的秩序（多秩序目录可切换）；未选中时回退投影的 activeTask。 */
+  selectedZhixuId?: string | undefined;
+  onSelectZhixu: (zhixuId: string) => void;
   onCatalog: () => void;
   onViewDetail: () => void;
   onCreate: () => void;
@@ -490,7 +508,7 @@ function ParticipantAppPage({
   // submitted 是"等待链上确认"的中间态，与 done 并列"最近完成"会提前宣布成功。
   const completedTasks = data.tasks.filter((task) => task.status === "done");
   const primaryTask = openTasks[0] ?? data.activeTask;
-  const zhixu = data.zhixu;
+  const zhixu = data.zhixus.find((item) => item.zhixuId === selectedZhixuId) ?? data.zhixu;
   const canCreate = zhixu ? canCreateProductOrder(zhixu) : false;
 
   return (
@@ -566,6 +584,7 @@ function ParticipantAppPage({
 
         <aside className="right-stack">
           <SidePanel title="推荐秩序">
+            <ZhixuSwitcher zhixus={data.zhixus} selectedZhixuId={zhixu?.zhixuId} onSelect={onSelectZhixu} />
             {zhixu ? (
               <div className="quick-order-card">
                 <strong>{zhixu.title}</strong>
@@ -588,6 +607,8 @@ function ParticipantAppPage({
 
 function CatalogPage({
   zhixu,
+  zhixus,
+  onSelectZhixu,
   order,
   task,
   onViewDetail,
@@ -596,6 +617,9 @@ function CatalogPage({
   onTask
 }: {
   zhixu: ZhixuDetailDTO;
+  /** 目录内全部可选秩序：多条时渲染切换入口，不再只渲染第一条。 */
+  zhixus: readonly ZhixuDetailDTO[];
+  onSelectZhixu: (zhixuId: string) => void;
   order?: ProductOrderDTO | undefined;
   task?: ProductTaskDTO | undefined;
   onViewDetail: () => void;
@@ -647,6 +671,7 @@ function CatalogPage({
               </div>
               <StatusBadge tone="success">{zhixu.reviewLabel}</StatusBadge>
             </div>
+            <ZhixuSwitcher zhixus={zhixus} selectedZhixuId={zhixu.zhixuId} onSelect={onSelectZhixu} />
             <article className="catalog-card">
               <div className="catalog-card-main">
                 <h3>{zhixu.title}</h3>
@@ -815,7 +840,9 @@ function CreateOrderPage({
     <section className="page-shell" data-testid="create-order-page">
       <BackLine onClick={onBack}>返回秩序详情</BackLine>
       <h1>创建订单</h1>
-      <StepBar current={2} steps={["确认秩序", "订单信息", "参与方", "订单条件", "预览并发起"]} />
+      {/* 步骤条只声明实际存在的页面（秩序详情→订单信息→参与方→订单启动）：
+          此前的"订单条件/预览并发起"页并不存在，宣告 5 步只会误导参与者。 */}
+      <StepBar current={2} steps={["确认秩序", "订单信息", "参与方", "订单启动"]} />
       {!canCreate ? <StatePanel icon={<AlertTriangle />} title="该秩序当前不可创建新订单" desc="请使用已审核且已发布的秩序。" tone="error" /> : null}
       <div className="content-layout">
         <Panel>
@@ -895,6 +922,18 @@ function ParticipantsPage({
   const requiredReady = draftParticipantsStatus === "ready" &&
     requiredParticipants.length > 0 &&
     requiredParticipants.every((item) => item.status === "accepted");
+  // 邀请链接基地址是配置级判定（所有行共用）：缺 VITE_UVP_ORDER_APP_URL 时
+  // fail-closed 不生成死链，改为显式提示（不阻断发邀请本身）。
+  let inviteLinkBaseError: string | undefined;
+  try {
+    resolveOrderAppInviteBaseUrl();
+  } catch (error) {
+    inviteLinkBaseError = error instanceof Error ? error.message : "邀请链接基地址未配置";
+  }
+  const hasIssuedInvites = draftParticipants.some((item) => {
+    const action = inviteActions[item.participantId];
+    return Boolean(action?.invite && action.inviteToken);
+  });
   return (
     <section className="page-shell">
       <BackLine onClick={onBack}>返回订单信息</BackLine>
@@ -943,7 +982,8 @@ function ParticipantsPage({
               const actionState = action ?? idleAction;
               // 一次性令牌由服务端在创建响应下发：没有 token 的邀请链接在
               // 对端 accept/reject（token 哈希比对）处必然 403，不成链。
-              const inviteLink = action?.invite && action.inviteToken
+              // 基地址缺配置时同样不产出链接（死链外泄一次性令牌）。
+              const inviteLink = !inviteLinkBaseError && action?.invite && action.inviteToken
                 ? inviteLinkForInvite(action.invite.inviteId, action.inviteToken)
                 : undefined;
               return (
@@ -965,12 +1005,23 @@ function ParticipantsPage({
                   </button>
                   {inviteLink
                     ? <button className="light-button" onClick={() => void navigator.clipboard?.writeText(inviteLink)}><Copy /> 复制链接</button>
-                    : <button className="light-button" onClick={() => onInvite(item)} disabled={!item.contact.trim()}>替换</button>}
+                    : action?.invite && action.inviteToken
+                      ? <button className="light-button" disabled title={inviteLinkBaseError}><Copy /> 复制链接（未配置）</button>
+                      : <button className="light-button" onClick={() => onInvite(item)} disabled={!item.contact.trim()}>替换</button>}
                 </div>
                 <ActionNotice state={actionState} compact />
               </div>
             );})}
           </div>
+          {inviteLinkBaseError && hasIssuedInvites ? (
+            <div className="warning-box" role="alert" data-testid="invite-link-config-error">
+              <AlertTriangle />
+              <div>
+                <strong>邀请链接不可用：未配置 uvp-order-app 部署地址</strong>
+                <p>{inviteLinkBaseError}。一次性令牌已由服务端签发但无法拼出入站链接；补配该变量并重新构建后，重新发送邀请即可获得可复制链接。</p>
+              </div>
+            </div>
+          ) : null}
           <button className={requiredReady ? "primary-button block" : "disabled-button block"} data-testid="register-order-button" onClick={requiredReady ? onRegister : undefined} disabled={!requiredReady || registerAction.phase === "pending"}>
             {registerAction.phase === "pending" ? <Loader2 className="spin" /> : <LockKeyhole />} 全部关键方确认后启动订单
           </button>
@@ -1006,6 +1057,7 @@ function ParticipantsPage({
 function OrderOverviewPage({
   order,
   syncing,
+  awaitingNewOrderProjection,
   onBack,
   onTask,
   onDispute,
@@ -1014,6 +1066,8 @@ function OrderOverviewPage({
 }: {
   order: ProductOrderDTO;
   syncing: boolean;
+  /** 新订单已启动但投影未落地：当前页面展示的是旧订单，需明确区分两种状态。 */
+  awaitingNewOrderProjection: boolean;
   onBack: () => void;
   onTask: () => void;
   onDispute: () => void;
@@ -1027,6 +1081,15 @@ function OrderOverviewPage({
         <h1>{order.title}</h1>
         <StatusBadge tone={syncing ? "info" : "success"}>{syncing ? "同步中" : order.statusLabel}</StatusBadge>
       </div>
+      {awaitingNewOrderProjection ? (
+        <div className="warning-box" data-testid="order-awaiting-new-order" role="alert">
+          <AlertTriangle />
+          <div>
+            <strong>新订单已启动，正在等待链上投影落地</strong>
+            <p>新订单的总览尚未就绪；下方内容是之前的订单「{order.title}」，不代表新订单的状态。请勿重复启动，稍后刷新即可查看新订单。</p>
+          </div>
+        </div>
+      ) : null}
       {syncing ? <StatePanel icon={<RefreshCw className="spin" />} title="订单状态同步中" desc="提交已发出，订单页正在等待后端投影更新。" tone="info" /> : null}
       <div className="order-kpis">
         <Kpi label="总金额" value={order.totalAmount.display} />
@@ -1083,6 +1146,7 @@ function TaskPage({
   evidenceBySlot,
   evidenceProofsBySlot,
   uploadAction,
+  uploadingSlotKeys,
   canConfirm,
   missingEvidenceLabels,
   staleSlotLabels,
@@ -1100,6 +1164,7 @@ function TaskPage({
   evidenceBySlot: Readonly<Record<string, EvidenceObjectDTO>>;
   evidenceProofsBySlot: Readonly<Record<string, EvidenceProofDTO>>;
   uploadAction: ActionState;
+  uploadingSlotKeys: readonly string[];
   canConfirm: boolean;
   missingEvidenceLabels: readonly string[];
   staleSlotLabels: readonly string[];
@@ -1146,7 +1211,7 @@ function TaskPage({
           <h2>上传阶段凭证</h2>
           <p>本待办需要的凭证：{declaredEvidenceLabels.length > 0 ? declaredEvidenceLabels.join("、") : "按业务约定提交凭证"}。请按以下槽位上传文件并填写信息。</p>
           {fileSlots.length > 0 ? fileSlots.map((slot) => (
-            <EvidenceUploadZone key={slot.key} slot={slot} uploaded={evidenceBySlot[slot.key]} proof={evidenceProofsBySlot[slot.key]} onFileSelected={(file) => onUpload(slot.key, file)} />
+            <EvidenceUploadZone key={slot.key} slot={slot} uploaded={evidenceBySlot[slot.key]} proof={evidenceProofsBySlot[slot.key]} uploading={uploadingSlotKeys.includes(slot.key)} onFileSelected={(file) => onUpload(slot.key, file)} />
           )) : <InlineEmpty text="本待办无需上传文件凭证" />}
           {staleSlotLabels.length > 0 ? (
             <div className="warning-box" data-testid="task-evidence-stale-warning">
@@ -1211,11 +1276,13 @@ function EvidenceUploadZone({
   slot,
   uploaded,
   proof,
+  uploading,
   onFileSelected
 }: {
   slot: TaskEvidenceSlot;
   uploaded?: EvidenceObjectDTO | undefined;
   proof?: EvidenceProofDTO | undefined;
+  uploading: boolean;
   onFileSelected: (file: File) => void;
 }) {
   const acceptValue = acceptAttribute(slot.accept);
@@ -1226,11 +1293,15 @@ function EvidenceUploadZone({
     <div data-testid={`task-evidence-slot-${slot.key}`}>
       {slot.description ? <p className="page-subtitle">{slot.description}</p> : null}
       <label
-        className="upload-zone"
+        className={`upload-zone ${uploading ? "is-uploading" : ""}`}
         onDragOver={(event) => event.preventDefault()}
         onDrop={(event) => {
-          // 拖拽与点击选择走同一条上传校验路径。
+          // 拖拽与点击选择走同一条上传校验路径；槽位级串行化守卫在上传
+          // 进行中一并拦住拖拽换文件（晚到的旧上传不得覆盖新选择，反之亦然）。
           event.preventDefault();
+          if (uploading) {
+            return;
+          }
           const file = event.dataTransfer.files?.[0];
           if (file) {
             onFileSelected(file);
@@ -1239,11 +1310,12 @@ function EvidenceUploadZone({
       >
         <UploadCloud />
         <strong>{slot.label}</strong>
-        <span>将文件拖拽到此处，或点击选择文件；{acceptHint(slot.accept)}，单个文件不超过 10MB</span>
+        <span>{uploading ? "正在上传当前文件，完成后才能更换文件" : `将文件拖拽到此处，或点击选择文件；${acceptHint(slot.accept)}，单个文件不超过 10MB`}</span>
         <input
           className="sr-only"
           type="file"
           data-testid={`task-file-input-${slot.key}`}
+          disabled={uploading}
           {...(acceptValue ? { accept: acceptValue } : {})}
           onChange={(event) => {
             const file = event.currentTarget.files?.[0];
@@ -1505,6 +1577,37 @@ function RuntimeBanner({ syncing, degradedCount = 0 }: { syncing: boolean; degra
 
 function EmptyCatalogPage() {
   return <EmptyState title="暂无可创建订单的秩序" desc="当前没有已审核且可用于创建新订单的秩序。" />;
+}
+
+/**
+ * 目录多秩序切换入口：目录里只有一条秩序时没有切换语义（不渲染）；
+ * 多条时如实列出全部可选项，不让"第一条"静默充当唯一选择。
+ */
+function ZhixuSwitcher({
+  zhixus,
+  selectedZhixuId,
+  onSelect
+}: {
+  zhixus: readonly ZhixuDetailDTO[];
+  selectedZhixuId?: string | undefined;
+  onSelect: (zhixuId: string) => void;
+}) {
+  if (zhixus.length <= 1) {
+    return null;
+  }
+  return (
+    <div className="catalog-filter-row" data-testid="zhixu-switcher">
+      {zhixus.map((zhixu) => (
+        <button
+          className={`filter-chip ${zhixu.zhixuId === selectedZhixuId ? "is-active" : ""}`}
+          key={zhixu.zhixuId}
+          onClick={() => onSelect(zhixu.zhixuId)}
+        >
+          {zhixu.title}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function EmptyState({ title, desc }: { title: string; desc: string }) {

@@ -30,8 +30,10 @@ pnpm run dev
 主要环境变量：
 
 - `VITE_UVP_CHAIN_SERVICES_URL`: Chain Services 地址
+- `VITE_UVP_ORDER_APP_URL`: uvp-order-app 部署地址。参与方邀请链接（`?invite=&inviteToken=`）的消费逻辑只在 uvp-order-app，本站不读这组参数；缺配置时邀请链接 fail-closed 拒绝生成（不产出死链、不外泄一次性令牌），邀请创建本身不受影响。
+- `VITE_UVP_STATE_MACHINE_ADDRESS`: 状态机部署地址，签名域交叉核对的预期值；缺配置时拒绝签名。
 
-前端只读取这些当前变量名。身份只认登录会话与环境变量，仓库不含 mock/demo 运行路径。
+完整清单与缺省行为见 `.env.example`。前端只读取这些当前变量名。身份只认登录会话与环境变量，仓库不含 mock/demo 运行路径。
 
 ## 验证
 

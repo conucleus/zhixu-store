@@ -1,5 +1,5 @@
 import { AlertTriangle, CheckCircle2, ClipboardCheck, FileCheck2, GitBranch, Layers3, Loader2, RefreshCw, Save, Search, ShieldCheck, SlidersHorizontal, Truck, UploadCloud, Users, Wand2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type { SlotCapabilityPluginDTO, StoreProductSchemaDTO, StoreProductSchemaValidationDTO, StoreSearchType } from "@uvp-eth/product-dto";
 import type { StoreZhixuConsoleDTO } from "@uvp-eth/product-dto";
@@ -44,6 +44,9 @@ const initialImportDraftForm: ImportDraftFormState = {
   content: ""
 };
 
+/** 发布流程的会话级指针：只记"哪个 draftId 在审"，草稿本体一律经 API 重取。 */
+const REVIEW_DRAFT_ID_STORAGE_KEY = "uvp-store-review-draft-id";
+
 export function StoreSearchPage({
   access,
   api,
@@ -57,6 +60,7 @@ export function StoreSearchPage({
   onUpdateDraftProductSchema,
   onValidateDraftProductSchema,
   onSubmitDraftReview,
+  onRestoreDraft,
   onRefreshCatalog
 }: {
   readonly access: StoreAccessState;
@@ -74,9 +78,11 @@ export function StoreSearchPage({
   ) => Promise<StoreApiResult<StoreProductSchemaUpdateResultDTO>>;
   readonly onValidateDraftProductSchema: (
     draftId: string,
-    productSchema?: StoreProductSchemaDTO
+    productSchema?: StoreProductSchemaDTO | undefined
   ) => Promise<StoreApiResult<{ readonly validation: StoreProductSchemaValidationDTO }>>;
   readonly onSubmitDraftReview: (draftId: string) => Promise<StoreApiResult<StoreZhixuDraftReviewResultDTO>>;
+  /** 刷新后按 draftId 恢复在审草稿（getZhixuDraft）；草稿本体以服务端为准。 */
+  readonly onRestoreDraft?: ((draftId: string) => Promise<StoreApiResult<{ readonly draft: StoreZhixuDraftDTO }>>) | undefined;
   readonly onRefreshCatalog?: (() => Promise<StoreZhixuSearchResultDTO>) | undefined;
 }) {
   const [keyword, setKeyword] = useState("");
@@ -95,6 +101,59 @@ export function StoreSearchPage({
   useEffect(() => {
     setPluginConfirmations((current) => syncPluginConfirmations(productSchema, current));
   }, [productSchema]);
+
+  // 发布流程状态按 draftId 持久化：本地只存"哪个草稿在审"，草稿本体经
+  // getZhixuDraft 重取（Store 服务端是事实来源，本地指针不冒充草稿内容）。
+  // 只写不清：草稿失效（删除/权限变化）由恢复失败路径清除指针。
+  useEffect(() => {
+    if (!reviewDraft) {
+      return;
+    }
+    try {
+      window.sessionStorage.setItem(REVIEW_DRAFT_ID_STORAGE_KEY, reviewDraft.draftId);
+    } catch {
+      // sessionStorage 不可用时退化为本次会话的内存流程态。
+    }
+  }, [reviewDraft]);
+
+  // 刷新后恢复在审草稿：待确认清单（含服务端已判 explicit 的预确认）随
+  // schema 一起回来；恢复失败（草稿已不存在/不可见）清除指针，不装作恢复成功。
+  const onRestoreDraftRef = useRef(onRestoreDraft);
+  onRestoreDraftRef.current = onRestoreDraft;
+  useEffect(() => {
+    let storedDraftId: string | undefined;
+    try {
+      storedDraftId = window.sessionStorage.getItem(REVIEW_DRAFT_ID_STORAGE_KEY) ?? undefined;
+    } catch {
+      return;
+    }
+    if (!storedDraftId) {
+      return;
+    }
+    let cancelled = false;
+    void onRestoreDraftRef.current?.(storedDraftId).then((result) => {
+      if (cancelled) {
+        return;
+      }
+      setReviewDraft(result.data.draft);
+      setProductSchema(result.data.draft.productSchema);
+      setSchemaText(result.data.draft.productSchema ? prettySchema(result.data.draft.productSchema) : "");
+      setImportAction({ phase: "success", message: "已从服务端恢复本会话在审的草稿" });
+    }).catch(() => {
+      if (cancelled) {
+        return;
+      }
+      try {
+        window.sessionStorage.removeItem(REVIEW_DRAFT_ID_STORAGE_KEY);
+      } catch {
+        // 清理失败不影响主流程（下次恢复仍会失败并再次尝试清除）。
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+    // 仅挂载时恢复一次。
+  }, []);
 
   const schemaLocked = reviewDraft ? isSchemaLockedStatus(reviewDraft.status) : false;
   const summaryMetricsObserved = result.zhixus.every((zhixu) => zhixu.metricsStatus === "observed");
@@ -295,7 +354,9 @@ export function StoreSearchPage({
         {/* 服务端口径：导入上架可由运营方（store.listing.manage）或锚定
             publisher（导入自己的秩序）发起——两种会话都要有渲染入口，
             否则 publisher 导入路径是客户端可过、界面无门的功能死角。
-            审核/下架等治理动作仍只对运营方渲染（见 StoreListingPanel）。 */}
+            导入动作本身对两条路径都一律要求锚定会话（运营方也不例外，
+            见 StoreListingImportEntry 的锚定门）；审核/下架等治理动作仍
+            只对运营方渲染（见 StoreListingPanel）。 */}
         {access.capabilities.includes("store.listing.manage") || access.anchoredAddress ? (
           <StoreListingPanel access={access} api={api} />
         ) : null}
@@ -513,6 +574,13 @@ export function StoreSearchPage({
               </button>
             </div>
           </div>
+          {schemaLocked ? (
+            // 全灰按钮必须给出原因：锁定是终态/冻结的如实呈现，不是可重试的失败。
+            <div className="store-access-note compact" data-testid="store-schema-locked-note">
+              <ShieldCheck />
+              <span>{schemaLockedNote(reviewDraft.status)}</span>
+            </div>
+          ) : null}
 
           {productSchema ? (
             <>
@@ -639,6 +707,23 @@ function DraftGovernancePanel({
         </div>
       </div>
 
+      {onRefreshCatalog ? (
+        // 等待索引期同样提供手动刷新入口：目录投影是否观察到激活不由前端
+        // 轮询，操作员需要主动检查索引进度的出口。
+        <div className="button-row">
+          <button
+            className="secondary-button"
+            data-testid="store-refresh-catalog-button"
+            disabled={refreshAction.phase === "pending"}
+            onClick={() => void handleRefreshCatalog()}
+          >
+            {refreshAction.phase === "pending" ? <Loader2 className="spin" /> : <Layers3 />}
+            刷新秩序目录{orderCreatable ? "" : "（检查索引进度）"}
+          </button>
+        </div>
+      ) : null}
+      <ActionNotice state={refreshAction} testId="store-refresh-catalog-notice" />
+
       {orderCreatable ? (
         <div className="governance-publish-complete" data-testid="store-publishing-complete" data-state="container-ready">
           <div className="governance-publish-complete-head">
@@ -648,20 +733,6 @@ function DraftGovernancePanel({
               <p>链上投影显示该版本已激活，可作为标准信号容器创建订单；PlanRegistered 索引状态以链上投影为准。</p>
             </div>
           </div>
-          {onRefreshCatalog ? (
-            <div className="button-row">
-              <button
-                className="primary-button"
-                data-testid="store-refresh-catalog-button"
-                disabled={refreshAction.phase === "pending"}
-                onClick={() => void handleRefreshCatalog()}
-              >
-                {refreshAction.phase === "pending" ? <Loader2 className="spin" /> : <Layers3 />}
-                刷新秩序目录
-              </button>
-            </div>
-          ) : null}
-          <ActionNotice state={refreshAction} testId="store-refresh-catalog-notice" />
           <p className="help-text">Store 目录刷新后，对应的秩序卡片将显示"可创建订单"生命周期，表示标准信号容器 docking 已完成。</p>
         </div>
       ) : null}
@@ -1074,6 +1145,22 @@ function isSchemaLockedStatus(status: StoreZhixuDraftStatus): boolean {
     status === "revoked";
 }
 
+/** schema 锁定原因（与服务端草稿状态机同口径）：入口禁用必须解释，不静默全灰。 */
+function schemaLockedNote(status: StoreZhixuDraftStatus): string {
+  switch (status) {
+    case "rejected":
+      return "草稿在 Store 审核中被驳回：schema 编辑与提交审核入口已锁定；如需继续，请重新导入新草稿。";
+    case "revoked":
+      return "草稿已被撤销：schema 已冻结；如需继续，请重新导入新草稿。";
+    case "approved_for_broadcast":
+      return "草稿已通过审核并进入发布流程：schema 已冻结，不可再编辑或重复提交审核。";
+    case "active":
+      return "草稿对应版本已在链上投影中激活：schema 已冻结，不可再编辑或重复提交审核。";
+    default:
+      return "草稿处于锁定状态：schema 编辑入口不可用。";
+  }
+}
+
 function draftStatusLabel(status: StoreZhixuDraftStatus): string {
   return status;
 }
@@ -1133,23 +1220,53 @@ interface PluginReviewItem {
   readonly plugin: SlotCapabilityPluginDTO;
 }
 
-function pluginReviewKey(scope: PluginReviewScope, slotId: string | undefined, index: number): string {
-  return scope === "top-level" ? `top-level:${index}` : `slot:${slotId}:${index}`;
+/**
+ * 插件确认键按内容身份键控：DTO 不携带插件 ID，数组下标会在 JSON 编辑器
+ * 插入/重排后错位，把"保存勾选项为 explicit"写到另一条插件。身份不含
+ * source（写入后 source 会变），同槽内内容完全相同的插件用出现序数区分。
+ */
+function pluginIdentity(plugin: SlotCapabilityPluginDTO): string {
+  return JSON.stringify([
+    plugin.pluginKind,
+    plugin.stageIds ?? [],
+    plugin.title ?? "",
+    plugin.summary ?? "",
+    plugin.primaryActionLabel ?? "",
+    plugin.requiredEvidence ?? [],
+    plugin.inputPolicy ?? null
+  ]);
+}
+
+function scopePluginReviewKeys(
+  scope: PluginReviewScope,
+  slotId: string | undefined,
+  plugins: readonly SlotCapabilityPluginDTO[]
+): readonly string[] {
+  const occurrence = new Map<string, number>();
+  return plugins.map((plugin) => {
+    const identity = pluginIdentity(plugin);
+    const seen = occurrence.get(identity) ?? 0;
+    occurrence.set(identity, seen + 1);
+    const prefix = scope === "top-level" ? "top-level" : `slot:${slotId}`;
+    return `${prefix}:${identity}#${seen}`;
+  });
 }
 
 // 顶层清单与每个插槽的插件全部逐条列出（含 missing），供发布者逐条确认。
-function collectPluginReviewItems(schema: StoreProductSchemaDTO): readonly PluginReviewItem[] {
-  const slotPlugins = schema.roleSlots.flatMap((slot) =>
-    (slot.capabilityPlugins ?? []).map((plugin, index) => ({
-      key: pluginReviewKey("slot", slot.slotId, index),
+export function collectPluginReviewItems(schema: StoreProductSchemaDTO): readonly PluginReviewItem[] {
+  const slotPlugins = schema.roleSlots.flatMap((slot) => {
+    const keys = scopePluginReviewKeys("slot", slot.slotId, slot.capabilityPlugins ?? []);
+    return (slot.capabilityPlugins ?? []).map((plugin, index) => ({
+      key: keys[index] ?? "",
       scope: "slot" as const,
       slotId: slot.slotId,
       slotLabel: slot.performanceSlotLabel ?? slot.label,
       plugin
-    }))
-  );
+    }));
+  });
+  const topLevelKeys = scopePluginReviewKeys("top-level", undefined, schema.capabilityPlugins);
   const topLevelPlugins = schema.capabilityPlugins.map((plugin, index) => ({
-    key: pluginReviewKey("top-level", undefined, index),
+    key: topLevelKeys[index] ?? "",
     scope: "top-level" as const,
     plugin
   }));
@@ -1277,25 +1394,30 @@ function PluginExplicitConfirmationPanel({
   );
 }
 
-function confirmSchemaPluginsExplicit(
+export function confirmSchemaPluginsExplicit(
   schema: StoreProductSchemaDTO,
   confirmedKeys: ReadonlySet<string>
 ): StoreProductSchemaDTO {
   // 只把发布者逐条勾选的插件 source 改为 explicit：槽位插件与顶层插件清单的
   // 成员关系保持原样，不用槽位集合重建顶层清单（那会丢掉未挂在槽位上的顶层插件）。
-  const roleSlots = schema.roleSlots.map((slot) => ({
-    ...slot,
-    capabilityPlugins: (slot.capabilityPlugins ?? []).map((plugin, index) =>
-      confirmedKeys.has(pluginReviewKey("slot", slot.slotId, index))
-        ? { ...plugin, source: "explicit" as const }
-        : plugin
-    )
-  }));
+  // 键与勾选列表同源（内容身份），JSON 编辑器重排/插入后仍指向同一条插件。
+  const roleSlots = schema.roleSlots.map((slot) => {
+    const keys = scopePluginReviewKeys("slot", slot.slotId, slot.capabilityPlugins ?? []);
+    return {
+      ...slot,
+      capabilityPlugins: (slot.capabilityPlugins ?? []).map((plugin, index) =>
+        confirmedKeys.has(keys[index] ?? "")
+          ? { ...plugin, source: "explicit" as const }
+          : plugin
+      )
+    };
+  });
+  const topLevelKeys = scopePluginReviewKeys("top-level", undefined, schema.capabilityPlugins);
   return {
     ...schema,
     roleSlots,
     capabilityPlugins: schema.capabilityPlugins.map((plugin, index) =>
-      confirmedKeys.has(pluginReviewKey("top-level", undefined, index))
+      confirmedKeys.has(topLevelKeys[index] ?? "")
         ? { ...plugin, source: "explicit" as const }
         : plugin
     )

@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   StoreApiError,
+  createStoreApiClient,
   parseStoreRuntimeSummary,
   readableStoreError,
   readStoredStoreSessionToken,
   storeStoreSessionToken,
   STORE_SESSION_TOKEN_STORAGE_KEY
 } from "./api";
+import type { StoreAccessState } from "./types";
 
 describe("Store runtime DTO boundary", () => {
   it("keeps the frozen runtime fields and indexer state", () => {
@@ -111,5 +113,73 @@ describe("stored wallet session token expiry", () => {
     } finally {
       delete (globalThis as { window?: unknown }).window;
     }
+  });
+
+  it("treats a stored token with a missing or unparsable expiry as expired instead of indefinitely valid", async () => {
+    // 正常登录路径必带服务端声明的 expiresAt：缺失/非法只可能来自篡改或
+    // 损坏的存储，放行等于无过期凭据（fail-closed 清除并走未登录）。
+    const backing = installMemoryWindow();
+    try {
+      window.localStorage.setItem(STORE_SESSION_TOKEN_STORAGE_KEY, JSON.stringify({ token: "uvs_no_expiry" }));
+      assert.equal(readStoredStoreSessionToken(), undefined);
+      assert.equal(backing.has(STORE_SESSION_TOKEN_STORAGE_KEY), false);
+
+      window.localStorage.setItem(STORE_SESSION_TOKEN_STORAGE_KEY, JSON.stringify({ token: "uvs_bad_expiry", expiresAt: "not-a-date" }));
+      assert.equal(readStoredStoreSessionToken(), undefined);
+      assert.equal(backing.has(STORE_SESSION_TOKEN_STORAGE_KEY), false);
+    } finally {
+      delete (globalThis as { window?: unknown }).window;
+    }
+  });
+});
+
+describe("listing write client gates mirror the server route's anchoring rule", () => {
+  const operatorAccess: StoreAccessState = {
+    level: "store_operator",
+    label: "Store Operator",
+    roles: ["store_operator"],
+    capabilities: ["store.read", "store.listing.manage"],
+    authMode: "dev_store_headers",
+    canRead: true,
+    canWrite: true,
+    canAdmin: false,
+    headers: {}
+  };
+
+  it("rejects listing import locally for an unanchored operator session before any request", async () => {
+    // 服务端 store-listings 路由对导入（运营方与 publisher 两条路径）一律
+    // 要求锚定会话；本地按同一口径前置 403，不让未锚定会话撞迟到拒绝。
+    const client = createStoreApiClient(operatorAccess);
+    await assert.rejects(
+      () => client.importListing({ planId: `0x${"ab".repeat(32)}` }),
+      (error: unknown) => error instanceof StoreApiError && error.status === 403
+    );
+  });
+
+  it("rejects listing governance writes locally when the operator session is unanchored", async () => {
+    const client = createStoreApiClient(operatorAccess);
+    for (const action of [
+      () => client.reviewListing("listing-1", "approve"),
+      () => client.delistListing("listing-1"),
+      () => client.relistListing("listing-1")
+    ]) {
+      await assert.rejects(
+        action,
+        (error: unknown) => error instanceof StoreApiError && error.status === 403
+      );
+    }
+  });
+
+  it("lets an anchored session past the local anchoring gate (server re-checks ownership)", async () => {
+    const client = createStoreApiClient({
+      ...operatorAccess,
+      anchoredAddress: "0x0000000000000000000000000000000000000001"
+    });
+    // 锚定门在前、base URL 配置检查在后：锚定会话不再吃本地 403，
+    // 转而按缺配置失败，证明门序与口径。
+    await assert.rejects(
+      () => client.importListing({ planId: `0x${"ab".repeat(32)}` }),
+      (error: unknown) => error instanceof StoreApiError && /not configured/u.test(error.message)
+    );
   });
 });

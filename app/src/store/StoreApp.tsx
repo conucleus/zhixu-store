@@ -1,5 +1,5 @@
 import { AlertTriangle, ExternalLink, GitBranch, KeyRound, Loader2, PackageSearch, ShieldCheck, Store, Truck, UserPlus, Users } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   accessFromStoreSession,
@@ -71,15 +71,34 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
   const [loadState, setLoadState] = useState<StoreLoadState>({ status: "loading" });
   const [loginBusy, setLoginBusy] = useState(false);
   const [loginMessage, setLoginMessage] = useState<string | undefined>();
+  // 目录晚到响应作废（useProductWorkbenchData 同款单调序号）：首屏加载、
+  // 检索与手动刷新都写同一份目录状态，只防卸载不防"被更新请求取代"会让
+  // 慢搜索结果覆盖新会话/新查询的结果。
+  const catalogSequenceRef = useRef(0);
+
+  async function loadCatalog(input?: StoreSearchInput): Promise<StoreZhixuSearchResultDTO | undefined> {
+    const sequence = catalogSequenceRef.current + 1;
+    catalogSequenceRef.current = sequence;
+    try {
+      const result = await api.search(input);
+      if (catalogSequenceRef.current !== sequence) {
+        // 已有更新的目录请求接管状态：本次结果既不落地也不上报。
+        return undefined;
+      }
+      setLoadState({ status: "ready", data: result.data, source: result.source });
+      setSelectedZhixuId((current) => current ?? result.data.zhixus[0]?.zhixuId);
+      return result.data;
+    } catch (error) {
+      if (catalogSequenceRef.current !== sequence) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
-    void api.search().then((result) => {
-      if (!cancelled) {
-        setLoadState({ status: "ready", data: result.data, source: result.source });
-        setSelectedZhixuId((current) => current ?? result.data.zhixus[0]?.zhixuId);
-      }
-    }).catch((error) => {
+    void loadCatalog().catch((error) => {
       if (!cancelled) {
         setLoadState({ status: "error", message: readableStoreError(error, "秩序商店加载失败") });
       }
@@ -87,6 +106,7 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
     return () => {
       cancelled = true;
     };
+    // 只在挂载与会话 client 重建时首载目录；loadCatalog 是本组件内函数。
   }, [api]);
 
   const navItems: Array<{ readonly view: StoreView; readonly label: string; readonly icon: ReactNode }> = [
@@ -104,10 +124,13 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
   }
 
   async function handleSearch(input: StoreSearchInput): Promise<StoreZhixuSearchResultDTO> {
-    const result = await api.search(input);
-    setLoadState({ status: "ready", data: result.data, source: result.source });
-    setSelectedZhixuId((current) => current ?? result.data.zhixus[0]?.zhixuId);
-    return result.data;
+    const data = await loadCatalog(input);
+    if (!data) {
+      // 更新的检索已接管目录状态：本次结果已作废，如实按失败上报，
+      // 不让旧的检索动作宣告成功。
+      throw new Error("已发起更新的检索，本次结果已作废");
+    }
+    return data;
   }
 
   function handleSessionChanged(token?: string | undefined, expiresAt?: string | undefined): void {
@@ -236,10 +259,13 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
           onUpdateDraftProductSchema={(draftId, productSchema) => api.updateDraftProductSchema(draftId, productSchema)}
           onValidateDraftProductSchema={(draftId, productSchema) => api.validateDraftProductSchema(draftId, productSchema)}
           onSubmitDraftReview={(draftId) => api.submitZhixuDraftReview(draftId)}
+          onRestoreDraft={(draftId) => api.getZhixuDraft(draftId)}
           onRefreshCatalog={async () => {
-            const result = await api.search();
-            setLoadState({ status: "ready", data: result.data, source: result.source });
-            return result.data;
+            const data = await loadCatalog();
+            if (!data) {
+              throw new Error("已发起更新的目录请求，本次刷新结果已作废");
+            }
+            return data;
           }}
         />
       ) : null}
