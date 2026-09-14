@@ -5,13 +5,13 @@ import {
 } from "@uvp-eth/protocol-bindings";
 import { connectWalletAddress } from "../shared/chain/wallet/connect";
 import { ChainWalletError } from "../shared/chain/wallet/errors";
-import { isEvmAddressText, isPositiveChainIdText } from "../shared/chain/wallet/mismatch";
-import type { TypedDataMismatchTexts } from "../shared/chain/wallet/mismatch";
+import { isEvmAddressText, isPositiveChainIdText } from "../shared/chain/wallet/typed-data";
+import type { TypedDataMismatchTexts } from "../shared/chain/wallet/typed-data";
 import {
   assertTypedDataEnvelopeMatches,
   ensureCurrentChainMatchesDomain,
   requestTypedDataSignature
-} from "../shared/chain/wallet/sign-typed-data";
+} from "../shared/chain/wallet/typed-data";
 import { UnsupportedWalletTargetError, walletConnectorFor } from "../shared/chain/wallet/provider";
 
 export interface WalletAccount {
@@ -133,8 +133,7 @@ export async function requestWalletAccount(): Promise<WalletAccount> {
   try {
     const address = await connectWalletAddress({
       provider: (window as WindowWithEthereum).ethereum,
-      ports: walletPorts,
-      invalidAccountCode: "missing_wallet"
+      ports: walletPorts
     });
     return { address };
   } catch (error) {
