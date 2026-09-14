@@ -37,8 +37,7 @@ export function TaskPage({
   onFieldValuesChange,
   onBack,
   onUpload,
-  onSubmit,
-  onDispute
+  onSubmit
 }: {
   task: ProductTaskDTO;
   evidencePlan: TaskEvidencePlan;
@@ -56,7 +55,6 @@ export function TaskPage({
   onBack: () => void;
   onUpload: (slotKey: string, file: File) => void;
   onSubmit: () => void;
-  onDispute: () => void;
 }) {
   const fileSlots = evidencePlan.slots.filter((slot) => slot.inputKind === "file");
   const inputSlots = evidencePlan.slots.filter((slot) => slot.inputKind !== "file");
@@ -142,10 +140,6 @@ export function TaskPage({
           {!canConfirm && verificationFailedLabels.length > 0 ? (
             <p className="side-note" data-testid="task-confirm-verification-blocked-note"><HelpCircle /> 凭证核验异常：{verificationFailedLabels.join("、")}</p>
           ) : null}
-          <div className="split-actions">
-            <button className="secondary-button" onClick={onDispute}>无法完成</button>
-            <button className="secondary-button" onClick={onDispute}>提出争议</button>
-          </div>
           <p className="side-note"><HelpCircle /> 如需帮助，请查看帮助中心。</p>
         </aside>
       </div>

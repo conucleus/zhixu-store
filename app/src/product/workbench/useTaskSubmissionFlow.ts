@@ -61,10 +61,8 @@ export function useTaskSubmissionFlow(input: {
   /** 正在上传中的槽位 key：槽位级串行化守卫的渲染面（file input 禁用）。 */
   readonly uploadingSlotKeys: readonly string[];
   readonly submitMachine: SubmitMachineState;
-  readonly disputeAction: ActionState;
   readonly handleUploadEvidence: (slotKey: string, file: File) => Promise<void>;
   readonly handleConfirmSubmit: () => Promise<void>;
-  readonly handleDisputeSave: () => Promise<void>;
 } {
   const { api, activeTask, fieldValues, onMutationSuccess } = input;
   const evidencePlan = planTaskEvidence({
@@ -80,7 +78,6 @@ export function useTaskSubmissionFlow(input: {
     status: "idle",
     message: "等待上传凭证并确认提交"
   });
-  const [disputeAction, setDisputeAction] = useState<ActionState>(idleAction);
   const submitInflightRef = useRef(false);
   // 同槽上传串行化（uvp-order-app EvidencePanel 同款防护）：同槽位先选大
   // 文件 A 再选小文件 B 时，B 先返回、A 后返回会覆盖槽位，最终提交的不是
@@ -117,7 +114,6 @@ export function useTaskSubmissionFlow(input: {
     setFieldSnapshotsBySlot({});
     setEvidenceAction(idleAction);
     setSubmitMachine({ status: "idle", message: "等待上传凭证并确认提交" });
-    setDisputeAction(idleAction);
     // 作用域切换不这里清 uploadingSlotsRef：旧作用域的在途上传会在下一个
     // 作用域检查点自行作废，其 finally 负责释放槽位；提前清掉会让新作用域
     // 对同 key 槽位并发起传，随后旧请求的 finally 又误删新请求的占用标记。
@@ -447,13 +443,6 @@ export function useTaskSubmissionFlow(input: {
     });
   }
 
-  async function handleDisputeSave(): Promise<void> {
-    setDisputeAction({
-      phase: "error",
-      message: "争议提交未接入后端，未产生任何记录"
-    });
-  }
-
   return {
     evidencePlan,
     evidenceBySlot,
@@ -463,9 +452,7 @@ export function useTaskSubmissionFlow(input: {
     evidenceAction,
     uploadingSlotKeys,
     submitMachine,
-    disputeAction,
     handleUploadEvidence,
-    handleConfirmSubmit,
-    handleDisputeSave
+    handleConfirmSubmit
   };
 }

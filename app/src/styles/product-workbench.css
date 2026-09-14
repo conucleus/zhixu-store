@@ -1544,17 +1544,10 @@ body {
 }
 
 .row-actions,
-.split-actions,
 .button-row {
   display: flex;
   align-items: center;
   gap: 12px;
-}
-
-.split-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  margin-top: 14px;
 }
 
 .status-text {
@@ -2113,12 +2106,6 @@ body {
 .proof-box-title svg {
   width: 22px;
   height: 22px;
-}
-
-.dispute-grid {
-  display: grid;
-  grid-template-columns: 1.1fr 0.9fr;
-  gap: 20px;
 }
 
 .store-console-shell {
@@ -3797,8 +3784,7 @@ body {
   .store-docking-selects,
   .catalog-toolbar,
   .catalog-card,
-  .submit-layout,
-  .dispute-grid {
+  .submit-layout {
     grid-template-columns: 1fr;
   }
 

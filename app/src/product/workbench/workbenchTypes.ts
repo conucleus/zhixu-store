@@ -8,8 +8,7 @@ export type ProductView =
   | "participants"
   | "order"
   | "task"
-  | "submit"
-  | "dispute";
+  | "submit";
 
 export type AsyncPhase = "idle" | "pending" | "success" | "error";
 

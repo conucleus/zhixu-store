@@ -45,7 +45,7 @@ src/
 │   │               # 工作台壳/通用组件/秩序库视图
 │   ├── order/      # CreateOrderPage、OrderOverviewPage、draftStatusLabel
 │   ├── signing/    # ParticipantsPage（参与方确认与订单启动）
-│   ├── tasks/      # TaskPage、SubmitPage、DisputePage
+│   ├── tasks/      # TaskPage、SubmitPage
 │   └── evidence/   # EvidenceUploadZone
 └── shared/         # 两面共用的纯前端工具（frontend.ts）
 ```

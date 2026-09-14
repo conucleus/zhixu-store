@@ -409,28 +409,6 @@ test.describe("Product Workbench browser smoke", () => {
     expect(inviteBodies[0]?.contact).toBe("delivery@partner.example");
   });
 
-  test("dispute page presents the unopened channel honestly without fabricated SLA steps", async ({ page }) => {
-    await installWorkbenchRoutes(page);
-    await page.goto("/app");
-    await page.getByRole("button", { name: /^订单$/ }).click();
-    await expect(page.getByRole("heading", { name: /测试采购订单/ })).toBeVisible();
-    await page.getByRole("button", { name: "提出争议" }).first().click();
-    await expect(page.getByRole("heading", { name: /对出口报关凭证提出争议/ })).toBeVisible();
-
-    // 未接入的事实必须如实呈现
-    await expect(page.getByTestId("dispute-channel-status")).toBeVisible();
-    await expect(page.getByText("争议提交通道尚未开通").first()).toBeVisible();
-    const bodyText = await page.locator("body").innerText();
-    expect(bodyText).not.toContain("平台已通知");
-    expect(bodyText).not.toContain("平台裁定");
-    expect(bodyText).not.toContain("个工作日");
-    expect(bodyText).not.toContain("争议处理时间线");
-
-    // 提交仍 fail-closed：不产生任何记录
-    await page.getByRole("button", { name: "提交争议" }).click();
-    await expect(page.locator(".action-notice.error")).toContainText("争议提交未接入后端，未产生任何记录");
-  });
-
   test("keeps the workbench usable when one zhixu detail fails while others succeed", async ({ page }) => {
     const zhixuB = { ...stubZhixu, zhixuId: "zx-3fa636e0229362fa4f6db3db37737a18", title: "备用履约秩序" };
     await installWorkbenchRoutes(page, {

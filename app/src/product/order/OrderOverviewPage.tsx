@@ -10,7 +10,6 @@ import {
   Layers3,
   RefreshCw,
   Send,
-  ShieldCheck,
   User
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -31,7 +30,6 @@ export function OrderOverviewPage({
   awaitingNewOrderProjection,
   onBack,
   onTask,
-  onDispute,
   proofOpen,
   setProofOpen
 }: {
@@ -41,7 +39,6 @@ export function OrderOverviewPage({
   awaitingNewOrderProjection: boolean;
   onBack: () => void;
   onTask: () => void;
-  onDispute: () => void;
   proofOpen: boolean;
   setProofOpen: (value: boolean) => void;
 }) {
@@ -80,7 +77,6 @@ export function OrderOverviewPage({
               </dl>
               <div className="button-row">
                 <button className="primary-button" data-testid="order-current-task-button" onClick={onTask}><Send /> 查看待办</button>
-                <button className="outline-button" onClick={onDispute}><ShieldCheck /> 提出争议</button>
                 <button className="outline-button" onClick={onTask}><ClipboardCheck /> 查看我的待办</button>
               </div>
             </div>
