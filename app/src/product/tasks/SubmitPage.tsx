@@ -81,7 +81,7 @@ export function SubmitPage({
               )}
             </li>
             <li><strong>影响：</strong>{task.fundingImpact}</li>
-            <li><strong>责任提示：</strong><em>提交后不可删除，只能追加更正或进入争议</em></li>
+            <li><strong>责任提示：</strong><em>提交后不可删除，只能追加更正</em></li>
           </ul>
           <h3>签名前摘要</h3>
           <div className="auth-options">

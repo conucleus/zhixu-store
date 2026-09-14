@@ -275,7 +275,7 @@ export function CatalogPage({
             <ShieldCheck />
             <div>
               <strong>用户不需要理解底层技术</strong>
-              <p>创建订单、提交凭证、确认责任和处理争议都在这个工作台完成。高级证明只在需要核对时展开。</p>
+              <p>创建订单、提交凭证、确认责任都在这个工作台完成。高级证明只在需要核对时展开。</p>
             </div>
           </div>
         </aside>
