@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { PRODUCT_SUBMIT_DOMAIN_VERSION } from "@uvp-eth/protocol-bindings";
-import { signTypedData, TypedDataMismatchError, validateTypedDataForSigning } from "./wallet";
+import { requestWalletAccount, signTypedData, TypedDataMismatchError, validateTypedDataForSigning, WalletRejectedError } from "./wallet";
 
 const WALLET = "0xAbC0000000000000000000000000000000000001";
 
@@ -241,5 +241,54 @@ describe("pre-signature typed data validation", () => {
       () => validateTypedDataForSigning(triggerTypedData, submitExpectation, WALLET),
       "primaryType"
     );
+  });
+});
+
+describe("wallet rejection detection", () => {
+  async function requestAccountError(requestError: unknown): Promise<unknown> {
+    (globalThis as { window?: unknown }).window = {
+      ethereum: {
+        request: async (): Promise<unknown> => {
+          throw requestError;
+        }
+      }
+    };
+    try {
+      await requestWalletAccount();
+      return undefined;
+    } catch (error) {
+      return error;
+    } finally {
+      delete (globalThis as { window?: unknown }).window;
+    }
+  }
+
+  it("maps provider code 4001 to WalletRejectedError", async () => {
+    assert.ok(await requestAccountError({ code: 4001 }) instanceof WalletRejectedError);
+  });
+
+  it("maps wallet rejection phrasings beyond the literal word reject", async () => {
+    for (const message of [
+      "User denied transaction.",
+      "User denied message signature",
+      "User cancelled the request.",
+      "Request canceled by user"
+    ]) {
+      const error = await requestAccountError(new Error(message));
+      assert.ok(
+        error instanceof WalletRejectedError,
+        `expected WalletRejectedError for ${JSON.stringify(message)}, got ${String(error)}`
+      );
+    }
+  });
+
+  it("passes non-rejection failures through untouched", async () => {
+    for (const message of ["Network unreachable", "signature failed", "internal error"]) {
+      const error = await requestAccountError(new Error(message));
+      assert.ok(
+        !(error instanceof WalletRejectedError),
+        `expected a plain failure for ${JSON.stringify(message)}, got WalletRejectedError`
+      );
+    }
   });
 });

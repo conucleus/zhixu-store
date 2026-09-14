@@ -233,11 +233,15 @@ export function getWalletConnector(target: WalletTarget = "evm"): WalletConnecto
   }
 }
 
+// 判定收敛为与 uvp-order-app isUserRejectedRequest 一致的超集（4001 ||
+// /reject|denied|cancel/i）：只认 "reject" 会把钱包常见的
+// "User denied transaction" 误判成普通失败。protocol-bindings 单源导出
+// 就绪后此处整体切换为 import（审计 §1.1 链轨签名闸门行）。
 function isRejected(error: unknown): boolean {
   if (typeof error !== "object" || error === null) {
     return false;
   }
   const maybeError = error as { readonly code?: unknown; readonly message?: unknown };
   return maybeError.code === 4001 ||
-    (typeof maybeError.message === "string" && maybeError.message.toLowerCase().includes("reject"));
+    (typeof maybeError.message === "string" && /reject|denied|cancel/i.test(maybeError.message));
 }
