@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { readableStoreError, type StoreApiClient } from "../api";
 import { listingStatusLabel } from "../StoreAnchorPanel";
 import type { StoreAccessState, StoreListingView } from "../types";
-import { shortValue } from "../../shared/frontend";
+import { shortValue } from "../../lib/frontend";
 
 type ListingsState =
   | { readonly status: "loading" }

@@ -4,7 +4,7 @@ import { readableStoreError, type StoreApiClient } from "./api";
 import { anchorAdditionalWalletToAccount, loginStoreSessionWithWallet } from "./session";
 import { hasStoreWallet } from "./wallet";
 import type { StoreAccessState } from "./types";
-import { shortValue } from "../shared/frontend";
+import { shortValue } from "../lib/frontend";
 
 type AddressesState =
   | { readonly status: "idle" }

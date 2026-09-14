@@ -15,6 +15,7 @@ import {
   WalletRejectedError
 } from "../wallet";
 import { idleAction, type ActionState, type SubmitMachineState } from "./workbenchTypes";
+import { createInflightGuard, createKeyedInflightGuard } from "../../shared/chain/submission/inflight";
 import {
   FRAMEWORK_STAGE_FIELD_KEY,
   advanceScopeGeneration,
@@ -78,23 +79,18 @@ export function useTaskSubmissionFlow(input: {
     status: "idle",
     message: "等待上传凭证并确认提交"
   });
-  const submitInflightRef = useRef(false);
-  // 同槽上传串行化（uvp-order-app EvidencePanel 同款防护）：同槽位先选大
-  // 文件 A 再选小文件 B 时，B 先返回、A 后返回会覆盖槽位，最终提交的不是
-  // 参与者最后选择的文件。ref 是同步判定的真源（连续选择发生在重渲染前），
-  // state 只镜像给渲染层禁用 file input。
-  const uploadingSlotsRef = useRef<ReadonlySet<string>>(new Set());
-
-  function markSlotUploading(slotKey: string, uploading: boolean): void {
-    const next = new Set(uploadingSlotsRef.current);
-    if (uploading) {
-      next.add(slotKey);
-    } else {
-      next.delete(slotKey);
-    }
-    uploadingSlotsRef.current = next;
-    setUploadingSlotKeys([...next]);
-  }
+  // 连击互斥（chain 轨同步互斥原语）：提交是 prepare→签名→上链→轮询的长
+  // 链路，按钮的 pending 禁用要等状态落盘+重渲染才生效，同步 ref 互斥挡住
+  // 重渲染前的第二次点击（服务端 first-writer-wins 只是兜底，不能依赖）。
+  const submitInflightRef = useRef(createInflightGuard());
+  // 同槽上传串行化（uvp-order-app EvidencePanel 同款防护，chain 轨键控
+  // 互斥原语）：同槽位先选大文件 A 再选小文件 B 时，B 先返回、A 后返回
+  // 会覆盖槽位，最终提交的不是参与者最后选择的文件。guard 是同步判定的
+  // 真源（连续选择发生在重渲染前），占用集变化经回调镜像给渲染层禁用
+  // file input。
+  const uploadingSlotsRef = useRef(
+    createKeyedInflightGuard((keys) => setUploadingSlotKeys([...keys]))
+  );
 
   const taskScopeKey = activeTask
     ? `${activeTask.orderId}:${activeTask.taskId}:${activeTask.stageId}`
@@ -154,7 +150,7 @@ export function useTaskSubmissionFlow(input: {
       setEvidenceAction({ phase: "error", message: `请填写必填字段：${slotMissing.join("、")}` });
       return;
     }
-    markSlotUploading(slotKey, true);
+    uploadingSlotsRef.current.tryAcquire(slotKey);
     const requestScopeKey = taskScopeRef.current;
     try {
       const fileError = await validateEvidenceFileForSlot(file, slot);
@@ -226,15 +222,15 @@ export function useTaskSubmissionFlow(input: {
       }
       setEvidenceAction({ phase: "error", message: readableError(error, "凭证上传失败") });
     } finally {
-      markSlotUploading(slotKey, false);
+      uploadingSlotsRef.current.release(slotKey);
     }
   }
 
   async function handleConfirmSubmit(): Promise<void> {
-    // 连击互斥：提交是 prepare→签名→上链→轮询的长链路，按钮的 pending 禁用
-    // 要等状态落盘+重渲染才生效，同步 ref 互斥挡住重渲染前的第二次点击
-    // （服务端 first-writer-wins 只是兜底，不能依赖）。
-    if (submitInflightRef.current) {
+    // 连击互斥（共享同步原语）：提交是 prepare→签名→上链→轮询的长链路，
+    // 按钮 pending 禁用要等状态落盘+重渲染才生效，ref 同步互斥挡住重渲染
+    // 前的第二次点击（服务端 first-writer-wins 只是兜底，不能依赖）。
+    if (submitInflightRef.current.locked) {
       return;
     }
     if (!activeTask) {
@@ -304,7 +300,7 @@ export function useTaskSubmissionFlow(input: {
       });
       return;
     }
-    submitInflightRef.current = true;
+    submitInflightRef.current.tryAcquire();
     try {
       setSubmitMachine({ status: "preparing", message: "正在准备签名前摘要" });
       const account = await requestWalletAccount();
@@ -372,7 +368,7 @@ export function useTaskSubmissionFlow(input: {
       }
       setSubmitMachine({ status: "failed", message: readableError(error, "确认提交失败") });
     } finally {
-      submitInflightRef.current = false;
+      submitInflightRef.current.release();
     }
   }
 

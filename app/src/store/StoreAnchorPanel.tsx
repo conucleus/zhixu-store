@@ -1,6 +1,6 @@
 import { AlertTriangle, CheckCircle2, CircleDashed, ShieldCheck } from "lucide-react";
 import type { StoreAnchorVerificationView, StoreListingView } from "./types";
-import { shortValue } from "../shared/frontend";
+import { shortValue } from "../lib/frontend";
 
 const ANCHOR_STATUS_LABELS: Record<StoreAnchorVerificationView["status"], string> = {
   consistent: "一致",

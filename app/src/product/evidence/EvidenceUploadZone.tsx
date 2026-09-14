@@ -3,7 +3,7 @@
 import { FileText, UploadCloud } from "lucide-react";
 import type { EvidenceObjectDTO, EvidenceProofDTO } from "../api";
 import { acceptAttribute, acceptHint, type TaskEvidenceSlot } from "../workbench/workbenchSupport";
-import { shortHash } from "../../shared/frontend";
+import { shortHash } from "../../lib/frontend";
 import { InlineEmpty, StatusText } from "../workbench/WorkbenchWidgets";
 
 export function EvidenceUploadZone({

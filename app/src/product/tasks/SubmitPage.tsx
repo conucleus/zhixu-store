@@ -6,7 +6,7 @@ import type { ProductTaskDTO } from "@uvp-eth/product-dto";
 import type { EvidenceObjectDTO } from "../api";
 import type { SubmitMachineState, SubmitMachineStatus } from "../workbench/workbenchTypes";
 import { taskSubmitActionLabel, type TaskEvidencePlan, type TaskEvidenceSlot } from "../workbench/workbenchSupport";
-import { shortHash } from "../../shared/frontend";
+import { shortHash } from "../../lib/frontend";
 import { BackLine, MoneyRow, Panel, StatusBadge } from "../workbench/WorkbenchWidgets";
 
 export function SubmitPage({

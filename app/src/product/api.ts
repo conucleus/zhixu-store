@@ -15,10 +15,10 @@ import {
   isRecord,
   resolveFrontendApiBaseUrl,
   shortHash
-} from "../shared/frontend";
+} from "../lib/frontend";
 import { readStoredStoreSessionToken } from "../store/api";
 
-export { shortHash } from "../shared/frontend";
+export { shortHash } from "../lib/frontend";
 
 // 写侧契约权威形状（product-dto 写侧面，治理审计 §1.1 P1-1）：提交意图/
 // 输入/回执/证据证明以服务端真身为唯一出处，本文件不再手写镜像。

@@ -20,7 +20,7 @@ import { StoreDecorationEditor } from "../authoring/StoreDecorationEditor";
 import { StoreJoinEntry } from "../StoreJoinEntry";
 import type { CapabilityPluginSource, StoreCapabilityReviewStatus, StoreZhixuDetailDTO } from "@uvp-eth/product-dto";
 import type { StoreAccessState, StoreZhixuOverlayView } from "../types";
-import { shortValue } from "../../shared/frontend";
+import { shortValue } from "../../lib/frontend";
 
 type DetailState =
   | { readonly status: "loading" }

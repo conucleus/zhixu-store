@@ -18,7 +18,7 @@ import { StoreZhixuDetailPage } from "./catalog/StoreZhixuDetailPage";
 import { loginStoreSessionWithWallet } from "./session";
 import type { StoreApiClient } from "./api";
 import type { StoreApiSource, StoreSearchInput, StoreSessionDTO, StoreZhixuSearchResultDTO } from "./types";
-import { shortValue } from "../shared/frontend";
+import { shortValue } from "../lib/frontend";
 
 type StoreView = "search" | "detail" | "suppliers" | "runtime" | "docking" | "account" | "join";
 

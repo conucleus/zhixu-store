@@ -17,7 +17,7 @@ import type {
   StoreZhixuDraftSourceKind,
   StoreZhixuSearchResultDTO
 } from "../types";
-import { isRecord, shortHash } from "../../shared/frontend";
+import { isRecord, shortHash } from "../../lib/frontend";
 
 type ActionPhase = "idle" | "pending" | "success" | "error";
 

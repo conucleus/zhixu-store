@@ -43,7 +43,7 @@ import {
   resolveFrontendApiBaseUrl,
   shortValue,
   stringValue,
-} from "../shared/frontend";
+} from "../lib/frontend";
 
 export interface StoreApiClient {
   readonly baseUrl?: string | undefined;
