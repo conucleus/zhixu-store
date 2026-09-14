@@ -1,8 +1,12 @@
 import {
   type ChainProofRowDTO,
+  type EvidenceProofDTO,
   type ProductParticipantProfileDTO,
   type ParticipantDTO,
   type ProductOrderDTO,
+  type ProductSubmissionDTO,
+  type ProductSubmissionStatus,
+  type ProductSubmitIntent,
   type ProductTaskDTO,
   type ZhixuDetailDTO,
   type ZhixuSummaryDTO
@@ -15,6 +19,19 @@ import {
 import { readStoredStoreSessionToken } from "../store/api";
 
 export { shortHash } from "../shared/frontend";
+
+// 写侧契约权威形状（product-dto 写侧面，治理审计 §1.1 P1-1）：提交意图/
+// 输入/回执/证据证明以服务端真身为唯一出处，本文件不再手写镜像。
+// EvidenceProofDTO 的 evidenceId/payloadRef/storageURI 与 ProductSubmissionDTO
+// 的 statusLabel 是服务端恒产出字段，按必填消费。消费方（TaskPage、
+// useTaskSubmissionFlow、workbenchTypes）沿用从本模块取类型的既有路径，
+// 此处统一转发。
+export type {
+  EvidenceProofDTO,
+  ProductSubmissionDTO,
+  ProductSubmissionStatus,
+  ProductSubmitIntent
+} from "@uvp-eth/product-dto";
 
 export type ProductApiSource = {
   readonly kind: "real";
@@ -216,15 +233,9 @@ export interface EvidenceMetadataDTO {
   readonly redactionPolicy?: string | undefined;
 }
 
-export interface EvidenceProofDTO {
-  readonly payloadHash: string;
-  readonly contentHash: string;
-  readonly metadataHash: string;
-  readonly boundSignalTxHash?: string | undefined;
-  readonly blockNumber?: string | undefined;
-  readonly submitter?: string | undefined;
-  readonly verificationStatus: "unbound" | "matched" | "mismatch" | "missing_file";
-}
+// EvidenceProofDTO：权威形状自 @uvp-eth/product-dto 导入（见文件头转发导出）。
+// 服务端 getProof 恒产出 evidenceId/payloadRef/storageURI，旧手写版整体缺失
+// 这三字段，属于已冲突的写侧契约面之一。
 
 export interface UploadEvidenceInput {
   readonly file: File;
@@ -239,7 +250,8 @@ export interface UploadEvidenceInput {
 export interface PrepareSubmitInput {
   readonly evidenceIds: readonly string[];
   readonly walletAddress: string;
-  readonly intent: "confirm_stage" | "reject_stage" | "raise_dispute" | "resolve_dispute";
+  /** 服务端 PrepareProductTaskSubmitInput.intent 的权威词表（product-dto 写侧面）。 */
+  readonly intent: ProductSubmitIntent;
 }
 
 export interface PreparedSubmitDTO {
@@ -257,28 +269,9 @@ export interface PreparedSubmitDTO {
   readonly typedData: unknown;
 }
 
-export type ProductSubmissionStatus =
-  | "prepared"
-  | "signature_received"
-  | "broadcasting"
-  | "submitted"
-  | "indexing"
-  | "confirmed"
-  | "failed"
-  | "expired"
-  | "replaced";
-
-export interface ProductSubmissionDTO {
-  readonly submissionId: string;
-  readonly taskId: string;
-  readonly status: ProductSubmissionStatus;
-  readonly statusLabel: string;
-  readonly txHash?: string | undefined;
-  readonly blockNumber?: string | undefined;
-  readonly errorCode?: string | undefined;
-  readonly retryable: boolean;
-  readonly proofRows: readonly ChainProofRowDTO[];
-}
+// ProductSubmissionStatus / ProductSubmissionDTO：权威形状自
+// @uvp-eth/product-dto 导入（见文件头转发导出）。statusLabel 服务端读取
+// 兜底恒产出、按必填消费；submissionFromResponse 对其保持必填校验。
 
 export interface SubmitTaskInput {
   readonly prepareId: string;

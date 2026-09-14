@@ -1,7 +1,6 @@
 import {
   lifecycleStatusForZhixu,
   validateTaskEvidenceSpec,
-  type FulfillmentPluginKind,
   type ProductResourceRequirementDTO,
   type ProductTaskDTO,
   type TaskEvidenceSpecDTO,
@@ -420,34 +419,17 @@ export function inviteLinkForInvite(
   return `${origin.replace(/\/+$/u, "")}/?${params.toString()}`;
 }
 
-export type TaskSubmitIntent = "confirm_stage" | "reject_stage" | "raise_dispute" | "resolve_dispute";
-
-/** 无 manifest 声明时的兜底映射：争议任务不得以 confirm_stage 提交。 */
-const submitIntentByPluginKind: Readonly<Record<FulfillmentPluginKind, TaskSubmitIntent>> = {
-  payment_placeholder: "confirm_stage",
-  evidence_submission: "confirm_stage",
-  delivery_update: "confirm_stage",
-  validation_confirm: "confirm_stage",
-  dispute_material: "raise_dispute"
-};
-
-/**
- * 提交意图与 uvp-order-app 同源同序：manifest 显式声明的 submit_signal intent
- * 优先（发布者声明是权威），无 manifest 声明时按能力插件类型推导。
- * 两端各自单源推导会在 manifest 与插件类型不一致时得出不同 intent。
- */
-export function taskSubmitIntent(
-  task: Pick<ProductTaskDTO, "addOnManifest" | "capabilityPlugin">
-): TaskSubmitIntent {
-  const submitActions = (task.addOnManifest?.actions ?? [])
-    .filter((action) => action.actionKind === "submit_signal");
-  const primary = submitActions.find((action) => action.primary) ?? submitActions[0];
-  if (primary?.intent) {
-    return primary.intent;
-  }
-  const pluginKind = task.capabilityPlugin?.pluginKind;
-  return pluginKind ? submitIntentByPluginKind[pluginKind] ?? "confirm_stage" : "confirm_stage";
-}
+// 任务提交意图（写侧契约，治理审计 §1.1 P1-1）：TaskSubmitIntent 联合、
+// submitIntentByPluginKind 兜底映射与 taskSubmitIntent 推导以 product-dto
+// 写侧面为唯一出处——与 uvp-order-app 的逐字镜像随之消除，两端不再可能
+// 各自漂移。raise_dispute 是服务端 PrepareProductTaskSubmitInput.intent
+// 词表成员：争议入口前端已删（678a2da），但服务端契约仍接受该 intent，
+// 联合不得收缩。
+export {
+  submitIntentByPluginKind,
+  taskSubmitIntent,
+  type TaskSubmitIntent
+} from "@uvp-eth/product-dto";
 
 /**
  * 提交入口与确认页的动作文案由服务端随任务下发，前端不按意图推导。

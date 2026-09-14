@@ -1,3 +1,10 @@
+import {
+  isUserRejectedRequestError,
+  validateTypedDataForSigning as validateTypedDataEnvelope,
+  type TypedDataSigningExpectation,
+  type TypedDataSigningMismatchReason
+} from "@uvp-eth/protocol-bindings";
+
 export interface WalletAccount {
   readonly address: string;
 }
@@ -25,26 +32,13 @@ export class UnsupportedWalletTargetError extends Error {
   }
 }
 
-/** 签名前对 typedData 的预期：与 executor-kit 同一边界（primaryType/domain/submitter 三重校验）。 */
-export interface SignTypedDataExpectation {
-  /** 协议 primaryType，例如 UVPStateMachineSignal / UVPStateMachineTriggerOrderFromOutside。 */
-  readonly primaryType: string;
-  /** EIP-712 domain.name 预期值。 */
-  readonly domainName: string;
-  /** EIP-712 domain.version 预期值；不提供时不比对 version。 */
-  readonly domainVersion?: string;
-  /** 期望的部署链 ID；提供时与 domain.chainId 严格比对。 */
-  readonly chainId?: number;
-  /** 期望的状态机部署地址；提供时与 domain.verifyingContract 比对（不区分大小写）。 */
-  readonly verifyingContract?: string;
-  /** 当前连接并用于签名的钱包地址。 */
-  readonly submitter: string;
-  /**
-   * prepared 记录里声明的 submitter（如 prepared.submitter / humanSummary.submitter）。
-   * 全部必须与 typedData.message.submitter 一致，防止换签名对象。
-   */
-  readonly preparedSubmitters?: readonly (string | undefined)[];
-}
+/**
+ * 签名前对 typedData 的预期：形状与判定语义以 protocol-bindings 的
+ * TypedDataSigningExpectation 为单源（primaryType + types 字段表、domain
+ * 四要素、submitter 与 preparedSubmitters/connectedAddress 交叉核对的
+ * 三端并集），本端只保留宿主别名供既有调用点使用。
+ */
+export type SignTypedDataExpectation = TypedDataSigningExpectation;
 
 export class TypedDataMismatchError extends Error {
   constructor(readonly reason: string) {
@@ -81,7 +75,7 @@ export async function requestWalletAccount(): Promise<WalletAccount> {
     }
     return { address };
   } catch (error) {
-    if (isRejected(error)) {
+    if (isUserRejectedRequestError(error)) {
       throw new WalletRejectedError();
     }
     throw error;
@@ -120,19 +114,11 @@ export async function signTypedData(
     }
     return signature;
   } catch (error) {
-    if (isRejected(error)) {
+    if (isUserRejectedRequestError(error)) {
       throw new WalletRejectedError();
     }
     throw error;
   }
-}
-
-function asAddress(value: unknown): string | undefined {
-  return typeof value === "string" && /^0x[0-9a-fA-F]{40}$/.test(value) ? value : undefined;
-}
-
-function sameAddress(left: string, right: string): boolean {
-  return left.toLowerCase() === right.toLowerCase();
 }
 
 /** EIP-712 domain.chainId 可能以 number 或十进制字符串到达；解析失败返回 undefined。 */
@@ -158,64 +144,81 @@ function requireTypedDataRecord(typedData: unknown): Record<string, unknown> {
 }
 
 /**
- * 签名前校验 typedData：primaryType、domain（name/version/chainId/verifyingContract）
- * 以及 message.submitter 必须与预期一致，任何篡改都直接拒绝签名。
- * `connectedAddress` 是实际连接的钱包；expectation.submitter 用于交叉确认。
+ * 签名前校验（protocol-bindings 单源的宿主适配，治理审计 §1.1 P1-1）：
+ * 判定收敛于单源 validateTypedDataForSigning——primaryType 锚定、
+ * types[primaryType] 字段表非空、domain 四要素、message 签名者与
+ * expectedSubmitter/preparedSubmitters/connectedAddress 交叉核对
+ * （防换签名对象），本函数只把拒绝 reason 映射为宿主
+ * TypedDataMismatchError 文案；`connectedAddress` 是实际连接的钱包，
+ * expectation.submitter 用于交叉确认。
  */
 export function validateTypedDataForSigning(
   typedData: unknown,
   expected: SignTypedDataExpectation,
   connectedAddress?: string
 ): void {
-  const record = requireTypedDataRecord(typedData);
-  const domain = requireTypedDataRecord(record.domain);
-  const message = requireTypedDataRecord(record.message);
+  const check = validateTypedDataEnvelope(typedData, {
+    ...expected,
+    ...(connectedAddress !== undefined ? { connectedAddress } : {})
+  });
+  if (!check.ok) {
+    throw new TypedDataMismatchError(mismatchMessageFor(check.reason, check.detail, expected));
+  }
+}
 
-  if (record.primaryType !== expected.primaryType) {
-    throw new TypedDataMismatchError(`primaryType ${String(record.primaryType)} 与预期 ${expected.primaryType} 不一致`);
+/** 单源拒绝 reason → 宿主文案（措辞与切换前的本地判定一致，行为面零变化）。 */
+function mismatchMessageFor(
+  reason: TypedDataSigningMismatchReason,
+  detail: string | undefined,
+  expected: SignTypedDataExpectation
+): string {
+  const fact = detail ?? "unknown";
+  const signerField = expected.submitterField ?? "submitter";
+  switch (reason) {
+    case "not-typed-data":
+    case "message-shape":
+      return "签名对象不是 EIP-712 结构";
+    case "domain-shape":
+      return "签名对象缺少有效的 EIP-712 domain";
+    case "primary-type":
+      return `primaryType ${fact} 与预期 ${expected.primaryType} 不一致`;
+    case "primary-type-fields":
+      return `types[${expected.primaryType}] 字段表缺失或为空，签名对象可能被钱包或中转层改写`;
+    case "domain-name":
+      return `domain.name ${fact} 与预期 ${expected.domainName} 不一致`;
+    case "domain-version":
+      return `domain.version ${fact} 与预期 ${expected.domainVersion} 不一致`;
+    case "domain-chain-id":
+      // 单源对"形状非法"与"与预期不符"共用同一 reason：detail 是可解析的
+      // 正整数且给出了预期 chainId 时按不一致报告，否则按无效链 ID 报告。
+      return expected.chainId !== undefined && isPositiveChainIdText(fact)
+        ? `domain.chainId ${fact} 与预期 ${expected.chainId} 不一致`
+        : `domain.chainId ${fact} 不是有效的链 ID`;
+    case "domain-verifying-contract":
+      return isEvmAddressText(fact)
+        ? `domain.verifyingContract ${fact} 与预期 ${expected.verifyingContract} 不一致`
+        : "domain.verifyingContract 缺失或不是有效地址";
+    case "signer-field":
+      return `message.${signerField} 缺失或不是有效地址`;
+    case "signer-not-connected":
+      return `message.${signerField} 与当前连接钱包不一致（${fact}）`;
+    case "signer-not-expected":
+      return `message.${signerField} 与预期提交方不一致（${fact}）`;
+    case "signer-not-prepared":
+      return `message.${signerField} 与 prepared 记录的提交方不一致（${fact}）`;
   }
+}
 
-  const domainName = domain.name;
-  if (domainName !== expected.domainName) {
-    throw new TypedDataMismatchError(`domain.name ${String(domainName)} 与预期 ${expected.domainName} 不一致`);
+function isPositiveChainIdText(value: string): boolean {
+  if (!/^\d+$/u.test(value)) {
+    return false;
   }
-  if (expected.domainVersion !== undefined && domain.version !== expected.domainVersion) {
-    throw new TypedDataMismatchError(`domain.version ${String(domain.version)} 与预期 ${expected.domainVersion} 不一致`);
-  }
-  const chainId = domain.chainId;
-  const chainIdNumber = parseChainId(chainId);
-  if (chainIdNumber === undefined) {
-    throw new TypedDataMismatchError(`domain.chainId ${String(chainId)} 不是有效的链 ID`);
-  }
-  if (expected.chainId !== undefined && chainIdNumber !== expected.chainId) {
-    throw new TypedDataMismatchError(`domain.chainId ${chainIdNumber} 与预期 ${expected.chainId} 不一致`);
-  }
-  const verifyingContract = asAddress(domain.verifyingContract);
-  if (!verifyingContract) {
-    throw new TypedDataMismatchError("domain.verifyingContract 缺失或不是有效地址");
-  }
-  if (expected.verifyingContract !== undefined && !sameAddress(verifyingContract, expected.verifyingContract)) {
-    throw new TypedDataMismatchError(`domain.verifyingContract ${verifyingContract} 与预期 ${expected.verifyingContract} 不一致`);
-  }
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0;
+}
 
-  const messageSubmitter = asAddress(message.submitter);
-  if (!messageSubmitter) {
-    throw new TypedDataMismatchError("message.submitter 缺失或不是有效地址");
-  }
-  if (connectedAddress !== undefined && !sameAddress(messageSubmitter, connectedAddress)) {
-    throw new TypedDataMismatchError(`message.submitter 与当前连接钱包不一致（${messageSubmitter}）`);
-  }
-  if (!sameAddress(messageSubmitter, expected.submitter)) {
-    throw new TypedDataMismatchError(`message.submitter 与预期提交方不一致（${messageSubmitter}）`);
-  }
-  for (const preparedSubmitter of expected.preparedSubmitters ?? []) {
-    if (preparedSubmitter === undefined) {
-      continue;
-    }
-    if (!sameAddress(messageSubmitter, preparedSubmitter)) {
-      throw new TypedDataMismatchError(`message.submitter 与 prepared 记录的提交方不一致（${preparedSubmitter}）`);
-    }
-  }
+function isEvmAddressText(value: string): boolean {
+  return /^0x[0-9a-fA-F]{40}$/u.test(value);
 }
 
 export const evmWalletConnector: WalletConnector = {
@@ -233,15 +236,7 @@ export function getWalletConnector(target: WalletTarget = "evm"): WalletConnecto
   }
 }
 
-// 判定收敛为与 uvp-order-app isUserRejectedRequest 一致的超集（4001 ||
-// /reject|denied|cancel/i）：只认 "reject" 会把钱包常见的
-// "User denied transaction" 误判成普通失败。protocol-bindings 单源导出
-// 就绪后此处整体切换为 import（审计 §1.1 链轨签名闸门行）。
-function isRejected(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) {
-    return false;
-  }
-  const maybeError = error as { readonly code?: unknown; readonly message?: unknown };
-  return maybeError.code === 4001 ||
-    (typeof maybeError.message === "string" && /reject|denied|cancel/i.test(maybeError.message));
-}
+// 用户拒绝判定（4001 || /reject|denied|cancel/i 超集，含 170ccae 收敛的
+// denied/cancel 措辞）已切换为 protocol-bindings 单源
+// isUserRejectedRequestError（治理审计 §1.1 P1-1 签名闸门单源行）；
+// WalletRejectedError 包装与面向用户的文案留在宿主。
