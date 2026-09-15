@@ -43,7 +43,7 @@ import {
   resolveFrontendApiBaseUrl,
   shortValue,
   stringValue,
-} from "../shared/frontend";
+} from "../lib/frontend";
 
 export interface StoreApiClient {
   readonly baseUrl?: string | undefined;
@@ -200,11 +200,9 @@ export function readStoredStoreSessionToken(): string | undefined {
     const parsed = JSON.parse(raw) as Partial<StoredStoreSession>;
     const token = typeof parsed.token === "string" && parsed.token.startsWith("uvs_") ? parsed.token : undefined;
     const expiresAt = Date.parse(parsed.expiresAt ?? "");
-    if (!token) {
-      window.localStorage.removeItem(STORE_SESSION_TOKEN_STORAGE_KEY);
-      return undefined;
-    }
-    if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) {
+    // 服务端会话响应必带 expiresAt：缺失/非法（NaN）的过期时间只可能来自
+    // 篡改或损坏的存储，按已过期处理并清除——放行等于让凭据无限期有效。
+    if (!token || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
       window.localStorage.removeItem(STORE_SESSION_TOKEN_STORAGE_KEY);
       return undefined;
     }
@@ -635,13 +633,11 @@ class BrowserStoreApiClient implements StoreApiClient {
     input: { readonly planId: string; readonly planHash?: string | undefined; readonly deploymentId?: string | undefined },
   ): Promise<StoreApiResult<{ readonly listing: StoreListingView; readonly anchorVerification: { readonly status: string; readonly checks: readonly { readonly id: string; readonly outcome: string }[] } }>> {
     const pathname = "/store/listings/import";
-    // 服务端口径：运营方 store.listing.manage 能力或锚定（publisher 导入）二者其一。
-    if (!this.access.capabilities.includes("store.listing.manage") && !this.access.anchoredAddress) {
-      throw new StoreApiError(pathname, 403, "forbidden", {
-        code: "forbidden",
-        details: { requiredCapability: "store.listing.manage", alternative: "anchored_wallet_session" },
-      });
-    }
+    // 服务端口径（store-listings 路由）：导入是敏感写，运营方（store.listing.manage）
+    // 与 publisher（导入自己的秩序）两条路径都一律要求会话已锚定地址；
+    // "运营方或 plan publisher"的资源归属核验在服务层完成。本地镜像共同的
+    // 锚定前置门（双层防御），不再按"能力或锚定"放行未锚定的运营方会话。
+    this.requireAnchoredSession(pathname);
     return await this.realWrite<{ readonly listing: StoreListingView; readonly anchorVerification: { readonly status: string; readonly checks: readonly { readonly id: string; readonly outcome: string }[] } }>("POST", pathname, input);
   }
 
@@ -654,7 +650,9 @@ class BrowserStoreApiClient implements StoreApiClient {
 
   async reviewListing(listingId: string, decision: "approve" | "reject", note?: string): Promise<StoreApiResult<{ readonly listing: StoreListingView }>> {
     const pathname = `/store/listings/${encodeURIComponent(listingId)}/review`;
+    // 服务端口径：审核/下架/重新上架是敏感治理写，能力之外还要求会话已锚定。
     this.requireCapability(pathname, "store.listing.manage");
+    this.requireAnchoredSession(pathname);
     return await this.realWrite<{ readonly listing: StoreListingView }>("POST", pathname, {
       decision,
       ...(note ? { note } : {}),
@@ -664,6 +662,7 @@ class BrowserStoreApiClient implements StoreApiClient {
   async delistListing(listingId: string, reason?: string): Promise<StoreApiResult<{ readonly listing: StoreListingView }>> {
     const pathname = `/store/listings/${encodeURIComponent(listingId)}/delist`;
     this.requireCapability(pathname, "store.listing.manage");
+    this.requireAnchoredSession(pathname);
     return await this.realWrite<{ readonly listing: StoreListingView }>("POST", pathname, {
       ...(reason ? { reason } : {}),
     });
@@ -672,6 +671,7 @@ class BrowserStoreApiClient implements StoreApiClient {
   async relistListing(listingId: string): Promise<StoreApiResult<{ readonly listing: StoreListingView }>> {
     const pathname = `/store/listings/${encodeURIComponent(listingId)}/relist`;
     this.requireCapability(pathname, "store.listing.manage");
+    this.requireAnchoredSession(pathname);
     return await this.realWrite<{ readonly listing: StoreListingView }>("POST", pathname, {});
   }
 
@@ -1388,7 +1388,8 @@ function normalizeStoreAccessLevel(
 }
 
 function resolveStoreApiBaseUrl(): string | undefined {
-  return resolveFrontendApiBaseUrl(import.meta.env.VITE_UVP_CHAIN_SERVICES_URL);
+  // node 测试环境没有 import.meta.env（同文件超时常量同款防御性读取）。
+  return resolveFrontendApiBaseUrl((import.meta.env ?? {})?.VITE_UVP_CHAIN_SERVICES_URL);
 }
 
 function numberValue(value: unknown): number | undefined {

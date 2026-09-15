@@ -10,7 +10,10 @@ in [STORE-CHARTER.md](./STORE-CHARTER.md). Agent orientation and debugging
 boundaries are in [AGENTS.md](./AGENTS.md). New features must be classified
 against the charter before implementation.
 
-- `app/`: current Store and order workbench frontend.
+- `app/`: current Store and order workbench frontend. Source layout is
+  organized by user task (`src/app`, `src/store/{catalog,authoring,publishing,suppliers,docking,runtime}`,
+  `src/product/{workbench,order,signing,tasks,evidence}`, `src/shared`);
+  see [app/README.md](./app/README.md) for the directory map.
 
 ## Development Topology
 

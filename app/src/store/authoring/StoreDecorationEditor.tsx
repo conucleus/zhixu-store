@@ -1,11 +1,11 @@
 import { History, Loader2, Paintbrush, UserCog } from "lucide-react";
 import { useState } from "react";
-import { readableStoreError, type StoreApiClient } from "./api";
+import { readableStoreError, type StoreApiClient } from "../api";
 import type {
   StoreAccessState,
   StoreDecorationDataView,
   StoreDecorationView
-} from "./types";
+} from "../types";
 
 /**
  * 装修编辑器（详情页侧栏抽屉）：

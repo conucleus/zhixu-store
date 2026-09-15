@@ -7,7 +7,7 @@ import type {
   StoreJoinApplicationDetailView,
   StoreJoinApplicationStatus
 } from "./types";
-import { shortValue } from "../shared/frontend";
+import { shortValue } from "../lib/frontend";
 
 type JoinListState =
   | { readonly status: "loading" }

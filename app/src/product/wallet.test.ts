@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { PRODUCT_SUBMIT_DOMAIN_VERSION } from "@uvp-eth/protocol-bindings";
-import { signTypedData, TypedDataMismatchError, validateTypedDataForSigning } from "./wallet";
+import { requestWalletAccount, signTypedData, TypedDataMismatchError, validateTypedDataForSigning, WalletRejectedError } from "./wallet";
 
 const WALLET = "0xAbC0000000000000000000000000000000000001";
 
@@ -12,7 +12,9 @@ const validSubmitTypedData = {
     chainId: 31337,
     verifyingContract: "0x0000000000000000000000000000000000000001"
   },
-  types: { UVPStateMachineSignal: [] },
+  // 单源签名闸门要求 types[primaryType] 是非空字段表：部分钱包/中转层会
+  // 剥离字段定义，测试夹具必须携带真实字段表才能代表可签信封。
+  types: { UVPStateMachineSignal: [{ name: "submitter", type: "address" }] },
   primaryType: "UVPStateMachineSignal",
   message: {
     submitter: WALLET
@@ -180,6 +182,17 @@ describe("pre-signature typed data validation", () => {
     }
   });
 
+  it("rejects a typed data envelope whose primary type field table is missing or empty", () => {
+    // 部分钱包/中转层会改写 types：字段表被剥离的信封在调钱包前拒绝
+    // （单源签名闸门新增的并集校验面）。
+    for (const types of [undefined, {}, { UVPStateMachineSignal: [] }]) {
+      expectMismatch(
+        () => validateTypedDataForSigning({ ...validSubmitTypedData, types }, submitExpectation, WALLET),
+        "types\\[UVPStateMachineSignal\\]"
+      );
+    }
+  });
+
   it("refuses to sign tampered data before ever touching the wallet", async () => {
     // window.ethereum 未定义：如果校验被绕过，错误会是 wallet_not_connected 而不是 mismatch。
     await assert.rejects(
@@ -225,7 +238,7 @@ describe("pre-signature typed data validation", () => {
   it("validates trigger-order typed data against its own expectation", () => {
     const triggerTypedData = {
       domain: validSubmitTypedData.domain,
-      types: { UVPStateMachineTriggerOrderFromOutside: [] },
+      types: { UVPStateMachineTriggerOrderFromOutside: [{ name: "submitter", type: "address" }] },
       primaryType: "UVPStateMachineTriggerOrderFromOutside",
       message: { submitter: WALLET }
     };
@@ -241,5 +254,54 @@ describe("pre-signature typed data validation", () => {
       () => validateTypedDataForSigning(triggerTypedData, submitExpectation, WALLET),
       "primaryType"
     );
+  });
+});
+
+describe("wallet rejection detection", () => {
+  async function requestAccountError(requestError: unknown): Promise<unknown> {
+    (globalThis as { window?: unknown }).window = {
+      ethereum: {
+        request: async (): Promise<unknown> => {
+          throw requestError;
+        }
+      }
+    };
+    try {
+      await requestWalletAccount();
+      return undefined;
+    } catch (error) {
+      return error;
+    } finally {
+      delete (globalThis as { window?: unknown }).window;
+    }
+  }
+
+  it("maps provider code 4001 to WalletRejectedError", async () => {
+    assert.ok(await requestAccountError({ code: 4001 }) instanceof WalletRejectedError);
+  });
+
+  it("maps wallet rejection phrasings beyond the literal word reject", async () => {
+    for (const message of [
+      "User denied transaction.",
+      "User denied message signature",
+      "User cancelled the request.",
+      "Request canceled by user"
+    ]) {
+      const error = await requestAccountError(new Error(message));
+      assert.ok(
+        error instanceof WalletRejectedError,
+        `expected WalletRejectedError for ${JSON.stringify(message)}, got ${String(error)}`
+      );
+    }
+  });
+
+  it("passes non-rejection failures through untouched", async () => {
+    for (const message of ["Network unreachable", "signature failed", "internal error"]) {
+      const error = await requestAccountError(new Error(message));
+      assert.ok(
+        !(error instanceof WalletRejectedError),
+        `expected a plain failure for ${JSON.stringify(message)}, got WalletRejectedError`
+      );
+    }
   });
 });

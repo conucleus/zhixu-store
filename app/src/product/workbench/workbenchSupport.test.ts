@@ -165,6 +165,35 @@ describe("task evidence plan (schema-driven)", () => {
     assert.equal(plan.mode, "none");
     assert.deepEqual(plan.slots.map((slot) => slot.key), ["resource-requirement:fallback_doc"]);
   });
+
+  it("merges spec slots with structured resource requirements into one todo view (evidence rules §2.2)", () => {
+    const plan = planTaskEvidence({
+      evidenceSpec: [{ key: "customs_declaration_pdf", label: "报关单", accept: ["application/pdf"] }],
+      resourceRequirements: [
+        { resourceId: "inspection_report", label: "第三方检验证明", required: true, source: "resource_patch", resourceType: "document" },
+        { resourceId: "internal_meta", label: "内部元数据", required: false, source: "plan_default", resourceType: "metadata" }
+      ]
+    });
+    assert.equal(plan.mode, "spec");
+    // spec 与资源要求并存时两者都进上传槽位；metadata 型资源仍被排除。
+    assert.deepEqual(plan.slots.map((slot) => [slot.key, slot.documentType]), [
+      ["customs_declaration_pdf", "customs_declaration_pdf"],
+      ["resource-requirement:inspection_report", "document"]
+    ]);
+  });
+
+  it("deduplicates merged slots by documentType so one credential is not uploaded twice", () => {
+    const plan = planTaskEvidence({
+      evidenceSpec: [{ key: "document", label: "单据凭证" }],
+      resourceRequirements: [
+        { resourceId: "doc_copy", label: "同一单据的资源副本", required: true, source: "resource_patch", resourceType: "document" },
+        { resourceId: "site_photo", label: "现场照片", required: true, source: "participant_input" }
+      ]
+    });
+    // resourceType 与 spec key 同为 document 的资源要求已由 spec 槽位覆盖，
+    // 不重复渲染；未被覆盖的资源要求保留。
+    assert.deepEqual(plan.slots.map((slot) => slot.key), ["document", "resource-requirement:site_photo"]);
+  });
 });
 
 describe("evidence accept constraints", () => {
@@ -458,6 +487,13 @@ describe("invite link carries the one-time token", () => {
   it("builds the uvp-order-app entry link with invite + inviteToken query", () => {
     const link = inviteLinkForInvite("invite-9", "one-time-token", "https://order-app.test/");
     assert.equal(link, "https://order-app.test/?invite=invite-9&inviteToken=one-time-token");
+  });
+
+  it("refuses to fall back to the store origin when the order-app URL is unconfigured", () => {
+    // ?invite=&inviteToken= 的消费逻辑只在 uvp-order-app：回落本站 origin 会
+    // 产出死链并外泄一次性令牌（fail-closed，不生成假可用链接）。
+    assert.throws(() => inviteLinkForInvite("invite-9", "one-time-token"), /VITE_UVP_ORDER_APP_URL/u);
+    assert.throws(() => inviteLinkForInvite("invite-9", "one-time-token", "  "), /VITE_UVP_ORDER_APP_URL/u);
   });
 });
 

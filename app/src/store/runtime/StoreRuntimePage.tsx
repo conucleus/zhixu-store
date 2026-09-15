@@ -1,8 +1,8 @@
 import { AlertTriangle, CheckCircle2, CircleDashed, ClipboardCheck, Layers3, Loader2, ShieldCheck, Truck } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { readableStoreError, type StoreApiClient } from "./api";
-import type { StoreRuntimeSummaryDTO } from "./types";
+import { readableStoreError, type StoreApiClient } from "../api";
+import type { StoreRuntimeSummaryDTO } from "../types";
 
 type RuntimeState =
   | { readonly status: "loading" }

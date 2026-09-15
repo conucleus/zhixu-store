@@ -19,6 +19,39 @@ Zhixu Store 是 UVP 的链下经营入口。它面向现实中的机构与人员
 - Store 对自己的供应商资料和推荐负责；推荐结果停留在 Store 数据域。
 - 交易和业务签名遵循对应链上合约的权限规则。
 
+## 目录结构
+
+`src/` 按"装配 / 运营侧 / 参与者侧 / 共享"组织（意见书 B3）：
+
+```text
+src/
+├── app/            # 装配与入口路由：App.tsx（/store 与 /app、/orders 分流）
+├── main.tsx        # Vite 入口（index.html 固定引用 /src/main.tsx）
+├── store/          # 运营侧（Store Console）
+│   ├── StoreApp.tsx            # 运营台壳：会话、导航与视图装配
+│   ├── api.ts / session.ts / types.ts / wallet.ts   # Store API、会话与类型
+│   ├── StoreAccountPage / StoreJoinPage / StoreJoinEntry / StoreAnchorPanel
+│   ├── catalog/    # 检索（StoreSearchPage）、目录与详情查看（StoreZhixuDetailPage）
+│   ├── authoring/  # 装修与任务定义编辑（StoreDecorationEditor）
+│   ├── publishing/ # listing 导入与发布面板（StoreListingPanel，只消费既有编译/API）
+│   ├── suppliers/  # 供应商资料（StoreSupplierPage）
+│   ├── docking/    # 试拼沙箱（StoreDockingPage）
+│   └── runtime/    # 运行态观察（StoreRuntimePage）
+├── product/        # 参与者侧（订单工作台）
+│   ├── api.ts / wallet.ts / WalletLoginPanel.tsx / demo/  # 参与者侧共享模块
+│   ├── workbench/  # 编排入口 ProductWorkbenchApp + 流程/状态（useOrderDraftFlow、
+│   │               # useOrderRegistrationFlow、useTaskSubmissionFlow、
+│   │               # useProductWorkbenchData、workbenchSupport/Types）与
+│   │               # 工作台壳/通用组件/秩序库视图
+│   ├── order/      # CreateOrderPage、OrderOverviewPage、draftStatusLabel
+│   ├── signing/    # ParticipantsPage（参与方确认与订单启动）
+│   ├── tasks/      # TaskPage、SubmitPage
+│   └── evidence/   # EvidenceUploadZone
+└── shared/         # 两面共用的纯前端工具（frontend.ts）
+```
+
+页面归属与职责的迁移对照见 git 历史 `refactor(govern)` 提交（意见书 B3 工作包）。
+
 ## 运行
 
 ```bash
@@ -30,8 +63,10 @@ pnpm run dev
 主要环境变量：
 
 - `VITE_UVP_CHAIN_SERVICES_URL`: Chain Services 地址
+- `VITE_UVP_ORDER_APP_URL`: uvp-order-app 部署地址。参与方邀请链接（`?invite=&inviteToken=`）的消费逻辑只在 uvp-order-app，本站不读这组参数；缺配置时邀请链接 fail-closed 拒绝生成（不产出死链、不外泄一次性令牌），邀请创建本身不受影响。
+- `VITE_UVP_STATE_MACHINE_ADDRESS`: 状态机部署地址，签名域交叉核对的预期值；缺配置时拒绝签名。
 
-前端只读取这些当前变量名。身份只认登录会话与环境变量，仓库不含 mock/demo 运行路径。
+完整清单与缺省行为见 `.env.example`。前端只读取这些当前变量名。身份只认登录会话与环境变量，仓库不含 mock/demo 运行路径。
 
 ## 验证
 

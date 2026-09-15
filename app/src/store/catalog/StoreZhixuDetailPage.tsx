@@ -14,13 +14,13 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { readableStoreError, type StoreApiClient } from "./api";
-import { StoreAnchorPanel, joinEntrySuppressed, joinSuppressionReason } from "./StoreAnchorPanel";
-import { StoreDecorationEditor } from "./StoreDecorationEditor";
-import { StoreJoinEntry } from "./StoreJoinEntry";
+import { readableStoreError, type StoreApiClient } from "../api";
+import { StoreAnchorPanel, joinEntrySuppressed, joinSuppressionReason } from "../StoreAnchorPanel";
+import { StoreDecorationEditor } from "../authoring/StoreDecorationEditor";
+import { StoreJoinEntry } from "../StoreJoinEntry";
 import type { CapabilityPluginSource, StoreCapabilityReviewStatus, StoreZhixuDetailDTO } from "@uvp-eth/product-dto";
-import type { StoreAccessState, StoreZhixuOverlayView } from "./types";
-import { shortValue } from "../shared/frontend";
+import type { StoreAccessState, StoreZhixuOverlayView } from "../types";
+import { shortValue } from "../../lib/frontend";
 
 type DetailState =
   | { readonly status: "loading" }
