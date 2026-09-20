@@ -245,11 +245,9 @@ export function useTaskSubmissionFlow(input: {
         status: "failed",
         message: activeTask.status === "submitted"
           ? "已提交，正在等待链上确认，请勿重复提交"
-          : activeTask.status === "done"
-            ? "该待办已确认完成"
-            : activeTask.canSubmit === false
-              ? "当前钱包暂不能提交此待办"
-              : (activeTask.blockedReason ?? "当前待办不可提交")
+          : activeTask.canSubmit === false
+            ? "当前钱包暂不能提交此待办"
+            : (activeTask.blockedReason ?? "当前待办不可提交")
       });
       return;
     }

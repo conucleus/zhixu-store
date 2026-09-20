@@ -1,6 +1,16 @@
 import { expect, test } from "@playwright/test";
 import { assertOrdinaryPageCopy } from "./product-assertions";
-import { installWorkbenchRoutes, STUB_API_BASE, stubSpeclessTask, stubOrder, stubTask, stubZhixu, stubParticipant, stubParticipants } from "./workbench-stubs";
+import {
+  installStubWallet,
+  installWorkbenchRoutes,
+  STUB_API_BASE,
+  stubSpeclessTask,
+  stubOrder,
+  stubTask,
+  stubZhixu,
+  stubParticipant,
+  stubParticipants
+} from "./workbench-stubs";
 
 test.describe("Product Workbench browser smoke", () => {
   test("renders catalog, order, and task pages against stubbed product API", async ({ page }, testInfo) => {
@@ -211,6 +221,62 @@ test.describe("Product Workbench browser smoke", () => {
     await expect(page.getByText("请连接浏览器钱包后再确认提交")).toBeVisible();
     await expect(page.getByText(/提交记录待创建/)).toBeVisible();
     await assertOrdinaryPageCopy(page);
+  });
+
+  test("submits through the signing gate with a real-shaped typedData stub and a stub wallet", async ({ page }) => {
+    await installWorkbenchRoutes(page);
+    // 桩钱包（链 31337 与桩 typedData.domain 一致）：真实穿过
+    // 信封校验 → 链核对 → eth_signTypedData_v4 的完整签名闸，而不是
+    // 在无钱包处 fail-closed 提前收尾——空字段表的旧桩在信封校验即被拒，
+    // happy-path 覆盖并不存在。
+    await installStubWallet(page);
+    await page.goto("/app");
+    await page.getByRole("button", { name: /待办/ }).first().click();
+    await expect(page.getByTestId("task-detail-page")).toBeVisible();
+
+    await page.getByTestId("task-field-customs_declaration_no").fill("2026-001234");
+    await page.getByTestId("task-field-export_port").fill("洋山港");
+    await page.getByTestId("task-field-completion_date").fill("2026-08-01");
+    await page.getByTestId("task-file-input-customs_declaration_pdf").setInputFiles({
+      name: "出口报关单.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("%PDF-1.4 e2e evidence")
+    });
+    await expect(page.getByText("凭证已上传，指纹已生成")).toBeVisible();
+
+    await page.getByTestId("task-confirm-button").click();
+    await expect(page.getByRole("heading", { name: "确认出口报关完成 / 提交结果" })).toBeVisible();
+    await page.getByTestId("submit-confirm-button").click();
+
+    // 签名闸放行真实形态 typedData → 提交 → 轮询确认
+    await expect(page.getByText("提交已确认，订单页稍后会同步最新状态")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("已提交：确认出口报关完成")).toBeVisible();
+  });
+
+  test("registers an order through the trigger signing gate with a real-shaped typedData stub", async ({ page }) => {
+    await installWorkbenchRoutes(page, {
+      overrides: {
+        // 全部关键参与方已接受：启动门槛（requiredReady）打开
+        "/product/orders/draft-3001/participants": {
+          body: { participants: stubParticipants.map((participant) => ({ ...participant, status: "accepted" })) }
+        }
+      }
+    });
+    await installStubWallet(page);
+    await page.goto("/app");
+    await page.getByRole("button", { name: "查看秩序详情" }).first().click();
+    await page.getByTestId("zhixu-create-order-button").click();
+    await page.getByLabel(/订单名称/).fill("启动链路 e2e 订单");
+    await page.getByLabel(/业务类型/).fill("车辆");
+    await page.getByLabel(/总金额/).fill("10000");
+    await page.getByLabel("币种").selectOption("USDC");
+    await page.getByTestId("create-draft-button").click();
+    await page.getByTestId("next-participants-button").click();
+    await expect(page.getByRole("heading", { name: "邀请参与方确认职责" })).toBeVisible();
+
+    await page.getByTestId("register-order-button").click();
+    // prepare-trigger 的 typedData 通过签名闸后广播启动
+    await expect(page.getByText("订单已启动，正在等待订单页同步")).toBeVisible({ timeout: 15_000 });
   });
 
   test("blocks submit after fields change post-upload until the evidence is re-uploaded", async ({ page }) => {

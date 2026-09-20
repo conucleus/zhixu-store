@@ -451,12 +451,12 @@ describe("submit terminal gate (server authority + session final state)", () => 
   });
 
   it("keeps non-open or unauthorized tasks out of the submit entry (fail-closed)", () => {
-    // status/canSubmit 是 DTO 的服务端权威门：已提交待索引、已完成、受阻、
-    // 钱包无提交权的任务都不呈现可提交入口。
+    // status/canSubmit 是 DTO 的服务端权威门：已提交待索引、受阻、钱包
+    // 无提交权的任务都不呈现可提交入口（服务端任务词表只有
+    // open/submitted/blocked）。
     assert.equal(canSubmitWorkbenchTask(task("open"), "idle"), true);
     assert.equal(canSubmitWorkbenchTask(task("open", false), "idle"), false);
     assert.equal(canSubmitWorkbenchTask(task("submitted"), "idle"), false);
-    assert.equal(canSubmitWorkbenchTask(task("done"), "idle"), false);
     assert.equal(canSubmitWorkbenchTask(task("blocked"), "idle"), false);
   });
 

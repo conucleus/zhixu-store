@@ -457,13 +457,6 @@ body {
   background: #f8fafc;
 }
 
-.catalog-toolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 18px;
-  align-items: center;
-}
-
 .catalog-search {
   display: flex;
   align-items: center;
@@ -3782,7 +3775,6 @@ body {
   .store-detail-grid,
   .store-docking-layout,
   .store-docking-selects,
-  .catalog-toolbar,
   .catalog-card,
   .submit-layout {
     grid-template-columns: 1fr;

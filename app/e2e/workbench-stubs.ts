@@ -1,5 +1,9 @@
 import type { Page } from "@playwright/test";
-import { PRODUCT_SUBMIT_DOMAIN_VERSION } from "@uvp-eth/protocol-bindings";
+import {
+  PRODUCT_SUBMIT_DOMAIN_VERSION,
+  PRODUCT_SUBMIT_TYPED_DATA_FIELDS,
+  TRIGGER_ORDER_FROM_OUTSIDE_TYPED_DATA_FIELDS
+} from "@uvp-eth/protocol-bindings";
 import { customsDemoTaskConfig } from "../src/product/demo/customs-demo-config";
 
 /**
@@ -204,6 +208,12 @@ export const stubEvidence = {
   createdAt: "2026-01-01T00:00:00.000Z"
 };
 
+/** 桩钱包地址：eth_requestAccounts/typedData message.submitter 共用。 */
+export const stubWalletAddress = "0xabc0000000000000000000000000000000000001";
+
+/** bytes32 桩值：0x + 64 位十六进制，与服务端 normalizeBytes32 产物同形。 */
+const b32 = (fill: string): string => `0x${fill.padEnd(64, "0").slice(0, 64)}`;
+
 export const stubPreparedSubmit = {
   prepareId: "prepare-6001",
   taskId: stubTask.taskId,
@@ -214,11 +224,13 @@ export const stubPreparedSubmit = {
     stage: stubTask.stageName,
     action: "确认本阶段完成",
     payloadHash: stubEvidence.payloadHash,
-    submitter: "0xabc0000000000000000000000000000000000001",
+    submitter: stubWalletAddress,
     validUntil: "2026-01-01T01:00:00.000Z"
   },
-  // 与 protocol-bindings buildProductSubmitTypedData 的真实结构一致：
-  // 前端签名前会校验 primaryType/domain/submitter，桩数据必须能通过校验。
+  // 与 protocol-bindings buildProductSubmitTypedData 的真实结构一致：字段表
+  // 直接引用单源常量（签名闸校验 types[primaryType] 非空字段数组 + 全部
+  // 签名绑定字段），空字段表的桩会被签名闸以 primary-type-fields 拒签，
+  // happy-path 覆盖随即失效。
   typedData: {
     domain: {
       name: "UVPStateMachine",
@@ -226,10 +238,17 @@ export const stubPreparedSubmit = {
       chainId: 31337,
       verifyingContract: "0x0000000000000000000000000000000000000001"
     },
-    types: { UVPStateMachineSignal: [] },
+    types: { UVPStateMachineSignal: PRODUCT_SUBMIT_TYPED_DATA_FIELDS },
     primaryType: "UVPStateMachineSignal",
     message: {
-      submitter: "0xabc0000000000000000000000000000000000001"
+      planId: b32("01"),
+      orderId: b32("02"),
+      sourceId: b32("03"),
+      signalId: b32("04"),
+      payloadHash: stubEvidence.payloadHash,
+      idempotencyKey: b32("05"),
+      submitter: stubWalletAddress,
+      deadline: "1900000000"
     }
   }
 };
@@ -269,6 +288,34 @@ function matchOverride(pathname: string, overrides: WorkbenchStubOptions["overri
 
 async function fulfillJson(route: { fulfill(options: { status: number; contentType: string; body: string }): Promise<void> }, body: unknown, status = 200): Promise<void> {
   await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
+}
+
+/**
+ * 注入桩浏览器钱包（EIP-1193 最小面）：链 31337（0x7a69）与桩
+ * typedData.domain.chainId 一致——签名前的链核对需要钱包应答当前链。
+ * rejectSign 模拟用户拒签（code 4001）。
+ */
+export async function installStubWallet(page: Page, options: { readonly rejectSign?: boolean } = {}): Promise<void> {
+  await page.addInitScript(({ rejectSign, address }) => {
+    const provider = {
+      request: async ({ method }: { readonly method: string; readonly params?: readonly unknown[] }) => {
+        if (method === "eth_requestAccounts" || method === "eth_accounts") {
+          return [address];
+        }
+        if (method === "eth_chainId") {
+          return "0x7a69";
+        }
+        if (method === "eth_signTypedData_v4") {
+          if (rejectSign) {
+            throw { code: 4001, message: "User rejected the request" };
+          }
+          return `0x${"cc".repeat(65)}`;
+        }
+        throw new Error(`stub wallet: unsupported method ${method}`);
+      }
+    };
+    (window as typeof window & { ethereum?: typeof provider }).ethereum = provider;
+  }, { rejectSign: options.rejectSign === true, address: stubWalletAddress });
 }
 
 /** 安装 /product/** 页面级路由桩。未匹配的 /product 请求按 404 返回。 */
@@ -326,7 +373,9 @@ export async function installWorkbenchRoutes(page: Page, options: WorkbenchStubO
           draftId: stubDraft.draftId,
           orderId: stubOrder.orderId,
           expiresAt: "2026-01-01T01:00:00.000Z",
-          submitter: "0xabc0000000000000000000000000000000000001",
+          submitter: stubWalletAddress,
+          // 与 buildTriggerOrderFromOutsideTypedData 的真实结构一致（字段表
+          // 引用单源常量；空字段表会被签名闸拒签，启动 happy-path 失效）。
           typedData: {
             domain: {
               name: "UVPStateMachine",
@@ -334,10 +383,20 @@ export async function installWorkbenchRoutes(page: Page, options: WorkbenchStubO
               chainId: 31337,
               verifyingContract: "0x0000000000000000000000000000000000000001"
             },
-            types: { UVPStateMachineTriggerOrderFromOutside: [] },
+            types: { UVPStateMachineTriggerOrderFromOutside: TRIGGER_ORDER_FROM_OUTSIDE_TYPED_DATA_FIELDS },
             primaryType: "UVPStateMachineTriggerOrderFromOutside",
             message: {
-              submitter: "0xabc0000000000000000000000000000000000001"
+              planId: b32("11"),
+              creator: stubWalletAddress,
+              triggerHookId: b32("12"),
+              triggerStageId: b32("13"),
+              sourceId: b32("14"),
+              signalId: b32("15"),
+              payloadHash: b32("16"),
+              idempotencyKey: b32("17"),
+              authorizationsHash: b32("18"),
+              submitter: stubWalletAddress,
+              deadline: "1900000000"
             }
           }
         }

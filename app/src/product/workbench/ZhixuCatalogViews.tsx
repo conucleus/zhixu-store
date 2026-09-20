@@ -10,7 +10,6 @@ import {
   HelpCircle,
   Layers3,
   PackageCheck,
-  Search,
   ShieldCheck,
   UserCheck,
   WalletCards
@@ -63,8 +62,6 @@ export function ParticipantAppPage({
 }) {
   const openTasks = data.tasks.filter((task) => task.status === "open");
   const blockedTasks = data.tasks.filter((task) => task.status === "blocked");
-  // submitted 是"等待链上确认"的中间态，与 done 并列"最近完成"会提前宣布成功。
-  const completedTasks = data.tasks.filter((task) => task.status === "done");
   const primaryTask = openTasks[0] ?? data.activeTask;
   const zhixu = data.zhixus.find((item) => item.zhixuId === selectedZhixuId) ?? data.zhixu;
   const canCreate = zhixu ? canCreateProductOrder(zhixu) : false;
@@ -152,11 +149,6 @@ export function ParticipantAppPage({
               </div>
             ) : <InlineEmpty text="暂无已审核秩序" />}
           </SidePanel>
-          <SidePanel title="最近完成">
-            {completedTasks.length > 0 ? completedTasks.map((task) => (
-              <MiniTask key={task.taskId} title={task.title} detail={task.proofSummary?.label ?? "已完成"} onClick={onOrder} />
-            )) : <InlineEmpty text="暂无已完成待办" />}
-          </SidePanel>
         </aside>
       </div>
     </section>
@@ -187,7 +179,6 @@ export function CatalogPage({
   onTask: (taskId: string) => void;
 }) {
   const canCreate = canCreateProductOrder(zhixu);
-  const catalogFilters = [...new Set(["全部", ...zhixu.applicableBusiness])];
   const roleSummary = zhixu.roleSlots.slice(0, 3).map((slot) => slot.title).join("、") || "各参与角色";
   return (
     <section className="page-shell" data-testid="catalog-page">
@@ -207,18 +198,6 @@ export function CatalogPage({
           <SideMetric icon={<ClipboardCheck />} label="我的待办" value={task?.title ?? "暂无待办"} />
         </aside>
       </section>
-
-      <div className="catalog-toolbar">
-        <label className="catalog-search">
-          <Search />
-          <input placeholder="搜索业务、角色或凭证" />
-        </label>
-        <div className="catalog-filter-row">
-          {catalogFilters.map((item, index) => (
-            <button className={`filter-chip ${index === 0 ? "is-active" : ""}`} key={item}>{item}</button>
-          ))}
-        </div>
-      </div>
 
       <div className="content-layout">
         <div className="main-stack">
@@ -486,26 +465,23 @@ function participantTaskStatusLabel(status: ProductTaskDTO["status"]): string {
   switch (status) {
     case "open":
       return "待处理";
-    case "submitted":
-      return "已提交";
-    case "done":
-      return "已完成";
     case "blocked":
       return "已阻塞";
+    default:
+      // 服务端任务词表只有 open/submitted/blocked。
+      return "已提交";
   }
 }
 
-function participantTaskStatusTone(status: ProductTaskDTO["status"]): "info" | "warning" | "success" {
+function participantTaskStatusTone(status: ProductTaskDTO["status"]): "info" | "warning" {
   switch (status) {
     case "open":
       return "info";
     case "blocked":
       return "warning";
-    // submitted 是等待链上确认的中间态：标签如实说"已提交"，色调不得提前用成功色宣布完成。
-    case "submitted":
+    default:
+      // submitted 是等待链上确认的中间态：标签如实说"已提交"，色调不得提前用成功色宣布完成。
       return "info";
-    case "done":
-      return "success";
   }
 }
 
@@ -524,15 +500,6 @@ function pluginKindLabel(kind: FulfillmentPluginKind | undefined): string {
     default:
       return "阶段待办";
   }
-}
-
-function MiniTask({ title, detail, onClick }: { title: string; detail: string; onClick: () => void }) {
-  return (
-    <button className="quick-order-card" onClick={onClick}>
-      <strong>{title}</strong>
-      <span>{detail}</span>
-    </button>
-  );
 }
 
 function FactRow({ icon, label, value, danger }: { icon: ReactNode; label: string; value: string; danger?: boolean }) {
