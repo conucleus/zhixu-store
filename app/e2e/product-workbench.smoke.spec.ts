@@ -4,6 +4,7 @@ import {
   installStubWallet,
   installWorkbenchRoutes,
   STUB_API_BASE,
+  stubPreparedSubmit,
   stubSpeclessTask,
   stubOrder,
   stubTask,
@@ -251,6 +252,47 @@ test.describe("Product Workbench browser smoke", () => {
     // 签名闸放行真实形态 typedData → 提交 → 轮询确认
     await expect(page.getByText("提交已确认，订单页稍后会同步最新状态")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("已提交：确认出口报关完成")).toBeVisible();
+  });
+
+  test("refuses to submit when the prepared signing domain disagrees with the task projection's state machine address", async ({ page }) => {
+    // 被攻陷 BFF 单独换 prepare 信封的签名域（任务投影声明的部署地址不变）：
+    // 交叉核对门必须在调钱包之前拒绝，不产生签名与提交记录。
+    await installWorkbenchRoutes(page, {
+      overrides: {
+        "/product/tasks/task-2001/prepare-submit": {
+          body: {
+            ...stubPreparedSubmit,
+            typedData: {
+              ...stubPreparedSubmit.typedData,
+              domain: { ...stubPreparedSubmit.typedData.domain, verifyingContract: "0x000000000000000000000000000000000000dead" }
+            }
+          }
+        }
+      }
+    });
+    await installStubWallet(page);
+    await page.goto("/app");
+    await page.getByRole("button", { name: /待办/ }).first().click();
+    await expect(page.getByTestId("task-detail-page")).toBeVisible();
+
+    await page.getByTestId("task-field-customs_declaration_no").fill("2026-001234");
+    await page.getByTestId("task-field-export_port").fill("洋山港");
+    await page.getByTestId("task-field-completion_date").fill("2026-08-01");
+    await page.getByTestId("task-file-input-customs_declaration_pdf").setInputFiles({
+      name: "出口报关单.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("%PDF-1.4 e2e evidence")
+    });
+    await expect(page.getByText("凭证已上传，指纹已生成")).toBeVisible();
+
+    await page.getByTestId("task-confirm-button").click();
+    await expect(page.getByRole("heading", { name: "确认出口报关完成 / 提交结果" })).toBeVisible();
+    await page.getByTestId("submit-confirm-button").click();
+
+    await expect(page.getByText(/签名域与任务投影声明的状态机部署地址不一致/)).toBeVisible({ timeout: 15_000 });
+    // 签名未发生：没有提交记录，也绝不进入"等待确认"。
+    await expect(page.getByText(/提交记录待创建/)).toBeVisible();
+    await expect(page.getByText("提交处理中，等待确认")).toHaveCount(0);
   });
 
   test("registers an order through the trigger signing gate with a real-shaped typedData stub", async ({ page }) => {

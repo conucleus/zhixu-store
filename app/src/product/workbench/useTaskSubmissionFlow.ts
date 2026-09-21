@@ -23,6 +23,7 @@ import { createInflightGuard, createKeyedInflightGuard } from "../../shared/chai
 import {
   FRAMEWORK_STAGE_FIELD_KEY,
   advanceScopeGeneration,
+  assertTypedDataDomainMatchesStateMachineAddress,
   canSubmitWorkbenchTask,
   delay,
   evidenceMetadataSignature,
@@ -324,6 +325,10 @@ export function useTaskSubmissionFlow(input: {
         prepared: preparedResult.data,
         source: preparedResult.source
       });
+      // 订单启动流同型核对门：任务投影声明的状态机部署地址先与 prepare
+      // 信封的签名域核对，再叠加构建期部署配置预期——投影未声明地址即
+      // fail-closed 拒签，不做单预期放行。
+      assertTypedDataDomainMatchesStateMachineAddress(preparedResult.data.typedData, activeTask.stateMachineAddress, "任务投影");
       // 与 executor-kit 同边界：签名前校验 typedData 的 primaryType、domain 和 submitter，
       // prepared 记录与 typedData 声明的提交方必须一致，防止换签名对象。
       // verifyingContract 预期来自部署配置注入（独立来源，不读同一 BFF 响应

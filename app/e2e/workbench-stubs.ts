@@ -98,6 +98,9 @@ export const stubOrder = {
 export const stubTask = {
   taskId: "task-2001",
   orderId: stubOrder.orderId,
+  // 任务投影恒携带的状态机部署地址（服务端 StateMachineTaskProjection 必填
+  // 字段）：任务提交签名前的域交叉核对以它为第二来源。
+  stateMachineAddress: "0x0000000000000000000000000000000000000001",
   orderTitle: stubOrder.title,
   zhixuId: stubZhixu.zhixuId,
   title: "提交出口报关凭证",

@@ -6,6 +6,7 @@ import {
   type TaskEvidenceSpecDTO,
   type ZhixuSummaryDTO
 } from "@uvp-eth/product-dto";
+import { isRecord } from "../../lib/frontend";
 import type { ProductSubmissionStatus } from "../api";
 import type { SubmitMachineStatus } from "./workbenchTypes";
 import {
@@ -274,6 +275,30 @@ export function stateMachineSignExpectation(env: SignDomainEnv = buildTimeSignDo
     throw new Error("状态机部署地址未配置（构建期环境变量 VITE_UVP_STATE_MACHINE_ADDRESS），无法交叉核对签名域，已拒绝签名");
   }
   return { verifyingContract: address };
+}
+
+/**
+ * 签名域交叉核对的流程内第二来源（订单启动=prepare 信封 trigger 记录、
+ * 任务提交=任务投影各自声明的状态机部署地址）：typedData.domain.
+ * verifyingContract 必须与该声明一致才放行签名。与构建期部署配置预期
+ * （stateMachineSignExpectation）构成双重核对——被攻陷的 BFF 让信封自洽
+ * 也过不了部署配置那一关；声明缺失或与签名域不一致都在调钱包之前
+ * fail-closed 拒签。
+ */
+export function assertTypedDataDomainMatchesStateMachineAddress(
+  typedData: unknown,
+  declaredAddress: string | undefined,
+  declaredSource: string
+): void {
+  const domain = isRecord(typedData) ? typedData.domain : undefined;
+  const verifyingContract = isRecord(domain) ? domain.verifyingContract : undefined;
+  const declared = declaredAddress?.trim().toLowerCase();
+  if (!declared) {
+    throw new Error(`${declaredSource}未声明状态机部署地址，无法交叉核对签名域，已拒绝签名`);
+  }
+  if (typeof verifyingContract !== "string" || verifyingContract.trim().toLowerCase() !== declared) {
+    throw new Error(`签名域与${declaredSource}声明的状态机部署地址不一致，已拒绝签名`);
+  }
 }
 
 function buildTimeSignDomainEnv(): SignDomainEnv {

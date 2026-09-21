@@ -9,6 +9,7 @@ import {
   acceptAllowsFile,
   acceptAttribute,
   acceptHint,
+  assertTypedDataDomainMatchesStateMachineAddress,
   canCreateProductOrder,
   canSubmitWorkbenchTask,
   acceptIncludesPdf,
@@ -480,6 +481,38 @@ describe("signing domain expectation from deployment config", () => {
   it("refuses to sign when the deployment config is missing or invalid (no conditional skip)", () => {
     assert.throws(() => stateMachineSignExpectation({}), /VITE_UVP_STATE_MACHINE_ADDRESS/u);
     assert.throws(() => stateMachineSignExpectation({ VITE_UVP_STATE_MACHINE_ADDRESS: "0x1234" }), /VITE_UVP_STATE_MACHINE_ADDRESS/u);
+  });
+});
+
+describe("signing domain cross-check against the in-flow declared state machine address", () => {
+  const declared = "0x0000000000000000000000000000000000000001";
+  const typedData = (verifyingContract: string) => ({
+    domain: { name: "UVPStateMachine", verifyingContract }
+  });
+
+  it("passes when the typed-data domain matches the declared address (case-insensitive)", () => {
+    assert.doesNotThrow(() =>
+      assertTypedDataDomainMatchesStateMachineAddress(typedData("0X0000000000000000000000000000000000000001"), declared, "任务投影"));
+  });
+
+  it("refuses before the wallet when the domain disagrees with the declared address", () => {
+    // 被攻陷 BFF 单独换签名域（流程侧声明不变）：核对门必须在调钱包前拒绝。
+    assert.throws(
+      () => assertTypedDataDomainMatchesStateMachineAddress(typedData("0x000000000000000000000000000000000000dead"), declared, "prepare 记录"),
+      /签名域与prepare 记录声明的状态机部署地址不一致/u
+    );
+  });
+
+  it("fails closed when the in-flow declaration is absent (single-expectation signing is not allowed)", () => {
+    assert.throws(
+      () => assertTypedDataDomainMatchesStateMachineAddress(typedData(declared), undefined, "任务投影"),
+      /任务投影未声明状态机部署地址/u
+    );
+  });
+
+  it("refuses typed data that carries no usable domain", () => {
+    assert.throws(() => assertTypedDataDomainMatchesStateMachineAddress({}, declared, "任务投影"), /状态机部署地址不一致/u);
+    assert.throws(() => assertTypedDataDomainMatchesStateMachineAddress("not-a-record", declared, "任务投影"), /状态机部署地址不一致/u);
   });
 });
 
