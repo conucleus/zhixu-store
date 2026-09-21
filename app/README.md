@@ -64,7 +64,7 @@ pnpm run dev
 
 - `VITE_UVP_CHAIN_SERVICES_URL`: Chain Services 地址
 - `VITE_UVP_ORDER_APP_URL`: uvp-order-app 部署地址。参与方邀请链接（`?invite=&inviteToken=`）的消费逻辑只在 uvp-order-app，本站不读这组参数；缺配置时邀请链接 fail-closed 拒绝生成（不产出死链、不外泄一次性令牌），邀请创建本身不受影响。
-- `VITE_UVP_STATE_MACHINE_ADDRESS`: 状态机部署地址，签名域交叉核对的预期值；缺配置或格式非法时拒绝签名。它是构建期钉死的单地址（Vite 内联进产物，运行期改环境变量不生效）：状态机部署轮换（activeDeployment 指针前移）后必须重建前端，签名域门才会按新地址核对；在途老订单的任务 typedData 域是老合约地址，会被该门拒绝，需老代际订单迁移完毕再轮换；不支持代际并存（allowlist 化是已知后续方向）。`.env.example` 里的示例值是格式非法占位：照抄部署会走"地址未配置"的显式报错分支，而不是以全零地址通过格式门后在每次签名时报"与 0x0… 不一致"。
+- `VITE_UVP_STATE_MACHINE_ADDRESS`: 状态机部署地址，签名域交叉核对的预期值；缺配置或格式非法时拒绝签名。它是构建期钉死的单地址（Vite 内联进产物，运行期改环境变量不生效）：状态机部署轮换（activeDeployment 指针前移）后必须重建前端，签名域门才会按新地址核对；同一时间只支持一个部署地址。`.env.example` 里的示例值是格式非法占位：照抄部署会走"地址未配置"的显式报错分支，而不是以全零地址通过格式门后在每次签名时报"与 0x0… 不一致"。
 
 完整清单与缺省行为见 `.env.example`。前端只读取这些当前变量名。身份只认登录会话与环境变量，仓库不含 mock/demo 运行路径。
 
