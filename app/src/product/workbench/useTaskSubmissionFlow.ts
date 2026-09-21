@@ -1,5 +1,9 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { PRODUCT_SUBMIT_DOMAIN_VERSION } from "@uvp-eth/protocol-bindings";
+import {
+  PRODUCT_SUBMIT_DOMAIN_NAME,
+  PRODUCT_SUBMIT_DOMAIN_VERSION,
+  PRODUCT_SUBMIT_PRIMARY_TYPE
+} from "@uvp-eth/protocol-bindings";
 import type { ProductTaskDTO } from "@uvp-eth/product-dto";
 import type {
   EvidenceObjectDTO,
@@ -325,8 +329,8 @@ export function useTaskSubmissionFlow(input: {
       // verifyingContract 预期来自部署配置注入（独立来源，不读同一 BFF 响应
       // 里的任务投影地址），缺配置即拒绝签名，不再条件性跳过比对。
       const signature = await signTypedData(account, preparedResult.data.typedData, {
-        primaryType: "UVPStateMachineSignal",
-        domainName: "UVPStateMachine",
+        primaryType: PRODUCT_SUBMIT_PRIMARY_TYPE,
+        domainName: PRODUCT_SUBMIT_DOMAIN_NAME,
         // 协议冻结面：domain.version 以 protocol-bindings 导出的常量为唯一来源。
         domainVersion: PRODUCT_SUBMIT_DOMAIN_VERSION,
         verifyingContract: stateMachineSignExpectation().verifyingContract,

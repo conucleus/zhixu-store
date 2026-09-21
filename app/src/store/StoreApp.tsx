@@ -133,12 +133,13 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
     return data;
   }
 
-  function handleSessionChanged(token?: string | undefined, expiresAt?: string | undefined): void {
-    if (token !== undefined) {
-      storeStoreSessionToken({ token, ...(expiresAt ? { expiresAt } : {}) });
-      setSessionToken(token);
-      return;
-    }
+  /** 新会话落盘：过期时间由服务端会话响应声明（必填），与读取端口径一致。 */
+  function handleSessionEstablished(session: { readonly token: string; readonly expiresAt: string }): void {
+    storeStoreSessionToken(session);
+    setSessionToken(session.token);
+  }
+
+  function handleSessionCleared(): void {
     // 退出：token 与会话态立即同步清除，权限门随 access 回到引导态。
     storeStoreSessionToken(undefined);
     setSession(undefined);
@@ -153,8 +154,7 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
     setLoginMessage(undefined);
     try {
       const result = await loginStoreSessionWithWallet(api);
-      storeStoreSessionToken({ token: result.verify.token, expiresAt: result.verify.session.expiresAt });
-      setSessionToken(result.verify.token);
+      handleSessionEstablished({ token: result.verify.token, expiresAt: result.verify.session.expiresAt });
       setLoginMessage(`已登录 ${shortValue(result.address)}`);
     } catch (error) {
       setLoginMessage(error instanceof Error ? error.message : "登录失败");
@@ -173,7 +173,7 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
     } catch {
       // token 已失效也按退出处理。
     }
-    handleSessionChanged(undefined);
+    handleSessionCleared();
     setLoginMessage("已退出会话");
     setLoginBusy(false);
   }
@@ -305,7 +305,7 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
       ) : null}
 
       {view === "account" ? (
-        <StoreAccountPage access={access} api={api} onSessionToken={handleSessionChanged} />
+        <StoreAccountPage access={access} api={api} onSessionEstablished={handleSessionEstablished} onSessionCleared={handleSessionCleared} />
       ) : null}
 
       {view === "join" ? (

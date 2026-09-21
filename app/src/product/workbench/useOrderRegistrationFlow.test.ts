@@ -31,7 +31,8 @@ function preparedTrigger(): PreparedOrderTriggerDTO {
     expiresAt: "2026-09-02T00:00:00.000Z",
     submitter: account.address,
     stateMachineAddress: "0x0000000000000000000000000000000000000001",
-    typedData: { domain: { name: "UVPStateMachine" } }
+    // 签名域与 prepare 记录声明的部署地址一致（启动链路签名前交叉核对）。
+    typedData: { domain: { name: "UVPStateMachine", verifyingContract: "0x0000000000000000000000000000000000000001" } }
   };
 }
 
@@ -125,5 +126,68 @@ describe("order registration scope guard", () => {
 
     // 旧作用域的错误不带入新目录视图（错误动作也被丢弃）。
     assert.equal(h.actions.some((action) => action.phase === "error"), false);
+  });
+});
+
+describe("order registration signing gates", () => {
+  /** 记录签名调用的 deferred 桩：核对门失败时签名必须一次都没被调用。 */
+  function recordingHarness(): {
+    readonly deferred: ReturnType<typeof deferredApi>;
+    readonly signed: unknown[];
+    readonly actions: ActionState[];
+    readonly start: () => Promise<void>;
+  } {
+    const deferred = deferredApi();
+    const actions: ActionState[] = [];
+    const signed: unknown[] = [];
+    const start = () => executeOrderRegistration({
+      api: deferred.api,
+      ensureDraft: async () => draft,
+      onRegistered: () => undefined,
+      setAction: (action) => actions.push(action),
+      isStale: () => false,
+      requestAccount: async () => account,
+      sign: async (_account, typedData) => {
+        signed.push(typedData);
+        return "0xsig";
+      },
+      signExpectation: () => ({ verifyingContract: "0x0000000000000000000000000000000000000001" })
+    });
+    return { deferred, signed, actions, start };
+  }
+
+  it("refuses to sign when the typed-data domain disagrees with the prepared record's state machine address", async () => {
+    // 被攻陷 BFF 单独换签名域（prepare 记录的 stateMachineAddress 不变）：
+    // 交叉核对在调钱包前拒绝，签名与 trigger 都不发生。
+    const h = recordingHarness();
+    const pending = h.start();
+    await tick();
+    const forgedDomain: PreparedOrderTriggerDTO = {
+      ...preparedTrigger(),
+      typedData: { domain: { name: "UVPStateMachine", verifyingContract: "0x000000000000000000000000000000000000dead" } }
+    };
+    h.deferred.resolvePrepare(forgedDomain);
+    await pending;
+
+    assert.deepEqual(h.signed, []);
+    const failure = h.actions.at(-1);
+    assert.equal(failure?.phase, "error");
+    assert.match(failure?.message ?? "", /状态机部署地址不一致/u);
+  });
+
+  it("signs after the cross-check when the prepared record and domain agree (case-insensitive)", async () => {
+    const h = recordingHarness();
+    const pending = h.start();
+    await tick();
+    const prepared: PreparedOrderTriggerDTO = {
+      ...preparedTrigger(),
+      typedData: { domain: { name: "UVPStateMachine", verifyingContract: "0X0000000000000000000000000000000000000001" } }
+    };
+    h.deferred.resolvePrepare(prepared);
+    await tick();
+    h.deferred.resolveTrigger({ ...draft, status: "triggered", triggeredOrderId: "order-1" });
+    await pending;
+
+    assert.equal(h.signed.length, 1);
   });
 });

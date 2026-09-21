@@ -19,11 +19,14 @@ type AddressesState =
 export function StoreAccountPage({
   access,
   api,
-  onSessionToken,
+  onSessionEstablished,
+  onSessionCleared,
 }: {
   readonly access: StoreAccessState;
   readonly api: StoreApiClient;
-  readonly onSessionToken: (token?: string | undefined, expiresAt?: string | undefined) => void;
+  /** 新会话（token + 服务端声明的过期时间）：登录路径必带两者。 */
+  readonly onSessionEstablished: (session: { readonly token: string; readonly expiresAt: string }) => void;
+  readonly onSessionCleared: () => void;
 }) {
   const [addressesState, setAddressesState] = useState<AddressesState>({ status: "idle" });
   const [busy, setBusy] = useState(false);
@@ -58,7 +61,7 @@ export function StoreAccountPage({
     try {
       const result = await loginStoreSessionWithWallet(api);
       setMessage(`已登录 ${shortValue(result.address)}（会话已锚定该地址）`);
-      onSessionToken(result.verify.token, result.verify.session.expiresAt);
+      onSessionEstablished({ token: result.verify.token, expiresAt: result.verify.session.expiresAt });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : readableStoreError(error, "登录失败"));
     } finally {
@@ -79,7 +82,7 @@ export function StoreAccountPage({
       // 服务端撤销失败也按退出处理：本地 token 不保留（与顶栏口径一致）。
       setMessage(`已退出本地会话（服务端撤销失败：${readableStoreError(error, "退出失败")}）`);
     } finally {
-      onSessionToken(undefined);
+      onSessionCleared();
       setBusy(false);
     }
   }

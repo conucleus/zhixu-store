@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   StoreApiError,
   createStoreApiClient,
+  parseStoreDockingSession,
   parseStoreRuntimeSummary,
   readableStoreError,
   readStoredStoreSessionToken,
@@ -129,6 +130,44 @@ describe("stored wallet session token expiry", () => {
       assert.equal(backing.has(STORE_SESSION_TOKEN_STORAGE_KEY), false);
     } finally {
       delete (globalThis as { window?: unknown }).window;
+    }
+  });
+});
+
+describe("docking session response gate", () => {
+  const creator = "0x0000000000000000000000000000000000000001";
+
+  it("keeps the server mirror's tenant basis (createdBy) as a consumed required field", () => {
+    const session = parseStoreDockingSession({
+      sessionId: "dock-1",
+      status: "draft",
+      createdBy: creator
+    });
+    assert.equal(session.createdBy, creator);
+    assert.equal(session.sessionId, "dock-1");
+  });
+
+  it("accepts the wrapped { session } response shape used by the create route", () => {
+    const session = parseStoreDockingSession({
+      session: { sessionId: "dock-2", status: "valid", createdBy: creator }
+    });
+    assert.equal(session.createdBy, creator);
+  });
+
+  it("rejects responses missing sessionId/status/createdBy instead of blind-casting", () => {
+    // createdBy 是服务端资源租户归属断言的比对基准：缺失的会话记录无法
+    // 判定归属，按畸形响应 fail-closed，不得以 undefined 冒充。
+    for (const malformed of [
+      { status: "draft", createdBy: creator },
+      { sessionId: "dock-1", createdBy: creator },
+      { sessionId: "dock-1", status: "draft" },
+      { sessionId: "dock-1", status: "unknown-status", createdBy: creator },
+      "not-a-record"
+    ]) {
+      assert.throws(
+        () => parseStoreDockingSession(malformed),
+        (error: unknown) => error instanceof StoreApiError && error.message === "docking_session_response_invalid"
+      );
     }
   });
 });

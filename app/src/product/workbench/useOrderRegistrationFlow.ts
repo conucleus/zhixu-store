@@ -1,6 +1,11 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { PRODUCT_SUBMIT_DOMAIN_VERSION } from "@uvp-eth/protocol-bindings";
+import {
+  PRODUCT_SUBMIT_DOMAIN_NAME,
+  PRODUCT_SUBMIT_DOMAIN_VERSION,
+  TRIGGER_ORDER_FROM_OUTSIDE_PRIMARY_TYPE
+} from "@uvp-eth/protocol-bindings";
 import type { ProductApiClient, ProductOrderDraftDTO } from "../api";
+import { isRecord } from "../../lib/frontend";
 import {
   requestWalletAccount,
   signTypedData,
@@ -33,6 +38,26 @@ export interface OrderRegistrationDeps {
 }
 
 /**
+ * prepare 记录声明的状态机地址与签名域交叉核对（PreparedOrderTriggerDTO.
+ * stateMachineAddress 的消费点）：构建期部署配置之外的第二独立来源，两个
+ * 预期都指向同一 typedData.domain.verifyingContract 才放行签名——被攻陷
+ * 的 BFF 让 prepare 信封自洽也过不了部署配置这一关。
+ */
+export function assertTriggerDomainMatchesPreparedStateMachine(
+  typedData: unknown,
+  stateMachineAddress: string
+): void {
+  const domain = isRecord(typedData) ? typedData.domain : undefined;
+  const verifyingContract = isRecord(domain) ? domain.verifyingContract : undefined;
+  if (
+    typeof verifyingContract !== "string" ||
+    verifyingContract.trim().toLowerCase() !== stateMachineAddress.trim().toLowerCase()
+  ) {
+    throw new Error("签名域与 prepare 记录声明的状态机部署地址不一致，已拒绝签名");
+  }
+}
+
+/**
  * 订单启动核心链路（prepare→签名→trigger），独立于 React 以便测试。
  * 每一步 await 之后都做作用域检查：切换目录会清空草稿，旧草稿的启动
  * 结果不得写进新选中 DTO 的界面（onRegistered 会被跳过）。
@@ -53,12 +78,15 @@ export async function executeOrderRegistration(deps: OrderRegistrationDeps): Pro
       return;
     }
     deps.setAction({ phase: "pending", message: "等待钱包授权", source: prepared.source });
+    // prepare 记录声明的部署地址先与签名域核对（api 层已 fail-closed 保证
+    // 地址必填）：与下方构建期注入的预期构成双重核对，任一不符即拒签。
+    assertTriggerDomainMatchesPreparedStateMachine(prepared.data.typedData, prepared.data.stateMachineAddress);
     // 与 executor-kit 同边界：签名前校验启动签名对象的 primaryType、domain 和 submitter；
     // verifyingContract 预期来自部署配置注入（独立来源，不读同一 prepare
     // 响应里的地址），缺配置即拒绝签名，防被攻陷 BFF 换域让钱包照签。
     const signature = await deps.sign(account, prepared.data.typedData, {
-      primaryType: "UVPStateMachineTriggerOrderFromOutside",
-      domainName: "UVPStateMachine",
+      primaryType: TRIGGER_ORDER_FROM_OUTSIDE_PRIMARY_TYPE,
+      domainName: PRODUCT_SUBMIT_DOMAIN_NAME,
       // 协议冻结面：domain.version 以 protocol-bindings 导出的常量为唯一来源。
       domainVersion: PRODUCT_SUBMIT_DOMAIN_VERSION,
       verifyingContract: (deps.signExpectation ?? stateMachineSignExpectation)().verifyingContract,

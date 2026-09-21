@@ -186,9 +186,14 @@ export function createStoreApiClient(
  */
 export const STORE_SESSION_TOKEN_STORAGE_KEY = "uvp-store-session-token";
 
+/**
+ * 落盘形状的过期时间必填：读取端（readStoredStoreSessionToken）把无
+ * expiresAt 的条目按损坏清除——写入口径与之一致，否则内存态有效的会话
+ * 重载即丢。退出登录走 storeStoreSessionToken(undefined)。
+ */
 interface StoredStoreSession {
   readonly token: string;
-  readonly expiresAt?: string | undefined;
+  readonly expiresAt: string;
 }
 
 export function readStoredStoreSessionToken(): string | undefined {
@@ -213,7 +218,7 @@ export function readStoredStoreSessionToken(): string | undefined {
 }
 
 export function storeStoreSessionToken(
-  session: { readonly token: string; readonly expiresAt?: string | undefined } | undefined,
+  session: StoredStoreSession | undefined,
 ): void {
   try {
     if (session) {
@@ -524,7 +529,7 @@ class BrowserStoreApiClient implements StoreApiClient {
     this.requireWriteAccess("/store/docking-sessions");
     return await this.realWrite("POST", "/store/docking-sessions", input).then(
       (result) => ({
-        data: dockingSessionFromResponse(result.data),
+        data: parseStoreDockingSession(result.data),
         source: result.source,
       }),
     );
@@ -535,7 +540,7 @@ class BrowserStoreApiClient implements StoreApiClient {
   ): Promise<StoreApiResult<StoreDockingSessionDTO>> {
     const pathname = `/store/docking-sessions/${encodeURIComponent(sessionId)}`;
     return await this.realRead("GET", pathname).then((result) => ({
-      data: dockingSessionFromResponse(result.data),
+      data: parseStoreDockingSession(result.data, pathname),
       source: result.source,
     }));
   }
@@ -919,17 +924,36 @@ async function readStoreError(
   }
 }
 
-function dockingSessionFromResponse(response: unknown): StoreDockingSessionDTO {
+/**
+ * 试拼会话响应校验：sessionId/status/createdBy 是服务端恒产出字段
+ * （createdBy 为资源租户归属断言的比对基准），缺失/非法即 fail-closed，
+ * 不做盲转型放行。
+ */
+export function parseStoreDockingSession(
+  response: unknown,
+  pathname = "/store/docking-sessions",
+): StoreDockingSessionDTO {
   const record = isRecord(response) ? response : undefined;
   const session = record && isRecord(record.session) ? record.session : record;
   if (!isRecord(session)) {
-    throw new StoreApiError(
-      "/store/docking-sessions",
-      0,
-      "docking_session_response_invalid",
-    );
+    throw new StoreApiError(pathname, 0, "docking_session_response_invalid");
   }
+  requiredStoreString(session.sessionId, pathname, "docking_session_response_invalid");
+  dockingSessionStatusValue(session.status, pathname);
+  requiredStoreString(session.createdBy, pathname, "docking_session_response_invalid");
   return session as unknown as StoreDockingSessionDTO;
+}
+
+function dockingSessionStatusValue(
+  value: unknown,
+  pathname: string,
+): StoreDockingSessionDTO["status"] {
+  if (value === "draft" || value === "valid" || value === "invalid") {
+    return value;
+  }
+  throw new StoreApiError(pathname, 0, "docking_session_response_invalid", {
+    code: "docking_session_response_invalid",
+  });
 }
 
 function storeSearchParams(query: StoreSearchInput): string {

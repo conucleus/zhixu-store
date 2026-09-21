@@ -301,6 +301,11 @@ export interface StoreDockingValidationDTO {
 export interface StoreDockingSessionDTO {
   readonly sessionId: string;
   readonly status: StoreDockingSessionStatus;
+  /**
+   * 创建会话的锚定地址（资源租户）：服务端读写归属断言（非创建者不可
+   * 读写、管理员保留跨租户可见性）的比对基准，必填。
+   */
+  readonly createdBy: string;
   readonly source: StoreDockingZhixuRefDTO;
   readonly target: StoreDockingZhixuRefDTO;
   /** 目标定义当前发布的具名接口全集（供操作员切换试拼对象）。 */
