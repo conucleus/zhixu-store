@@ -11,9 +11,11 @@ boundaries are in [AGENTS.md](./AGENTS.md). New features must be classified
 against the charter before implementation.
 
 - `app/`: current Store and order workbench frontend. Source layout is
-  organized by user task (`src/app`, `src/store/{catalog,authoring,publishing,suppliers,docking,runtime}`,
-  `src/product/{workbench,order,signing,tasks,evidence}`, `src/shared`);
-  see [app/README.md](./app/README.md) for the directory map.
+  organized by user task (`src/app`, `src/lib`, `src/store/{catalog,authoring,publishing,suppliers,docking,runtime}`,
+  `src/product/{workbench,order,signing,tasks,evidence}`); `src/shared` is the
+  frontend-shared submodule mount (single source for the chain track, consumed
+  via `chain/`, `contracts/`, `domain/`). See [app/README.md](./app/README.md)
+  for the directory map.
 
 ## Development Topology
 

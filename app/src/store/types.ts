@@ -130,7 +130,7 @@ export interface StoreZhixuDraftDTO {
   readonly status: StoreZhixuDraftStatus;
   /** 定义派生身份（编译产物 zhixuId）。 */
   readonly zhixuId?: string;
-  /** N6 显示口径：name(uid 去 zx- 后前 8 hex)。 */
+  /** 显示名口径：uid 去 zx- 前缀后取前 8 hex。 */
   readonly zhixuDisplay?: string;
   readonly title: string;
   readonly maintainer: string;

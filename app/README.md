@@ -21,7 +21,7 @@ Zhixu Store 是 UVP 的链下经营入口。它面向现实中的机构与人员
 
 ## 目录结构
 
-`src/` 按"装配 / 运营侧 / 参与者侧 / 共享"组织（意见书 B3）：
+`src/` 按"装配 / 运营侧 / 参与者侧 / 共享"组织：
 
 ```text
 src/
@@ -47,10 +47,10 @@ src/
 │   ├── signing/    # ParticipantsPage（参与方确认与订单启动）
 │   ├── tasks/      # TaskPage、SubmitPage
 │   └── evidence/   # EvidenceUploadZone
-└── shared/         # 两面共用的纯前端工具（frontend.ts）
+├── lib/            # 本仓纯前端工具（frontend.ts：基地址解析、短值显示等）
+└── shared/         # frontend-shared submodule（chain 轨单源；本仓只消费
+                    # chain/、contracts/、domain/，见该仓 README 分轨边界）
 ```
-
-页面归属与职责的迁移对照见 git 历史 `refactor(govern)` 提交（意见书 B3 工作包）。
 
 ## 运行
 

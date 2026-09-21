@@ -127,8 +127,9 @@ test.describe("Store docking sandbox target selection", () => {
             session: {
               sessionId: "dock_test-0001",
               status: "draft",
-              // 服务端创建响应恒携带的租户归属基准（会话锚定地址）。
-              createdBy: "0xdock000000000000000000000000000000000001",
+              // 服务端创建响应恒携带的租户归属基准（会话锚定地址，
+              // 20 字节 hex；桩值须与响应门同口径）。
+              createdBy: "0xd0c0000000000000000000000000000000000001",
               source: {
                 zhixuId: source.zhixuId,
                 title: source.title,

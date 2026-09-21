@@ -188,8 +188,8 @@ export const STORE_SESSION_TOKEN_STORAGE_KEY = "uvp-store-session-token";
 
 /**
  * 落盘形状的过期时间必填：读取端（readStoredStoreSessionToken）把无
- * expiresAt 的条目按损坏清除——写入口径与之一致，否则内存态有效的会话
- * 重载即丢。退出登录走 storeStoreSessionToken(undefined)。
+ * expiresAt 或非 JSON 的条目按损坏清除——写入口径与之一致，否则内存态
+ * 有效的会话重载即丢。退出登录走 storeStoreSessionToken(undefined)。
  */
 interface StoredStoreSession {
   readonly token: string;
@@ -197,11 +197,16 @@ interface StoredStoreSession {
 }
 
 export function readStoredStoreSessionToken(): string | undefined {
+  let raw: string | null;
   try {
-    const raw = window.localStorage.getItem(STORE_SESSION_TOKEN_STORAGE_KEY);
-    if (!raw) {
-      return undefined;
-    }
+    raw = window.localStorage.getItem(STORE_SESSION_TOKEN_STORAGE_KEY);
+  } catch {
+    return undefined;
+  }
+  if (!raw) {
+    return undefined;
+  }
+  try {
     const parsed = JSON.parse(raw) as Partial<StoredStoreSession>;
     const token = typeof parsed.token === "string" && parsed.token.startsWith("uvs_") ? parsed.token : undefined;
     const expiresAt = Date.parse(parsed.expiresAt ?? "");
@@ -213,6 +218,9 @@ export function readStoredStoreSessionToken(): string | undefined {
     }
     return token;
   } catch {
+    // 非 JSON 载荷（旧落盘格式或损坏存储）永不被本读法接受：同样按损坏
+    // 清除，否则会在 localStorage 里永久滞留。
+    window.localStorage.removeItem(STORE_SESSION_TOKEN_STORAGE_KEY);
     return undefined;
   }
 }
@@ -940,7 +948,7 @@ export function parseStoreDockingSession(
   }
   requiredStoreString(session.sessionId, pathname, "docking_session_response_invalid");
   dockingSessionStatusValue(session.status, pathname);
-  requiredStoreString(session.createdBy, pathname, "docking_session_response_invalid");
+  requiredStoreAddress(session.createdBy, pathname, "docking_session_response_invalid");
   return session as unknown as StoreDockingSessionDTO;
 }
 
@@ -1135,6 +1143,15 @@ function requiredStoreNumber(
 
 function requiredStoreString(value: unknown, pathname: string, code: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
+    throw new StoreApiError(pathname, 0, code, { code });
+  }
+  return value;
+}
+
+function requiredStoreAddress(value: unknown, pathname: string, code: string): string {
+  // 服务端类型是 Address（20 字节 hex）：与 prepare-trigger 签名域地址
+  // 同一判法，非地址字符串不能充当租户归属比对基准。
+  if (typeof value !== "string" || !/^0x[0-9a-fA-F]{40}$/u.test(value)) {
     throw new StoreApiError(pathname, 0, code, { code });
   }
   return value;

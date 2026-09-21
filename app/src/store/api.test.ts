@@ -132,6 +132,19 @@ describe("stored wallet session token expiry", () => {
       delete (globalThis as { window?: unknown }).window;
     }
   });
+
+  it("clears a non-JSON stored payload instead of leaving it stranded forever", async () => {
+    // 旧落盘格式/损坏载荷不是本读法可接受的形状：读取失败也必须清除，
+    // 否则该条目永远占着存储键（与过期/缺失口径一致，均为损坏）。
+    const backing = installMemoryWindow();
+    try {
+      window.localStorage.setItem(STORE_SESSION_TOKEN_STORAGE_KEY, "uvs_legacy_raw_token");
+      assert.equal(readStoredStoreSessionToken(), undefined);
+      assert.equal(backing.has(STORE_SESSION_TOKEN_STORAGE_KEY), false);
+    } finally {
+      delete (globalThis as { window?: unknown }).window;
+    }
+  });
 });
 
 describe("docking session response gate", () => {
@@ -155,13 +168,16 @@ describe("docking session response gate", () => {
   });
 
   it("rejects responses missing sessionId/status/createdBy instead of blind-casting", () => {
-    // createdBy 是服务端资源租户归属断言的比对基准：缺失的会话记录无法
-    // 判定归属，按畸形响应 fail-closed，不得以 undefined 冒充。
+    // createdBy 是服务端资源租户归属断言的比对基准（Address 类型）：
+    // 缺失或非 20 字节 hex 地址的会话记录无法判定归属，按畸形响应
+    // fail-closed，不得以 undefined 冒充。
     for (const malformed of [
       { status: "draft", createdBy: creator },
       { sessionId: "dock-1", createdBy: creator },
       { sessionId: "dock-1", status: "draft" },
       { sessionId: "dock-1", status: "unknown-status", createdBy: creator },
+      { sessionId: "dock-1", status: "draft", createdBy: "tenant-name" },
+      { sessionId: "dock-1", status: "draft", createdBy: "0xdock000000000000000000000000000000000001" },
       "not-a-record"
     ]) {
       assert.throws(

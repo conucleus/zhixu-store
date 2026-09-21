@@ -39,7 +39,7 @@ export function ProductWorkbenchApp() {
   // 每张待办卡片携带自己的 taskId：这里记录选中的任务，未选中时回退到投影的 activeTask。
   const [selectedTaskId, setSelectedTaskId] = useState<string | undefined>(undefined);
   // 目录里多个秩序时记录选中的秩序：未选中时回退到投影的 activeTask。
-  // 参与者面不再只渲染第一条秩序（RC-H：多秩序目录只有第一条可达）。
+  // 参与者面必须可达目录中的每一条秩序：固定渲染第一条会让其余秩序不可达。
   const [selectedZhixuId, setSelectedZhixuId] = useState<string | undefined>(undefined);
   // 订单信息与待办凭证表单状态提升到本组件：视图切换会卸载页面组件，
   // 未保存的用户输入不能因为切换视图被静默清空。

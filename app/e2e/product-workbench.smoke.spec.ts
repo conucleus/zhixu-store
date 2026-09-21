@@ -367,7 +367,7 @@ test.describe("Product Workbench browser smoke", () => {
     });
     await expect(page.getByText("仅支持 PDF 格式的凭证文件")).toBeVisible();
 
-    // STORE-02：MIME/扩展名伪造绕不过 %PDF- 首字节快检
+    // MIME/扩展名伪造绕不过 %PDF- 首字节快检：内容才是权威信号。
     await page.getByTestId("task-file-input-customs_declaration_pdf").setInputFiles({
       name: "伪造.pdf",
       mimeType: "application/pdf",

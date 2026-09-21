@@ -33,6 +33,8 @@ export async function loginStoreSessionWithWallet(
 /**
  * 为当前账号锚定另一个地址：持有会话 token 的用户请求 anchor_address
  * 挑战，由钱包当前活动地址签名（切换到团队成员地址后操作）。
+ * 响应虽新铸了 token，调用侧有意不采用：会话保持登录时锚定的地址，
+ * 要以新地址操作需显式重新登录，不静默换锚。
  */
 export async function anchorAdditionalWalletToAccount(
   api: StoreApiClient,

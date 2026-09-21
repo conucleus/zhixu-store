@@ -254,7 +254,7 @@ describe("evidence file validation (spec-driven)", () => {
     assert.match(await validateEvidenceFileForSlot(json, pdfAccept) ?? "", /仅支持 PDF 格式/u);
   });
 
-  it("rejects forged MIME/extension when the content lacks the %PDF- magic (STORE-02)", async () => {
+  it("rejects forged MIME/extension when the content lacks the %PDF- magic", async () => {
     const forged = fakeFile({ name: "伪造.pdf", type: "application/pdf", bytes: new TextEncoder().encode("MZ fake pdf content") });
     assert.match(
       await validateEvidenceFileForSlot(forged, pdfAccept) ?? "",

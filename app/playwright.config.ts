@@ -11,7 +11,7 @@ const storeAccessLevel = process.env.UVP_PRODUCT_BROWSER_E2E_STORE_ACCESS_LEVEL;
 // fixture 模式：
 // - VITE_UVP_CHAIN_SERVICES_URL 指向不可达地址：任何未被打桩的请求立即网络失败
 //   （fail-closed），需要页面数据的用例通过 page.route 注入响应。
-// （Store Console 的 E2E 观测桥已按 ND-1 删除，不再需要 VITE_UVP_PRODUCT_E2E。）
+// （Store Console 页面不暴露 E2E 观测桥，无需注入 VITE_UVP_PRODUCT_E2E。）
 const fixtureDevEnv = chainBackedMode
     ? ""
     : [
