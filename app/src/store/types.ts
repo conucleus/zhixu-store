@@ -123,7 +123,6 @@ export interface StoreCompilePreviewDTO {
   readonly roleSlotCount: number;
   readonly sourceCount: number;
   readonly signalCount: number;
-  readonly canonicalArtifactHash: string;
 }
 
 export interface StoreZhixuDraftDTO {

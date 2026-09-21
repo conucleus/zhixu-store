@@ -20,8 +20,8 @@ import { readStoredStoreSessionToken } from "../store/api";
 
 export { shortHash } from "../lib/frontend";
 
-// 写侧契约权威形状（product-dto 写侧面，治理审计 §1.1 P1-1）：提交意图/
-// 输入/回执/证据证明以服务端真身为唯一出处，本文件不再手写镜像。
+// 写侧契约权威形状（product-dto 写侧面）：提交意图/
+// 输入/回执/证据证明以服务端真身为唯一出处，本文件不手写镜像。
 // EvidenceProofDTO 的 evidenceId/payloadRef/storageURI 与 ProductSubmissionDTO
 // 的 statusLabel 是服务端恒产出字段，按必填消费。消费方（TaskPage、
 // useTaskSubmissionFlow、workbenchTypes）沿用从本模块取类型的既有路径，

@@ -51,7 +51,7 @@ export function CreateOrderPage({
       <BackLine onClick={onBack}>返回秩序详情</BackLine>
       <h1>创建订单</h1>
       {/* 步骤条只声明实际存在的页面（秩序详情→订单信息→参与方→订单启动）：
-          此前的"订单条件/预览并发起"页并不存在，宣告 5 步只会误导参与者。 */}
+          "订单条件/预览并发起"页并不存在，宣告 5 步只会误导参与者。 */}
       <StepBar current={2} steps={["确认秩序", "订单信息", "参与方", "订单启动"]} />
       {!canCreate ? <StatePanel icon={<AlertTriangle />} title="该秩序当前不可创建新订单" desc="请使用已审核且已发布的秩序。" tone="error" /> : null}
       <div className="content-layout">

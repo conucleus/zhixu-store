@@ -213,11 +213,11 @@ export function inviteLinkForInvite(
   return `${origin.replace(/\/+$/u, "")}/?${params.toString()}`;
 }
 
-// 任务提交意图（写侧契约，治理审计 §1.1 P1-1）：TaskSubmitIntent 联合、
+// 任务提交意图（写侧契约）：TaskSubmitIntent 联合、
 // submitIntentByPluginKind 兜底映射与 taskSubmitIntent 推导以 product-dto
-// 写侧面为唯一出处——与 uvp-order-app 的逐字镜像随之消除，两端不再可能
-// 各自漂移。raise_dispute 是服务端 PrepareProductTaskSubmitInput.intent
-// 词表成员：争议入口前端已删（678a2da），但服务端契约仍接受该 intent，
+// 写侧面为唯一出处——与 uvp-order-app 不持逐字镜像，两端不会各自漂移。
+// raise_dispute 是服务端 PrepareProductTaskSubmitInput.intent
+// 词表成员：前端无争议入口，但服务端契约仍接受该 intent，
 // 联合不得收缩。
 export {
   submitIntentByPluginKind,

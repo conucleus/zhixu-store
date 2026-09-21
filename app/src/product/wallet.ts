@@ -72,8 +72,8 @@ type WindowWithEthereum = Window & {
 };
 
 /**
- * 本端钱包内核 = chain 轨共享面 + protocol-bindings 端口注入（治理审计
- * §1.1 P1-1 的共享仓形态）：判定（isUserRejectedRequestError /
+ * 本端钱包内核 = chain 轨共享面 + protocol-bindings 端口注入：
+ * 判定（isUserRejectedRequestError /
  * validateTypedDataForSigning）单源于 protocol-bindings，由本适配层原函数
  * 注入；链核对与签名请求的机械段在 shared/chain/wallet 单源；错误分类
  * 映射回本端公开类（WalletNotConnectedError / WalletRejectedError /
@@ -173,7 +173,7 @@ export async function signTypedData(
 }
 
 /**
- * 签名前校验（protocol-bindings 单源的宿主适配，治理审计 §1.1 P1-1）：
+ * 签名前校验（protocol-bindings 单源的宿主适配）：
  * 判定收敛于单源 validateTypedDataForSigning——primaryType 锚定、
  * types[primaryType] 字段表非空、domain 四要素、message 签名者与
  * expectedSubmitter/preparedSubmitters/connectedAddress 交叉核对
@@ -214,7 +214,6 @@ export function getWalletConnector(target: WalletTarget = "evm"): WalletConnecto
   return walletConnectorFor(target, evmWalletConnector);
 }
 
-// 用户拒绝判定（4001 || /reject|denied|cancel/i 超集，含 170ccae 收敛的
-// denied/cancel 措辞）已切换为 protocol-bindings 单源
-// isUserRejectedRequestError（治理审计 §1.1 P1-1 签名闸门单源行）；
-// WalletRejectedError 包装与面向用户的文案留在宿主。
+// 用户拒绝判定（4001 || /reject|denied|cancel/i 超集，含 denied/cancel
+// 措辞）采用 protocol-bindings 单源 isUserRejectedRequestError（签名闸门
+// 单源）；WalletRejectedError 包装与面向用户的文案留在宿主。
