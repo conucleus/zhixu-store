@@ -28,7 +28,9 @@ type StoreLoadState =
   | { readonly status: "error"; readonly message: string };
 
 export function StoreApp({ productHref = "/app" }: { readonly productHref?: string | undefined }) {
-  // 会话 token 驱动 client 重建——登录/退出后 access 与能力随之刷新。
+  // 会话 token 状态只做 UI/引导信号（退出按钮渲染、登录/退出后重取会话
+  // 刷新 access）；请求凭据由 client 每请求现读存储（product 侧同口径），
+  // 过期即弃，不靠服务端 401 兜底。
   const [sessionToken, setSessionToken] = useState<string | undefined>(() => readStoredStoreSessionToken());
   // env 只提供引导态（无会话时的缺省 access）；会话取回后 access 一律以
   // 服务端 session 为准，UI 门控与 client 前置门共用同一份，消除两源不一致。
@@ -36,7 +38,7 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
   const [session, setSession] = useState<StoreSessionDTO | undefined>();
 
   useEffect(() => {
-    const bootstrapClient = createStoreApiClient(baseAccess, sessionToken);
+    const bootstrapClient = createStoreApiClient(baseAccess);
     if (!bootstrapClient.baseUrl) {
       return;
     }
@@ -61,8 +63,8 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
     [session, baseAccess],
   );
   const api = useMemo(
-    () => createStoreApiClient(access, sessionToken),
-    [access, sessionToken],
+    () => createStoreApiClient(access),
+    [access],
   );
   const [view, setView] = useState<StoreView>("search");
   const [selectedZhixuId, setSelectedZhixuId] = useState<string | undefined>();

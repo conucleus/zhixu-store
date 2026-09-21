@@ -480,9 +480,12 @@ export class HttpProductApiClient implements ProductApiClient {
     if (typeof result.data.inviteToken !== "string" || result.data.inviteToken.length === 0) {
       throw new Error("invite_token_missing_in_create_response");
     }
+    // invite 记录（邀请列表/状态的载体）缺失同样按畸形响应拒绝，不以空对象
+    // 冒充——与 evidence/prepared/submission 的 requiredRecord 门同口径。
+    const invite = requiredRecord(result.data.invite, "invite_response_invalid");
     return {
       data: {
-        invite: (result.data.invite ?? {}) as ProductInviteDTO,
+        invite: invite as unknown as ProductInviteDTO,
         inviteToken: result.data.inviteToken
       },
       source: result.source

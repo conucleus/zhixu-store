@@ -171,11 +171,12 @@ class StoreApiUnavailableError extends Error {
 
 export function createStoreApiClient(
   access: StoreAccessState = resolveStoreAccess(),
-  sessionToken?: string,
 ): StoreApiClient {
   return new BrowserStoreApiClient(resolveStoreApiBaseUrl(), {
     access,
-    ...(sessionToken ? { sessionToken } : {}),
+    // 会话头与 product 侧同口径：每请求现读存储（过期即弃），不固化在
+    // client 里等重建——挂起页面上过期/被清除的 token 不再随请求外发。
+    sessionToken: readStoredStoreSessionToken
   });
 }
 
@@ -309,18 +310,28 @@ export function readableStoreError(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-class BrowserStoreApiClient implements StoreApiClient {
+/**
+ * 生产与测试共用的 HTTP 客户端（与 product 侧 HttpProductApiClient 同款口径）。
+ * fetchImpl 仅用于测试注入；生产代码必须使用默认的全局 fetch。
+ */
+export class BrowserStoreApiClient implements StoreApiClient {
   readonly baseUrl?: string | undefined;
   readonly access: StoreAccessState;
-  readonly #sessionToken: string | undefined;
+  readonly #sessionToken: (() => string | undefined) | undefined;
+  readonly #fetchImpl: typeof fetch;
 
   constructor(
     baseUrl: string | undefined,
-    options: { readonly access: StoreAccessState; readonly sessionToken?: string },
+    options: {
+      readonly access: StoreAccessState;
+      readonly sessionToken?: (() => string | undefined) | undefined;
+      readonly fetchImpl?: typeof fetch;
+    },
   ) {
     this.baseUrl = baseUrl;
     this.access = options.access;
     this.#sessionToken = options.sessionToken;
+    this.#fetchImpl = options.fetchImpl ?? fetch.bind(globalThis);
   }
 
   async getSession(): Promise<StoreApiResult<StoreSessionDTO>> {
@@ -783,14 +794,17 @@ class BrowserStoreApiClient implements StoreApiClient {
     body?: unknown,
   ): Promise<TResponse> {
     const baseUrl = this.requireBaseUrl(pathname);
+    // 每请求现读：登录落盘、退出清除与过期弃置都在下一次请求即刻生效，
+    // 不依赖 client 重建，也不把必然失效的凭据留给服务端 401 兜底。
+    const token = this.#sessionToken?.();
     return await fetchStoreJson<TResponse>(baseUrl, pathname, {
       method,
       body,
       headers: {
         ...this.access.headers,
-        ...(this.#sessionToken ? { "x-uvp-store-session": this.#sessionToken } : {}),
+        ...(token ? { "x-uvp-store-session": token } : {}),
       },
-    });
+    }, this.#fetchImpl);
   }
 
   private requireBaseUrl(pathname: string): string {
@@ -848,6 +862,7 @@ async function fetchStoreJson<TResponse>(
     readonly body?: unknown;
     readonly headers?: Readonly<Record<string, string>>;
   },
+  fetchImpl: typeof fetch = fetch.bind(globalThis),
 ): Promise<TResponse> {
   const headers = new Headers(init.headers);
   let body: BodyInit | undefined;
@@ -860,7 +875,7 @@ async function fetchStoreJson<TResponse>(
 
   let response: Response;
   try {
-    response = await fetch(`${baseUrl}${pathname}`, {
+    response = await fetchImpl(`${baseUrl}${pathname}`, {
       method: init.method,
       headers,
       ...(body !== undefined ? { body } : {}),

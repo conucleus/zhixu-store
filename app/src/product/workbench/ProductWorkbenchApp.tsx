@@ -1,6 +1,6 @@
-// 参与者侧订单工作台编排入口：视图状态、流程接线（既有 flow hooks）与加载/诊断/登录态分流。
-// 各视图渲染已按功能迁至 order/tasks/evidence/signing 与本目录 ZhixuCatalogViews（纯搬迁，
-// 组件逻辑、hook 调用、状态更新与原 ProductWorkbenchApp.tsx 一字未改）。
+// 参与者侧订单工作台编排入口：只承载跨视图编排——视图状态、流程接线（flow hooks）
+// 与加载/诊断/登录态分流；各视图渲染分置 order/tasks/evidence/signing 与本目录
+// ZhixuCatalogViews，编排层不渗入具体视图的渲染细节。
 import { AlertTriangle, Loader2, RefreshCw } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createProductApiClient, type ProductWorkbenchData } from "../api";

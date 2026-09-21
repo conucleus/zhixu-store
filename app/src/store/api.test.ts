@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  BrowserStoreApiClient,
   StoreApiError,
   createStoreApiClient,
   parseStoreDockingSession,
@@ -236,5 +237,89 @@ describe("listing write client gates mirror the server route's anchoring rule", 
       () => client.importListing({ planId: `0x${"ab".repeat(32)}` }),
       (error: unknown) => error instanceof StoreApiError && /not configured/u.test(error.message)
     );
+  });
+});
+
+describe("store client session header sourcing", () => {
+  const plainAccess: StoreAccessState = {
+    level: "store_read",
+    label: "Store Read",
+    roles: ["store_read"],
+    capabilities: ["store.read"],
+    authMode: "dev_store_headers",
+    canRead: true,
+    canWrite: false,
+    canAdmin: false,
+    headers: {}
+  };
+
+  function installMemoryWindow(): Map<string, string> {
+    const backing = new Map<string, string>();
+    (globalThis as { window?: unknown }).window = {
+      localStorage: {
+        getItem: (key: string) => (backing.has(key) ? backing.get(key)! : null),
+        setItem: (key: string, value: string) => backing.set(key, value),
+        removeItem: (key: string) => backing.delete(key),
+        clear: () => backing.clear()
+      }
+    };
+    return backing;
+  }
+
+  function clientWithCapturedRequests(seen: Array<Headers>): BrowserStoreApiClient {
+    const injected = (async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(new Headers(init?.headers));
+      return new Response(JSON.stringify({ suppliers: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    }) as typeof fetch;
+    return new BrowserStoreApiClient("https://api.test", {
+      access: plainAccess,
+      sessionToken: readStoredStoreSessionToken,
+      fetchImpl: injected
+    });
+  }
+
+  it("re-reads the stored session token on every request instead of pinning it at construction", async () => {
+    // 与 product 侧同口径：凭据头每请求现读存储，token 落盘/更换后下一次
+    // 请求即刻生效，不等 client 重建。
+    installMemoryWindow();
+    try {
+      const seen: Array<Headers> = [];
+      const client = clientWithCapturedRequests(seen);
+      storeStoreSessionToken({ token: "uvs_first", expiresAt: new Date(Date.now() + 60_000).toISOString() });
+      await client.listSuppliers();
+      storeStoreSessionToken({ token: "uvs_second", expiresAt: new Date(Date.now() + 60_000).toISOString() });
+      await client.listSuppliers();
+
+      assert.equal(seen[0]?.get("x-uvp-store-session"), "uvs_first");
+      assert.equal(seen[1]?.get("x-uvp-store-session"), "uvs_second");
+    } finally {
+      delete (globalThis as { window?: unknown }).window;
+    }
+  });
+
+  it("omits the session header once the stored token has expired instead of sending stale credentials", async () => {
+    // 过期即弃是本地卫生线：不得把必然失效的凭据继续外发、留给服务端 401 兜底。
+    const backing = installMemoryWindow();
+    try {
+      const seen: Array<Headers> = [];
+      const client = clientWithCapturedRequests(seen);
+      storeStoreSessionToken({ token: "uvs_first", expiresAt: new Date(Date.now() + 60_000).toISOString() });
+      await client.listSuppliers();
+      // 把已落盘会话的过期时间改写为已过去，模拟挂起页面上凭据自然过期。
+      window.localStorage.setItem(
+        STORE_SESSION_TOKEN_STORAGE_KEY,
+        JSON.stringify({ token: "uvs_first", expiresAt: new Date(Date.now() - 1_000).toISOString() })
+      );
+      await client.listSuppliers();
+
+      assert.equal(seen[0]?.get("x-uvp-store-session"), "uvs_first");
+      assert.equal(seen[1]?.get("x-uvp-store-session"), null);
+      assert.equal(backing.has(STORE_SESSION_TOKEN_STORAGE_KEY), false);
+    } finally {
+      delete (globalThis as { window?: unknown }).window;
+    }
   });
 });

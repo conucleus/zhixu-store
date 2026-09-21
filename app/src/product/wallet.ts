@@ -84,7 +84,7 @@ const walletPorts = {
   validateTypedDataEnvelope
 } as const;
 
-/** 单源拒绝 reason → 本端文案（措辞与切换前的本地判定一致，行为面零变化）。 */
+/** 单源拒绝 reason → 本端文案：判定语义单源于 protocol-bindings 的英文 reason 词表，面向参与者的中文措辞是本端的呈现职责。 */
 const mismatchTexts: TypedDataMismatchTexts = {
   missingDetail: "unknown",
   notTypedData: "签名对象不是 EIP-712 结构",

@@ -379,6 +379,21 @@ describe("invite creation and session anchoring", () => {
     );
   });
 
+  it("fails closed when the create response omits the invite record itself", async () => {
+    // invite 记录是邀请列表/状态的载体：响应只带 token 不带记录时，不得以
+    // 空对象冒充一条已创建的邀请（requiredRecord 门同口径）。
+    const client = clientWith({
+      "/product/orders/draft-1/invites": {
+        body: { inviteToken: "one-time-invite-token" }
+      }
+    });
+
+    await assert.rejects(
+      () => client.createInvite("draft-1", inviteInput),
+      (error: unknown) => error instanceof Error && error.message === "invite_response_invalid"
+    );
+  });
+
   it("attaches the anchored wallet session header to participant-scoped requests", async () => {
     // 非 local 运行时服务端对参与者面读写强制会话锚定：客户端统一携带
     // x-uvp-store-session（与 Store 入口共用的钱包会话），不再只发 content-type。
