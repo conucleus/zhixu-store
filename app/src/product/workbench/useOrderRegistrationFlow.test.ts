@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { PreparedOrderTriggerDTO, ProductApiClient, ProductOrderDraftDTO } from "../api";
 import type { ActionState } from "./workbenchTypes";
-import { executeOrderRegistration } from "./useOrderRegistrationFlow";
+import { canPrepareOrderTrigger, executeOrderRegistration } from "./useOrderRegistrationFlow";
 
 const draft: ProductOrderDraftDTO = {
   draftId: "draft-1",
@@ -189,5 +189,59 @@ describe("order registration signing gates", () => {
     await pending;
 
     assert.equal(h.signed.length, 1);
+  });
+});
+
+describe("order registration re-prepare gate (same-identity retry discipline)", () => {
+  /** 计数 prepare 调用且永不结算的 API 桩：任何被放行的调用都会让流程停在 await 上。 */
+  function gateHarness(status: ProductOrderDraftDTO["status"]): {
+    readonly actions: ActionState[];
+    readonly prepareCalls: () => number;
+    readonly pending: Promise<void>;
+  } {
+    const actions: ActionState[] = [];
+    let prepareCalls = 0;
+    const api = {
+      prepareOrderTrigger: () => {
+        prepareCalls += 1;
+        return new Promise(() => undefined);
+      },
+      triggerOrder: () => new Promise(() => undefined)
+    } as unknown as ProductApiClient;
+    const pending = executeOrderRegistration({
+      api,
+      ensureDraft: async () => ({ ...draft, status }),
+      onRegistered: () => undefined,
+      setAction: (action) => actions.push(action),
+      isStale: () => false,
+      requestAccount: async () => account,
+      sign: async () => "0xsig",
+      signExpectation: () => ({ verifyingContract: "0x0000000000000000000000000000000000000001" })
+    });
+    return { actions, prepareCalls: () => prepareCalls, pending };
+  }
+
+  it("never re-prepares a draft that is in flight, terminal, or not yet ready", async () => {
+    // UB-3 前端腿：终态（triggered/cancelled）与在途（triggering）稿不
+    // 再出现 re-prepare 调用；未就绪（draft/awaiting_participants）同样
+    // 先在客户端挡下（服务端只会 409）。
+    for (const status of ["triggering", "triggered", "cancelled", "draft", "awaiting_participants"] as const) {
+      const h = gateHarness(status);
+      await h.pending;
+      assert.equal(h.prepareCalls(), 0, `${status} must not reach prepareOrderTrigger`);
+      const failure = h.actions.at(-1);
+      assert.equal(failure?.phase, "error", `${status} must surface a loud refusal`);
+      assert.match(failure?.message ?? "", /不可重新启动/u);
+      assert.equal(canPrepareOrderTrigger(status), false);
+    }
+  });
+
+  it("still re-prepares a failed draft through the same-identity retry lane", async () => {
+    // failed 是唯一的重试形态：服务端按同身份重开复用既有
+    // prepareId/链上订单身份，前端放行调用（身份裁决在服务端）。
+    assert.equal(canPrepareOrderTrigger("failed"), true);
+    const h = gateHarness("failed");
+    await tick();
+    assert.equal(h.prepareCalls(), 1);
   });
 });

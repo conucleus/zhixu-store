@@ -23,6 +23,29 @@ import {
   type ScopeGeneration
 } from "./workbenchSupport";
 
+/** draft.status 的产品侧文案（拒绝门消息用，与服务端状态词同源）。 */
+const DRAFT_STATUS_LABELS: Readonly<Record<string, string>> = {
+  draft: "草稿中",
+  awaiting_participants: "等待参与方确认",
+  ready_to_trigger: "可启动",
+  triggering: "启动广播中",
+  triggered: "已启动",
+  failed: "启动失败",
+  cancelled: "已取消"
+};
+
+/**
+ * re-prepare 门（「重试=同身份重放」前端腿，UB-3）：只有 failed（服务端
+ * 同身份重开闸放行的形态，重试会复用同一 prepareId/链上订单身份）与
+ * ready_to_trigger（首次/幂等 prepare）才发起 prepare-trigger 调用。
+ * 终态（triggered/cancelled）与在途（triggering）稿不再出现 re-prepare
+ * 调用——重复调用在服务端只会 409，客户端先挡一次，避免把"重试"误解
+ * 为再生意份的入口。
+ */
+export function canPrepareOrderTrigger(status: string): boolean {
+  return status === "ready_to_trigger" || status === "failed";
+}
+
 /** 订单启动流的可注入原语：默认接浏览器钱包，测试注入桩。 */
 export interface OrderRegistrationDeps {
   readonly api: ProductApiClient;
@@ -45,6 +68,16 @@ export interface OrderRegistrationDeps {
 export async function executeOrderRegistration(deps: OrderRegistrationDeps): Promise<void> {
   const currentDraft = await deps.ensureDraft();
   if (!currentDraft) {
+    return;
+  }
+  // re-prepare 门（UB-3 前端腿）：终态/在途稿不发起 prepare-trigger。
+  // failed 稿是唯一的重试形态（服务端按同身份重开复用既有
+  // prepareId/链上订单身份），其余状态先响亮拒绝，不出网络调用。
+  if (!canPrepareOrderTrigger(currentDraft.status)) {
+    deps.setAction({
+      phase: "error",
+      message: `当前订单${DRAFT_STATUS_LABELS[currentDraft.status] ?? `状态 ${currentDraft.status}`}不可重新启动，请刷新订单状态后再操作`
+    });
     return;
   }
   try {
