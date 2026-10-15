@@ -27,7 +27,7 @@ import type {
   ZhixuStageDTO
 } from "@uvp-eth/product-dto";
 import type { ProductWorkbenchData } from "../api";
-import { canCreateProductOrder } from "./workbenchSupport";
+import { canCreateProductOrder, formatDeadlineUtc } from "./workbenchSupport";
 import {
   BackLine,
   InlineEmpty,
@@ -123,7 +123,7 @@ export function ParticipantAppPage({
                   </div>
                   <div className="catalog-card-actions">
                     <strong>{task.primaryActionLabel ?? "处理待办"}</strong>
-                    <small>{task.deadline}</small>
+                    <small>{formatDeadlineUtc(task.deadline)}</small>
                     <button
                       className={task.status === "open" ? "primary-button block" : "secondary-button block"}
                       data-testid={`participant-task-open-${task.taskId}`}
@@ -245,7 +245,7 @@ export function CatalogPage({
             {task ? (
               <button className="quick-order-card" data-testid="catalog-task-card" onClick={() => onTask(task.taskId)}>
                 <strong>{task.title}</strong>
-                <span>{task.assigneeRole} · {task.deadline}</span>
+                <span>{task.assigneeRole} · {formatDeadlineUtc(task.deadline)}</span>
                 <small>{task.fundingImpact}</small>
               </button>
             ) : <InlineEmpty text="暂无待办" />}

@@ -223,7 +223,9 @@ function draftParticipantActionLabel(status: DraftParticipantDTO["status"]): str
     case "invited":
       return "重新发送";
     case "accepted":
-      return "发送提醒";
+      // 该动作不是通知：点击即为该参与方重新铸造一份全新邀请凭据
+      // （新 inviteId + 一次性 token），由操作者自行送出。
+      return "重新生成邀请";
     case "rejected":
     case "replaced":
       return "重新邀请";

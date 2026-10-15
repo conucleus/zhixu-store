@@ -203,8 +203,9 @@ export const stubEvidence = {
   mimeType: "application/pdf",
   size: 1024,
   storageURI: "store://evidence/evidence-5001",
-  contentHash: "0xcontent",
-  metadataHash: "0xmetadata",
+  // 三哈希均为 ProductWriteHex 形态（0x + 64 位十六进制），与冻结 DTO 同形。
+  contentHash: `0x${"bb".repeat(32)}`,
+  metadataHash: `0x${"cc".repeat(32)}`,
   payloadHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   payloadRef: "store://payload/evidence-5001",
   status: "uploaded",
@@ -447,10 +448,15 @@ export async function installWorkbenchRoutes(page: Page, options: WorkbenchStubO
     }
     if (/^\/product\/evidence\/[^/]+\/proof$/.test(pathname) && method === "GET") {
       await fulfillJson(route, {
+        // EvidenceProofDTO（product-dto 写侧面）必填集：evidenceId/payloadRef/
+        // storageURI 是服务端 getProof 恒产出字段，缺失即与冻结写侧契约冲突。
         proof: {
+          evidenceId: stubEvidence.evidenceId,
           payloadHash: stubEvidence.payloadHash,
           contentHash: stubEvidence.contentHash,
           metadataHash: stubEvidence.metadataHash,
+          payloadRef: stubEvidence.payloadRef,
+          storageURI: stubEvidence.storageURI,
           verificationStatus: "unbound"
         }
       });

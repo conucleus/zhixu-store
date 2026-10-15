@@ -93,6 +93,36 @@ export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+const HAS_ZONE_DESIGNATOR = /[Zz]$|[+-]\d{2}:?\d{2}$/;
+
+/**
+ * 任务 deadline 是 UTC 时刻；服务端下发的朴素字符串（无时区符）按浏览器
+ * 本地时区解析会随时区漂移。无时区符一律补 Z 按 UTC 解析；解析不了返回
+ * undefined，由调用方决定兜底。（自 uvp-order-app taskUtils 移植。）
+ */
+export function parseDeadlineUtcMs(value: string): number | undefined {
+  const normalized = value.trim().replace(" ", "T");
+  if (!normalized) {
+    return undefined;
+  }
+  const withZone = HAS_ZONE_DESIGNATOR.test(normalized) ? normalized : `${normalized}Z`;
+  const parsed = Date.parse(withZone);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/**
+ * deadline 展示：解析按 UTC（同 parseDeadlineUtcMs），展示必须带时区标
+ * 注——服务端下发的朴素串直显会让 UTC+8 用户把截止时间读晚 8 小时。
+ * 解析不了的串原样返回（不臆造时刻）。
+ */
+export function formatDeadlineUtc(deadline: string): string {
+  const ms = parseDeadlineUtcMs(deadline);
+  if (ms === undefined) {
+    return deadline;
+  }
+  return `${new Date(ms).toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
 /**
  * 任务证据计划的输入：凝结核随 zhixu 配置携带的结构化 evidenceSpec，
  * 以及任务投影下发的结构化资源要求（与 spec 合并进同一待办视图）。

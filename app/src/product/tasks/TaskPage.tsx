@@ -6,6 +6,7 @@ import type { EvidenceObjectDTO, EvidenceProofDTO } from "../api";
 import type { ActionState } from "../workbench/workbenchTypes";
 import {
   FRAMEWORK_NOTES_FIELD_KEY,
+  formatDeadlineUtc,
   taskSubmitActionLabel,
   type TaskEvidenceFieldValues,
   type TaskEvidencePlan
@@ -82,7 +83,7 @@ export function TaskPage({
       <div className="summary-strip task-summary">
         <SummaryItem icon={<FileText />} label="订单" title={task.orderTitle} />
         <SummaryItem icon={<Layers3 />} label="阶段" title={task.stageName} />
-        <SummaryItem icon={<Clock3 />} label="截止时间" title={task.deadline} />
+        <SummaryItem icon={<Clock3 />} label="截止时间" title={formatDeadlineUtc(task.deadline)} />
         <SummaryItem icon={<PackageCheck />} label="提交后影响" title={task.fundingImpact} />
       </div>
       <div className="content-layout">

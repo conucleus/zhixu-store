@@ -375,6 +375,22 @@ body {
   text-align: center;
 }
 
+.error-boundary-stack {
+  max-width: 100%;
+  margin-top: 14px;
+  overflow-wrap: anywhere;
+  text-align: left;
+  color: #64748b;
+}
+
+.error-boundary-stack pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-align: left;
+  font-size: 12px;
+  color: #64748b;
+}
+
 .back-line {
   display: inline-flex;
   align-items: center;
