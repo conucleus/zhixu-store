@@ -48,6 +48,8 @@ export function useProductWorkbenchData(api: ProductApiClient): {
    * 并返回 undefined。只在成功回调里触发一次，不会形成循环。
    */
   readonly refresh: () => Promise<ProductWorkbenchData | undefined>;
+  /** 写路径 401（钱包会话失效）时触发：置未登录态切登录面。 */
+  readonly expireSession: () => void;
 } {
   const [loadState, setLoadState] = useState<ProductWorkbenchLoadState>({ status: "loading" });
   // 慢网下旧响应不得覆盖新响应：所有加载路径共用单调序号，晚到响应作废。
@@ -88,11 +90,20 @@ export function useProductWorkbenchData(api: ProductApiClient): {
         data: loaded
       });
       return loaded;
-    } catch {
-      // 刷新失败保留当前投影：页面继续展示最后一次成功加载的数据。
+    } catch (error) {
+      // 401（钱包会话失效）与 reload 同口径切登录面；其余刷新失败保留
+      // 当前投影：页面继续展示最后一次成功加载的数据。
+      if (loadSequenceRef.current === sequence && isUnauthenticatedLoadFailure(error)) {
+        setLoadState({ status: "unauthenticated" });
+      }
       return undefined;
     }
   }, [api]);
+
+  /** 写路径 401（钱包会话失效）时由调用方触发：置未登录态切登录面。 */
+  const expireSession = useCallback(() => {
+    setLoadState({ status: "unauthenticated" });
+  }, []);
 
   useEffect(() => {
     const sequence = loadSequenceRef.current + 1;
@@ -114,5 +125,5 @@ export function useProductWorkbenchData(api: ProductApiClient): {
     });
   }, [api]);
 
-  return { loadState, reload, refresh };
+  return { loadState, reload, refresh, expireSession };
 }

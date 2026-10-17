@@ -6,11 +6,14 @@ import { EmptyState } from "./WorkbenchWidgets";
 export function TopNav({
   active,
   onGo,
+  onRefresh,
   participantName,
   openTaskCount
 }: {
   active: string;
   onGo: (view: ProductView) => void;
+  /** 提供即在顶栏渲染刷新按钮（ready 态手动重载工作台投影）。 */
+  onRefresh?: (() => void) | undefined;
   participantName?: string | undefined;
   openTaskCount?: number | undefined;
 }) {
@@ -42,6 +45,11 @@ export function TopNav({
         ))}
       </nav>
       <div className="product-userbar">
+        {onRefresh ? (
+          <button className="icon-button" type="button" aria-label="刷新" onClick={onRefresh}>
+            <RefreshCw aria-hidden="true" />
+          </button>
+        ) : null}
         <button className="icon-button" aria-label="通知"><Bell /></button>
         {participantName ? (
           <>

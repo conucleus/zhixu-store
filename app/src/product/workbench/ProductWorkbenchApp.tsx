@@ -33,7 +33,7 @@ import { SubmitPage } from "../tasks/SubmitPage";
 export function ProductWorkbenchApp() {
   const api = useMemo(() => createProductApiClient(), []);
   // reload：诊断页手动重试（整页回到加载态）；refresh：mutation 成功后的定向刷新（原地更新，失败保留现数据）。
-  const { loadState, reload: reloadWorkbench, refresh: refreshWorkbench } = useProductWorkbenchData(api);
+  const { loadState, reload: reloadWorkbench, refresh: refreshWorkbench, expireSession } = useProductWorkbenchData(api);
   const [view, setView] = useState<ProductView>("app");
   const [proofOpen, setProofOpen] = useState(false);
   // 每张待办卡片携带自己的 taskId：这里记录选中的任务，未选中时回退到投影的 activeTask。
@@ -147,7 +147,7 @@ export function ProductWorkbenchApp() {
     submitMachine,
     handleUploadEvidence,
     handleConfirmSubmit
-  } = useTaskSubmissionFlow({ api, activeTask, fieldValues: taskEvidenceFields, onMutationSuccess: refreshWorkbench });
+  } = useTaskSubmissionFlow({ api, activeTask, fieldValues: taskEvidenceFields, onMutationSuccess: refreshWorkbench, onSessionExpired: expireSession });
   // 轮询窗口耗尽后，任何一次后续投影刷新观察到订单即复位"同步中"过渡桥。
   useEffect(() => {
     if (awaitingOrderSync && triggeredOrderProjected(data)) {
@@ -352,7 +352,7 @@ export function ProductWorkbenchApp() {
       data-uvp-view={workbenchState.view}
       data-uvp-zhixu-id={workbenchState.zhixuId ?? ""}
     >
-      <TopNav active={activeNav} onGo={setView} participantName={data?.participant?.displayName} openTaskCount={data ? data.tasks.filter((task) => task.status === "open").length : undefined} />
+      <TopNav active={activeNav} onGo={setView} onRefresh={() => void reloadWorkbench()} participantName={data?.participant?.displayName} openTaskCount={data ? data.tasks.filter((task) => task.status === "open").length : undefined} />
       <main className="product-main">
         <RuntimeBanner syncing={data.syncState === "syncing"} degradedCount={data.diagnostics.length} />
         {loadState.status === "empty" ? <EmptyCatalogPage /> : null}

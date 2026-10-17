@@ -81,6 +81,16 @@ export function readableError(error: unknown, fallback: string): string {
 }
 
 /**
+ * 写路径 401 且错误码为 wallet_identity_required：钱包会话已失效，重试同一
+ * 无会话请求只会再吃一次 401——按"未登录"切登录面，不当业务错误直出。
+ */
+export function isWalletIdentityRequired(error: unknown): boolean {
+  return error instanceof Error
+    && errorHttpStatus(error) === 401
+    && error.message.includes("wallet_identity_required");
+}
+
+/**
  * 权限判定只认结构化的 HTTP 状态字段（产品 API 错误对象携带的 status），
  * 不做消息子串匹配：消息里出现"403"数字（单号、块高等）不是权限错误。
  */

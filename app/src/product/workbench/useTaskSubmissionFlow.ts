@@ -28,6 +28,7 @@ import {
   delay,
   evidenceMetadataSignature,
   isEvidenceSlotStale,
+  isWalletIdentityRequired,
   missingTaskEvidenceSlotLabels,
   planTaskEvidence,
   readableError,
@@ -55,6 +56,8 @@ export function useTaskSubmissionFlow(input: {
   readonly fieldValues: TaskEvidenceFieldValues;
   /** 成功 mutation（上传/提交确认）后触发一次定向刷新；由调用方提供，钩子内部不循环调用。 */
   readonly onMutationSuccess?: () => void;
+  /** 写路径 401（钱包会话失效）时触发：上层置未登录态切登录面。 */
+  readonly onSessionExpired: () => void;
 }): {
   readonly evidencePlan: TaskEvidencePlan;
   readonly evidenceBySlot: EvidenceBySlot;
@@ -70,7 +73,7 @@ export function useTaskSubmissionFlow(input: {
   readonly handleUploadEvidence: (slotKey: string, file: File) => Promise<void>;
   readonly handleConfirmSubmit: () => Promise<void>;
 } {
-  const { api, activeTask, fieldValues, onMutationSuccess } = input;
+  const { api, activeTask, fieldValues, onMutationSuccess, onSessionExpired } = input;
   const evidencePlan = planTaskEvidence({
     evidenceSpec: activeTask?.evidenceSpec,
     resourceRequirements: activeTask?.resourceRequirements
@@ -209,6 +212,10 @@ export function useTaskSubmissionFlow(input: {
         if (taskScopeRef.current !== requestScopeKey) {
           return;
         }
+        if (isWalletIdentityRequired(proofError)) {
+          onSessionExpired();
+          return;
+        }
         // 核验记录拉取失败（含服务端拒绝给出核验结果的路径）时，槽位停在
         // "已上传但未确认"：提交门槛按未确认禁锁，不得在无核验记录时放行。
         setEvidenceAction({ phase: "error", message: readableError(proofError, "凭证核验状态获取失败，请重新上传该凭证") });
@@ -223,6 +230,10 @@ export function useTaskSubmissionFlow(input: {
       onMutationSuccess?.();
     } catch (error) {
       if (taskScopeRef.current !== requestScopeKey) {
+        return;
+      }
+      if (isWalletIdentityRequired(error)) {
+        onSessionExpired();
         return;
       }
       setEvidenceAction({ phase: "error", message: readableError(error, "凭证上传失败") });
@@ -363,6 +374,10 @@ export function useTaskSubmissionFlow(input: {
       await pollSubmission(submissionResult.data.submissionId, preparedResult.data, submissionResult.source, requestScopeKey);
     } catch (error) {
       if (taskScopeRef.current !== requestScopeKey) {
+        return;
+      }
+      if (isWalletIdentityRequired(error)) {
+        onSessionExpired();
         return;
       }
       if (error instanceof WalletNotConnectedError) {
