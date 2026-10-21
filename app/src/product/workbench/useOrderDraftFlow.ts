@@ -10,6 +10,8 @@ import { idleAction, type ActionState } from "./workbenchTypes";
 import {
   advanceScopeGeneration,
   canCreateProductOrder,
+  inviteRemainingTimeLabel,
+  isWalletIdentityRequired,
   readableError,
   scopeGenerationValue,
   type ScopeGeneration
@@ -83,6 +85,8 @@ export function useOrderDraftFlow(input: {
   readonly selectedZhixu?: ZhixuDetailDTO | undefined;
   /** 成功 mutation（建草稿/存草稿/发邀请）后触发一次定向刷新；调用方保证只刷一次，钩子内部不循环。 */
   readonly onMutationSuccess?: () => void;
+  /** 写路径 401（钱包会话失效）时触发：上层置未登录态切登录面。 */
+  readonly onSessionExpired?: () => void;
 }): {
   readonly draft?: ProductOrderDraftDTO | undefined;
   readonly setDraft: Dispatch<SetStateAction<ProductOrderDraftDTO | undefined>>;
@@ -105,7 +109,7 @@ export function useOrderDraftFlow(input: {
   /** 参与方清单的手动重试入口（清单加载失败后不重建草稿即可重拉）。 */
   readonly reloadParticipants: () => Promise<void>;
 } {
-  const { api, selectedZhixu, onMutationSuccess } = input;
+  const { api, selectedZhixu, onMutationSuccess, onSessionExpired } = input;
   const [draft, setDraft] = useState<ProductOrderDraftDTO | undefined>();
   const [draftParticipants, setDraftParticipants] = useState<readonly DraftParticipantDTO[]>([]);
   const [draftParticipantsStatus, setDraftParticipantsStatus] = useState<"unknown" | "loading" | "ready" | "error">("unknown");
@@ -156,6 +160,10 @@ export function useOrderDraftFlow(input: {
       if (scopeRef.current !== requestScope) {
         throw error;
       }
+      if (isWalletIdentityRequired(error)) {
+        onSessionExpired?.();
+        throw error;
+      }
       const message = readableError(error, "参与方清单加载失败");
       setDraftParticipantsStatus("error");
       setDraftParticipantsError(message);
@@ -163,12 +171,35 @@ export function useOrderDraftFlow(input: {
     }
   }
 
+  /**
+   * 草稿回读（A-02）：本地 draft 只在创建/保存时更新，参与方在邀请页接受
+   * 等服务端状态变化不会自动进 UI。进入参与方页与启动判定（re-prepare
+   * 门）之前都经本函数回读一次，读到的才是服务端当前状态。
+   */
   async function ensureDraft(): Promise<ProductOrderDraftDTO | undefined> {
-    if (draft) {
-      return draft;
+    if (!draft) {
+      setDraftAction({ phase: "error", message: "请先在「订单信息」页填写并创建订单草稿" });
+      return undefined;
     }
-    setDraftAction({ phase: "error", message: "请先在「订单信息」页填写并创建订单草稿" });
-    return undefined;
+    const requestScope = scopeRef.current;
+    try {
+      const result = await api.getOrderDraft(draft.draftId);
+      if (scopeRef.current !== requestScope) {
+        return undefined;
+      }
+      setDraft(result.data);
+      return result.data;
+    } catch (error) {
+      if (scopeRef.current !== requestScope) {
+        return undefined;
+      }
+      if (isWalletIdentityRequired(error)) {
+        onSessionExpired?.();
+        return undefined;
+      }
+      setDraftAction({ phase: "error", message: readableError(error, "订单状态刷新失败，请稍后重试") });
+      return undefined;
+    }
   }
 
   async function handleCreateDraft(values: OrderDraftFormValues): Promise<ProductOrderDraftDTO | undefined> {
@@ -227,6 +258,10 @@ export function useOrderDraftFlow(input: {
       if (scopeRef.current !== requestScope) {
         return undefined;
       }
+      if (isWalletIdentityRequired(error)) {
+        onSessionExpired?.();
+        return undefined;
+      }
       setDraftAction({ phase: "error", message: readableError(error, "订单草稿创建失败") });
       return undefined;
     }
@@ -263,6 +298,10 @@ export function useOrderDraftFlow(input: {
       if (scopeRef.current !== requestScope) {
         return;
       }
+      if (isWalletIdentityRequired(error)) {
+        onSessionExpired?.();
+        return;
+      }
       setSaveDraftAction({ phase: "error", message: readableError(error, "草稿保存失败") });
     }
   }
@@ -276,6 +315,32 @@ export function useOrderDraftFlow(input: {
         [participant.participantId]: {
           phase: "error",
           message: "该参与方未填写联系方式：请先补填联系方式再发送邀请"
+        }
+      }));
+      return;
+    }
+    // 重发指引（同一口径：只有过期邀请才能重发新凭据）：已接受的参与方与
+    // 本会话已知仍在有效期内的邀请直接给出指引，不发注定被拒的请求。
+    if (participant.status === "accepted") {
+      setInviteActions((current) => ({
+        ...current,
+        [participant.participantId]: {
+          phase: "error",
+          message: "该参与方已接受邀请，无需重新发送"
+        }
+      }));
+      return;
+    }
+    const knownInvite = inviteActions[participant.participantId]?.invite;
+    const remaining = knownInvite?.status === "active"
+      ? inviteRemainingTimeLabel(knownInvite.expiresAt)
+      : undefined;
+    if (participant.status === "invited" && knownInvite?.status === "active" && remaining) {
+      setInviteActions((current) => ({
+        ...current,
+        [participant.participantId]: {
+          phase: "error",
+          message: `当前邀请仍在有效期内（${remaining}），需等待其过期后才能重新发送`
         }
       }));
       return;
@@ -301,6 +366,9 @@ export function useOrderDraftFlow(input: {
       if (scopeRef.current !== requestScope) {
         return;
       }
+      // 服务端随创建响应回写刷新后的草稿（如状态推进为等待参与方确认）：
+      // 本地 draft 同步更新，启动判定不再读创建前的陈旧状态（A-02）。
+      setDraft(result.data.draft);
       // 一次性明文 token 只在本响应出现：先把成功态与 token 落进动作状态
       // （复制链接出口就绪），清单刷新失败也不得回滚为失败定性——回滚会把
       // token 一起丢掉，用户只能重发一份新邀请。
@@ -339,6 +407,10 @@ export function useOrderDraftFlow(input: {
       onMutationSuccess?.();
     } catch (error) {
       if (scopeRef.current !== requestScope) {
+        return;
+      }
+      if (isWalletIdentityRequired(error)) {
+        onSessionExpired?.();
         return;
       }
       setInviteActions((current) => ({

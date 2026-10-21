@@ -7,7 +7,7 @@ import {
   type ZhixuSummaryDTO
 } from "@uvp-eth/product-dto";
 import { isRecord } from "../../lib/frontend";
-import type { ProductSubmissionStatus } from "../api";
+import type { ProductSubmissionDTO, ProductSubmissionStatus } from "../api";
 import type { SubmitMachineStatus } from "./workbenchTypes";
 import {
   EVIDENCE_MAX_FILE_BYTES,
@@ -73,6 +73,16 @@ export function readableError(error: unknown, fallback: string): string {
   }
   if (error.message.includes("evidence_required")) {
     return "请先上传凭证";
+  }
+  if (isWalletIdentityRequired(error)) {
+    // 会话失效不是业务错误：协议码不进产品文案；调用方同时会切登录面。
+    return "登录已过期，请重新登录后再操作";
+  }
+  if (error.message.includes("role_already_filled")) {
+    return "该参与方已接受邀请，无需重新发送";
+  }
+  if (error.message.includes("invite_already_active")) {
+    return "当前邀请仍在有效期内，需等待其过期后才能重新发送";
   }
   if (errorHttpStatus(error) === 403) {
     return "当前账号没有权限执行该操作";
@@ -254,6 +264,27 @@ export function inviteLinkForInvite(
   return `${origin.replace(/\/+$/u, "")}/?${params.toString()}`;
 }
 
+/**
+ * 邀请剩余有效期文案（重发指引用）：已过期或解析不了返回 undefined，
+ * 由调用方回落到"需等待过期后重发"的通用文案，不臆造时刻。
+ */
+export function inviteRemainingTimeLabel(expiresAt: string, nowMs: number = Date.now()): string | undefined {
+  const ms = parseDeadlineUtcMs(expiresAt);
+  if (ms === undefined || ms <= nowMs) {
+    return undefined;
+  }
+  const remaining = ms - nowMs;
+  const totalMinutes = Math.floor(remaining / 60_000);
+  if (totalMinutes < 60) {
+    return `剩余约 ${Math.max(1, totalMinutes)} 分钟`;
+  }
+  const totalHours = Math.floor(totalMinutes / 60);
+  if (totalHours < 24) {
+    return `剩余约 ${totalHours} 小时 ${totalMinutes % 60} 分钟`;
+  }
+  return `剩余约 ${Math.floor(totalHours / 24)} 天 ${totalHours % 24} 小时`;
+}
+
 // 任务提交意图（写侧契约）：TaskSubmitIntent 联合、
 // submitIntentByPluginKind 兜底映射与 taskSubmitIntent 推导以 product-dto
 // 写侧面为唯一出处——与 uvp-order-app 不持逐字镜像，两端不会各自漂移。
@@ -305,16 +336,40 @@ export function taskSubmitActionLabel(
  */
 export interface SignDomainEnv {
   readonly VITE_UVP_STATE_MACHINE_ADDRESS?: string | undefined;
+  /** 可选部署链 ID 锚（十进制正整数字符串，order-app 同范式）。 */
+  readonly VITE_UVP_CHAIN_ID?: string | undefined;
+}
+
+/**
+ * 可选部署链 ID（十进制正整数字符串）：声明了才锚定 domain.chainId。
+ * 显式限定十进制——Number 会把 "0x7a69" 这类十六进制串静默解析成功，
+ * 部署配置写错格式时按 fail-closed 拒签而不是宽松放行。
+ */
+function optionalEnvChainId(env: SignDomainEnv): number | undefined {
+  const raw = env.VITE_UVP_CHAIN_ID?.trim();
+  if (!raw) {
+    return undefined;
+  }
+  if (!/^\d+$/u.test(raw)) {
+    throw new Error(`部署链 ID 不是十进制正整数（构建期环境变量 VITE_UVP_CHAIN_ID="${raw}"），已拒绝签名`);
+  }
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`部署链 ID 不是有效的十进制正整数（构建期环境变量 VITE_UVP_CHAIN_ID="${raw}"），已拒绝签名`);
+  }
+  return parsed;
 }
 
 export function stateMachineSignExpectation(env: SignDomainEnv = buildTimeSignDomainEnv()): {
   readonly verifyingContract: string;
+  readonly chainId?: number | undefined;
 } {
   const address = env.VITE_UVP_STATE_MACHINE_ADDRESS?.trim();
   if (!address || !/^0x[0-9a-fA-F]{40}$/u.test(address)) {
     throw new Error("状态机部署地址未配置（构建期环境变量 VITE_UVP_STATE_MACHINE_ADDRESS），无法交叉核对签名域，已拒绝签名");
   }
-  return { verifyingContract: address };
+  const chainId = optionalEnvChainId(env);
+  return { verifyingContract: address, ...(chainId !== undefined ? { chainId } : {}) };
 }
 
 /**
@@ -343,24 +398,31 @@ export function assertTypedDataDomainMatchesStateMachineAddress(
 
 function buildTimeSignDomainEnv(): SignDomainEnv {
   return {
-    VITE_UVP_STATE_MACHINE_ADDRESS: import.meta.env?.VITE_UVP_STATE_MACHINE_ADDRESS
+    VITE_UVP_STATE_MACHINE_ADDRESS: import.meta.env?.VITE_UVP_STATE_MACHINE_ADDRESS,
+    VITE_UVP_CHAIN_ID: import.meta.env?.VITE_UVP_CHAIN_ID
   };
 }
 
 /**
  * 提交入口终态门：DTO 的 status/canSubmit 是服务端权威门（已关闭/待索引/
  * 受阻任务不呈现可提交入口，order-app 同功能面 fail-closed），submitStatus
- * confirmed 是本次会话的终态闸——提交确认后不得再触发完整签名提交，除非
- * 刷新后的投影把任务改回 open（新会话/新状态）。
+ * confirmed 与本次会话已判 replaced 的提交记录都是终态闸——终态一律不可
+ * 重投；failed/expired 保持可重试。刷新后的投影把任务改回 open（新会话/
+ * 新状态）时闸门自然重开。
  */
 export function canSubmitWorkbenchTask(
   task: Pick<ProductTaskDTO, "status" | "canSubmit">,
-  submitStatus: SubmitMachineStatus
+  submitStatus: SubmitMachineStatus,
+  submission?: Pick<ProductSubmissionDTO, "status"> | undefined
 ): boolean {
   if (task.status !== "open" || task.canSubmit === false) {
     return false;
   }
-  return submitStatus !== "confirmed";
+  if (submitStatus === "confirmed") {
+    return false;
+  }
+  // 终态口径单一：confirmed 与 replaced 的提交记录都是终态，一律不可重投。
+  return submission?.status !== "confirmed" && submission?.status !== "replaced";
 }
 
 export type SubmissionPollOutcome = "confirmed" | "terminal_failure" | "pending";

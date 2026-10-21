@@ -254,16 +254,18 @@ export function useTaskSubmissionFlow(input: {
       return;
     }
     // 终态门（fail-closed）：投影任务状态不是 open 或钱包无提交权时拒绝
-    // 进入签名链路——confirmed 后的重复提交在这里被硬闸住，不再依赖按钮
-    // 状态；入口禁用（canSubmitWorkbenchTask）只是第一道防线。
-    if (!canSubmitWorkbenchTask(activeTask, submitMachine.status)) {
+    // 进入签名链路——confirmed 后的重复提交与 replaced 终态的重投都在这里
+    // 被硬闸住，不再依赖按钮状态；入口禁用（canSubmitWorkbenchTask）只是第一道防线。
+    if (!canSubmitWorkbenchTask(activeTask, submitMachine.status, submitMachine.submission)) {
       setSubmitMachine({
         status: "failed",
-        message: activeTask.status === "submitted"
-          ? "已提交，正在等待链上确认，请勿重复提交"
-          : activeTask.canSubmit === false
-            ? "当前钱包暂不能提交此待办"
-            : (activeTask.blockedReason ?? "当前待办不可提交")
+        message: submitMachine.submission?.status === "replaced"
+          ? "该提交已被后续提交取代，请以最新提交记录为准，请勿重投"
+          : activeTask.status === "submitted"
+            ? "已提交，正在等待链上确认，请勿重复提交"
+            : activeTask.canSubmit === false
+              ? "当前钱包暂不能提交此待办"
+              : (activeTask.blockedReason ?? "当前待办不可提交")
       });
       return;
     }
@@ -342,14 +344,16 @@ export function useTaskSubmissionFlow(input: {
       assertTypedDataDomainMatchesStateMachineAddress(preparedResult.data.typedData, activeTask.stateMachineAddress, "任务投影");
       // 与 executor-kit 同边界：签名前校验 typedData 的 primaryType、domain 和 submitter，
       // prepared 记录与 typedData 声明的提交方必须一致，防止换签名对象。
-      // verifyingContract 预期来自部署配置注入（独立来源，不读同一 BFF 响应
-      // 里的任务投影地址），缺配置即拒绝签名，不再条件性跳过比对。
+      // verifyingContract/chainId 预期来自部署配置注入（独立来源，不读同一 BFF
+      // 响应里的任务投影地址），缺配置即拒绝签名，不再条件性跳过比对。
+      const domainExpectation = stateMachineSignExpectation();
       const signature = await signTypedData(account, preparedResult.data.typedData, {
         primaryType: PRODUCT_SUBMIT_PRIMARY_TYPE,
         domainName: PRODUCT_SUBMIT_DOMAIN_NAME,
         // 协议冻结面：domain.version 以 protocol-bindings 导出的常量为唯一来源。
         domainVersion: PRODUCT_SUBMIT_DOMAIN_VERSION,
-        verifyingContract: stateMachineSignExpectation().verifyingContract,
+        verifyingContract: domainExpectation.verifyingContract,
+        ...(domainExpectation.chainId !== undefined ? { chainId: domainExpectation.chainId } : {}),
         submitter: account.address,
         preparedSubmitters: [preparedResult.data.summary.walletAddress]
       });

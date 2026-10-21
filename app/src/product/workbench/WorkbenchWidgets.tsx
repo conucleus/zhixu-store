@@ -189,12 +189,11 @@ export function Panel({ children, tone }: { children: ReactNode; tone?: "success
   return <section className={`panel-card ${tone ? `panel-${tone}` : ""}`}>{children}</section>;
 }
 
-export function SidePanel({ title, children, action }: { title: string; children: ReactNode; action?: string | undefined }) {
+export function SidePanel({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="side-panel">
       <div className="side-panel-title">
         <h3>{title}</h3>
-        {action ? <button>{action}</button> : null}
       </div>
       {children}
     </section>

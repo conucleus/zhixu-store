@@ -232,7 +232,7 @@ export function CatalogPage({
         </div>
 
         <aside className="right-stack">
-          <SidePanel title="进行中的订单" action="查看全部">
+          <SidePanel title="进行中的订单">
             {order ? (
               <button className="quick-order-card" onClick={onOrder}>
                 <strong>{order.title}</strong>
@@ -322,7 +322,6 @@ export function ZhixuDetailPage({
                 <h2>阶段与所需凭证</h2>
                 <p>阶段用于说明订单推进顺序；每个阶段都有负责人和凭证要求。</p>
               </div>
-              <button className="light-button"><FileText /> 下载秩序图</button>
             </div>
             <StageList mode="zhixu" stages={zhixu.stages} />
           </Panel>

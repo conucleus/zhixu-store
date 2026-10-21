@@ -98,7 +98,7 @@ export function OrderOverviewPage({
             <MoneyRow label="资金状态" value={fundingStatusDisplay(order.fundingStatus)} />
             <span className="text-button as-label">资金状态来自订单 DTO；未接入时不会显示为已保障。</span>
           </SidePanel>
-          <SidePanel title="最近事件" action="查看全部">
+          <SidePanel title="最近事件">
             {order.recentEvents.map((event) => <EventLine key={event.eventId} text={event.text} time={event.time} />)}
           </SidePanel>
         </aside>
@@ -165,7 +165,8 @@ function participantStatusLabel(status: ParticipantStatus): string {
     case "joined":
       return "已加入";
     case "invited":
-      return "待邀请";
+      // 与参与方页/order-app 同一口径：invited = 邀请已发出、等待对方接受。
+      return "已邀请";
     case "pending_confirmation":
       return "待确认";
     case "assigned":

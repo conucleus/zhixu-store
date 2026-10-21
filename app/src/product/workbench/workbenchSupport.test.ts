@@ -468,6 +468,16 @@ describe("submit terminal gate (server authority + session final state)", () => 
     // 刷新后投影仍未改判任务状态时（open）也保持闸住。
     assert.equal(canSubmitWorkbenchTask(task("open"), "tx_pending"), true);
   });
+
+  it("keeps a replaced terminal submission locked (terminal states never resubmit)", () => {
+    // replaced 与 confirmed 同口径禁投（终态不可重投）；failed/expired
+    // 保持可重试。
+    assert.equal(canSubmitWorkbenchTask(task("open"), "failed", { status: "replaced" }), false);
+    assert.equal(canSubmitWorkbenchTask(task("open"), "idle", { status: "replaced" }), false);
+    assert.equal(canSubmitWorkbenchTask(task("open"), "failed", { status: "failed" }), true);
+    assert.equal(canSubmitWorkbenchTask(task("open"), "failed", { status: "expired" }), true);
+    assert.equal(canSubmitWorkbenchTask(task("open"), "failed", { status: "confirmed" }), false);
+  });
 });
 
 describe("signing domain expectation from deployment config", () => {
@@ -476,6 +486,37 @@ describe("signing domain expectation from deployment config", () => {
       stateMachineSignExpectation({ VITE_UVP_STATE_MACHINE_ADDRESS: " 0x0000000000000000000000000000000000000001 " }),
       { verifyingContract: "0x0000000000000000000000000000000000000001" }
     );
+  });
+
+  it("anchors the domain chainId when the deployment config declares one", () => {
+    // 部署链 ID 锚（order-app 同范式）：声明了就进入签名域预期，与
+    // domain.chainId 严格比对；被攻陷 BFF 换链构造的自洽 typedData 过不了这一关。
+    assert.deepEqual(
+      stateMachineSignExpectation({
+        VITE_UVP_STATE_MACHINE_ADDRESS: "0x0000000000000000000000000000000000000001",
+        VITE_UVP_CHAIN_ID: "84532"
+      }),
+      { verifyingContract: "0x0000000000000000000000000000000000000001", chainId: 84532 }
+    );
+    assert.deepEqual(
+      stateMachineSignExpectation({
+        VITE_UVP_STATE_MACHINE_ADDRESS: "0x0000000000000000000000000000000000000001",
+        VITE_UVP_CHAIN_ID: " 31337 "
+      }),
+      { verifyingContract: "0x0000000000000000000000000000000000000001", chainId: 31337 }
+    );
+  });
+
+  it("refuses to sign when the declared chain id is not a decimal positive integer", () => {
+    // 十六进制串/非正数按 fail-closed 拒签，不做宽松放行。
+    assert.throws(() => stateMachineSignExpectation({
+      VITE_UVP_STATE_MACHINE_ADDRESS: "0x0000000000000000000000000000000000000001",
+      VITE_UVP_CHAIN_ID: "0x7a69"
+    }), /VITE_UVP_CHAIN_ID/u);
+    assert.throws(() => stateMachineSignExpectation({
+      VITE_UVP_STATE_MACHINE_ADDRESS: "0x0000000000000000000000000000000000000001",
+      VITE_UVP_CHAIN_ID: "0"
+    }), /VITE_UVP_CHAIN_ID/u);
   });
 
   it("refuses to sign when the deployment config is missing or invalid (no conditional skip)", () => {
@@ -544,6 +585,19 @@ describe("readableError permission judgement", () => {
     const withOtherStatus = new Error("not found");
     (withOtherStatus as { status?: number }).status = 404;
     assert.equal(readableError(withOtherStatus, "fallback"), "not found");
+  });
+
+  it("maps session-expiry and invite-conflict protocol codes to readable copy", () => {
+    // 协议码不进产品文案：wallet_identity_required/role_already_filled/
+    // invite_already_active 都要有用户可读的中文指引。
+    const expired = new Error("wallet_identity_required");
+    (expired as { status?: number }).status = 401;
+    assert.equal(readableError(expired, "fallback"), "登录已过期，请重新登录后再操作");
+    assert.equal(readableError(new Error("role_already_filled"), "fallback"), "该参与方已接受邀请，无需重新发送");
+    assert.equal(
+      readableError(new Error("invite_already_active"), "fallback"),
+      "当前邀请仍在有效期内，需等待其过期后才能重新发送"
+    );
   });
 });
 

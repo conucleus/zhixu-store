@@ -423,9 +423,12 @@ export async function installWorkbenchRoutes(page: Page, options: WorkbenchStubO
     if (/^\/product\/orders\/[^/]+\/invites$/.test(pathname) && method === "POST") {
       inviteSequence += 1;
       // 契约对齐：一次性明文 token 只随创建响应出现一次（客户端用它拼
-      // 含 ?inviteToken= 的邀请链接）；invite 记录本身只带 tokenHash。
+      // 含 ?inviteToken= 的邀请链接）；invite 记录本身只带 tokenHash；
+      // 服务端随创建响应回写刷新后的草稿（有参与方离开 missing 即为
+      // awaiting_participants）。
       await fulfillJson(route, {
         invite: { ...stubInvite, inviteId: `invite-${4000 + inviteSequence}` },
+        draft: { ...stubDraft, status: "awaiting_participants" },
         inviteToken: `one-time-invite-token-${inviteSequence}`
       });
       return;

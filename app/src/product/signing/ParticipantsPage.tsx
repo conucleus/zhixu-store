@@ -1,10 +1,11 @@
 // 参与方确认与订单启动页：原 ProductWorkbenchApp.tsx 的 ParticipantsPage（纯搬迁）。
 // 启动动作由 workbench 的 useOrderRegistrationFlow（钱包 EIP-712 签名）承接，本页只做渲染。
 import { AlertTriangle, CheckCircle2, Copy, FileText, HandCoins, Loader2, LockKeyhole, PackageCheck, RefreshCw, ShieldCheck } from "lucide-react";
+import { useState } from "react";
 import type { ProductOrderDTO, ProductTone } from "@uvp-eth/product-dto";
 import type { DraftParticipantDTO, ProductInviteDTO, ProductOrderDraftDTO } from "../api";
 import { idleAction, type ActionState } from "../workbench/workbenchTypes";
-import { inviteLinkForInvite, resolveOrderAppInviteBaseUrl } from "../workbench/workbenchSupport";
+import { inviteLinkForInvite, inviteRemainingTimeLabel, resolveOrderAppInviteBaseUrl } from "../workbench/workbenchSupport";
 import { draftStatusLabel } from "../order/draftStatusLabel";
 import {
   ActionNotice,
@@ -71,6 +72,23 @@ export function ParticipantsPage({
     const action = inviteActions[item.participantId];
     return Boolean(action?.invite && action.inviteToken);
   });
+  // 启动条件侧栏的 invited 行：本会话已知有效期的邀请直接给出剩余时间
+  // 指引（重发只能等过期）；未知有效期时保持通用文案，不臆造时刻。
+  function invitedConditionDesc(item: DraftParticipantDTO): string {
+    if (item.status === "accepted") {
+      return "已接受邀请并确认职责";
+    }
+    if (item.status === "invited") {
+      const knownInvite = inviteActions[item.participantId]?.invite;
+      const remaining = knownInvite?.status === "active"
+        ? inviteRemainingTimeLabel(knownInvite.expiresAt)
+        : undefined;
+      return remaining
+        ? `已邀请，等待对方接受；当前邀请${remaining}，过期后才能重新发送`
+        : "已邀请，等待对方接受";
+    }
+    return "待发送邀请并确认职责";
+  }
   return (
     <section className="page-shell">
       <BackLine onClick={onBack}>返回订单信息</BackLine>
@@ -141,7 +159,7 @@ export function ParticipantsPage({
                     {actionState.phase === "pending" ? <Loader2 className="spin" /> : null}{draftParticipantActionLabel(item.status)}
                   </button>
                   {inviteLink
-                    ? <button className="light-button" onClick={() => void navigator.clipboard?.writeText(inviteLink)}><Copy /> 复制链接</button>
+                    ? <CopyInviteLinkButton inviteLink={inviteLink} />
                     : action?.invite && action.inviteToken
                       ? <button className="light-button" disabled title={inviteLinkBaseError}><Copy /> 复制链接（未配置）</button>
                       : <button className="light-button" onClick={() => onInvite(item)} disabled={!item.contact.trim()}>替换</button>}
@@ -159,7 +177,12 @@ export function ParticipantsPage({
               </div>
             </div>
           ) : null}
-          <button className={requiredReady ? "primary-button block" : "disabled-button block"} data-testid="register-order-button" onClick={requiredReady ? onRegister : undefined} disabled={!requiredReady || registerAction.phase === "pending"}>
+          <button
+            className={requiredReady && registerAction.phase !== "success" ? "primary-button block" : "disabled-button block"}
+            data-testid="register-order-button"
+            onClick={requiredReady ? onRegister : undefined}
+            disabled={!requiredReady || registerAction.phase === "pending" || registerAction.phase === "success"}
+          >
             {registerAction.phase === "pending" ? <Loader2 className="spin" /> : <LockKeyhole />} 全部关键方确认后启动订单
           </button>
           <p className="center-note">仅当参与方清单已成功加载且所有关键参与方满足条件后，启动按钮才会可用。</p>
@@ -172,7 +195,7 @@ export function ParticipantsPage({
               key={item.participantId}
               status={item.status === "accepted" ? "done" : "warn"}
               title={`${item.roleLabel}：${draftParticipantStatusLabel(item.status)}`}
-              desc={item.status === "accepted" ? "已接受邀请并确认职责" : item.status === "invited" ? "已邀请，等待对方接受" : "待发送邀请并确认职责"}
+              desc={invitedConditionDesc(item)}
             />
           ))}
           {!requiredReady ? (
@@ -201,6 +224,31 @@ function Condition({ status, title, desc }: { status: "done" | "warn"; title: st
   );
 }
 
+/**
+ * 复制邀请链接：成功/失败都要给出可见反馈——剪贴板在非安全上下文或权限
+ * 拒绝下会失败，静默失败会让操作者以为链接已送达对方。
+ */
+function CopyInviteLinkButton({ inviteLink }: { readonly inviteLink: string }) {
+  const [feedback, setFeedback] = useState<"idle" | "copied" | "failed">("idle");
+  async function handleCopy(): Promise<void> {
+    try {
+      if (!navigator.clipboard) {
+        throw new Error("clipboard_unavailable");
+      }
+      await navigator.clipboard.writeText(inviteLink);
+      setFeedback("copied");
+    } catch {
+      setFeedback("failed");
+    }
+  }
+  return (
+    <span className="row-actions">
+      <button className="light-button" onClick={() => void handleCopy()}><Copy /> 复制链接</button>
+      {feedback === "copied" ? <StatusText tone="ok">邀请链接已复制</StatusText> : null}
+      {feedback === "failed" ? <StatusText tone="warn">复制失败，请稍后重试</StatusText> : null}
+    </span>
+  );
+}
 function draftParticipantStatusLabel(status: DraftParticipantDTO["status"]): string {
   switch (status) {
     case "missing":

@@ -1,5 +1,5 @@
 // 工作台壳层：顶栏、运行横幅与空目录占位（原 ProductWorkbenchApp.tsx，纯搬迁）。
-import { AlertTriangle, Bell, ChevronDown, RefreshCw, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ChevronDown, RefreshCw, ShieldCheck } from "lucide-react";
 import type { ProductView } from "./workbenchTypes";
 import { EmptyState } from "./WorkbenchWidgets";
 
@@ -22,8 +22,7 @@ export function TopNav({
     { label: "秩序库", view: "home" },
     { label: "订单", view: "order" },
     ...(openTaskCount === undefined ? [{ label: "待办", view: "task" as const }] : [{ label: "待办", view: "task" as const, badge: String(openTaskCount) }]),
-    { label: "执行方", view: "participants" },
-    { label: "帮助", view: "home" }
+    { label: "执行方", view: "participants" }
   ];
 
   return (
@@ -50,7 +49,6 @@ export function TopNav({
             <RefreshCw aria-hidden="true" />
           </button>
         ) : null}
-        <button className="icon-button" aria-label="通知"><Bell /></button>
         {participantName ? (
           <>
             <span className="avatar">{participantName.slice(0, 1)}</span>

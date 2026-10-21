@@ -17,6 +17,7 @@ import { idleAction, type ActionState } from "./workbenchTypes";
 import {
   advanceScopeGeneration,
   assertTypedDataDomainMatchesStateMachineAddress,
+  isWalletIdentityRequired,
   readableError,
   scopeGenerationValue,
   stateMachineSignExpectation,
@@ -57,7 +58,9 @@ export interface OrderRegistrationDeps {
   readonly requestAccount: () => Promise<WalletAccount>;
   readonly sign: (account: WalletAccount, typedData: unknown, expectation: SignTypedDataExpectation) => Promise<string>;
   /** 签名域预期值来源（部署配置注入）；测试注入桩，缺省 fail-closed。 */
-  readonly signExpectation?: () => { readonly verifyingContract: string };
+  readonly signExpectation?: () => { readonly verifyingContract: string; readonly chainId?: number | undefined };
+  /** 写路径 401（钱包会话失效）时触发：上层置未登录态切登录面。 */
+  readonly onSessionExpired?: (() => void) | undefined;
 }
 
 /**
@@ -73,10 +76,11 @@ export async function executeOrderRegistration(deps: OrderRegistrationDeps): Pro
   // re-prepare 门（UB-3 前端腿）：终态/在途稿不发起 prepare-trigger。
   // failed 稿是唯一的重试形态（服务端按同身份重开复用既有
   // prepareId/链上订单身份），其余状态先响亮拒绝，不出网络调用。
+  // ensureDraft 已回读服务端当前状态：这里读到的是刷新后的判定。
   if (!canPrepareOrderTrigger(currentDraft.status)) {
     deps.setAction({
       phase: "error",
-      message: `当前订单${DRAFT_STATUS_LABELS[currentDraft.status] ?? `状态 ${currentDraft.status}`}不可重新启动，请刷新订单状态后再操作`
+      message: `当前订单${DRAFT_STATUS_LABELS[currentDraft.status] ?? `状态 ${currentDraft.status}`}不可重新启动`
     });
     return;
   }
@@ -95,14 +99,16 @@ export async function executeOrderRegistration(deps: OrderRegistrationDeps): Pro
     // 地址必填）：与下方构建期注入的预期构成双重核对，任一不符即拒签。
     assertTypedDataDomainMatchesStateMachineAddress(prepared.data.typedData, prepared.data.stateMachineAddress, "prepare 记录");
     // 与 executor-kit 同边界：签名前校验启动签名对象的 primaryType、domain 和 submitter；
-    // verifyingContract 预期来自部署配置注入（独立来源，不读同一 prepare
+    // verifyingContract/chainId 预期来自部署配置注入（独立来源，不读同一 prepare
     // 响应里的地址），缺配置即拒绝签名，防被攻陷 BFF 换域让钱包照签。
+    const domainExpectation = (deps.signExpectation ?? stateMachineSignExpectation)();
     const signature = await deps.sign(account, prepared.data.typedData, {
       primaryType: TRIGGER_ORDER_FROM_OUTSIDE_PRIMARY_TYPE,
       domainName: PRODUCT_SUBMIT_DOMAIN_NAME,
       // 协议冻结面：domain.version 以 protocol-bindings 导出的常量为唯一来源。
       domainVersion: PRODUCT_SUBMIT_DOMAIN_VERSION,
-      verifyingContract: (deps.signExpectation ?? stateMachineSignExpectation)().verifyingContract,
+      verifyingContract: domainExpectation.verifyingContract,
+      ...(domainExpectation.chainId !== undefined ? { chainId: domainExpectation.chainId } : {}),
       submitter: account.address,
       preparedSubmitters: [prepared.data.submitter]
     });
@@ -123,6 +129,11 @@ export async function executeOrderRegistration(deps: OrderRegistrationDeps): Pro
     if (deps.isStale()) {
       return;
     }
+    if (isWalletIdentityRequired(error)) {
+      // 会话失效只切登录面，不落死文案（order-app 任务写路径同口径）。
+      deps.onSessionExpired?.();
+      return;
+    }
     if (error instanceof WalletNotConnectedError) {
       deps.setAction({ phase: "error", message: "请连接浏览器钱包后再启动订单" });
       return;
@@ -141,11 +152,13 @@ export function useOrderRegistrationFlow(input: {
   readonly scopeKey?: string | undefined;
   readonly ensureDraft: () => Promise<ProductOrderDraftDTO | undefined>;
   readonly onRegistered: (draft: ProductOrderDraftDTO) => void;
+  /** 写路径 401（钱包会话失效）时触发：上层置未登录态切登录面。 */
+  readonly onSessionExpired?: (() => void) | undefined;
 }): {
   readonly registerDraftAction: ActionState;
   readonly handleRegisterDraft: () => Promise<void>;
 } {
-  const { api, scopeKey, ensureDraft, onRegistered } = input;
+  const { api, scopeKey, ensureDraft, onRegistered, onSessionExpired } = input;
   const [registerDraftAction, setRegisterDraftAction] = useState<ActionState>(idleAction);
   // 作用域键在 A→B→A 回切时会复用：按裸键比较的 stale 检查在回切后
   // "键又对上了"，旧目录的在途启动链路（prepare→签名→trigger）继续广播
@@ -180,7 +193,8 @@ export function useOrderRegistrationFlow(input: {
         setAction: setRegisterDraftAction,
         isStale: () => scopeRef.current !== requestScope,
         requestAccount: requestWalletAccount,
-        sign: signTypedData
+        sign: signTypedData,
+        ...(onSessionExpired ? { onSessionExpired } : {})
       });
     } finally {
       registerInflightRef.current = false;

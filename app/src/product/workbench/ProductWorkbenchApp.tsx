@@ -76,7 +76,7 @@ export function ProductWorkbenchApp() {
     // submitted with the next task.
     setTaskEvidenceFields(emptyTaskEvidenceFieldValues);
   }, [taskScopeKey]);
-  const draftFlow = useOrderDraftFlow({ api, selectedZhixu, onMutationSuccess: refreshWorkbench });
+  const draftFlow = useOrderDraftFlow({ api, selectedZhixu, onMutationSuccess: refreshWorkbench, onSessionExpired: expireSession });
   const {
     draft,
     draftParticipants,
@@ -123,6 +123,7 @@ export function ProductWorkbenchApp() {
     // 目录作用域：切换目录后，在途的订单启动续作与回调全部作废。
     scopeKey: selectedZhixu?.zhixuId,
     ensureDraft,
+    onSessionExpired: expireSession,
     onRegistered: (nextDraft) => {
       draftFlow.setDraft(nextDraft);
       awaitedOrderIdRef.current = nextDraft.triggeredOrderId;
@@ -175,9 +176,11 @@ export function ProductWorkbenchApp() {
   const verificationFailedLabels = Object.entries(evidenceProofsBySlot)
     .filter(([, proof]) => proof.verificationStatus === "mismatch" || proof.verificationStatus === "missing_file")
     .map(([key]) => evidencePlan.slots.find((slot) => slot.key === key)?.label ?? key);
-  // 服务端权威门 + 本次会话终态闸：status/canSubmit 不满足或已 confirmed
-  // 的任务不呈现可提交入口（order-app 同功能面 fail-closed）。
-  const taskSubmitGate = activeTask ? canSubmitWorkbenchTask(activeTask, submitMachine.status) : false;
+  // 服务端权威门 + 本次会话终态闸：status/canSubmit 不满足、已 confirmed 或
+  // 已判 replaced 的任务不呈现可提交入口（order-app 同功能面 fail-closed）。
+  const taskSubmitGate = activeTask
+    ? canSubmitWorkbenchTask(activeTask, submitMachine.status, submitMachine.submission)
+    : false;
   const canConfirmSubmit = taskSubmitGate &&
     missingEvidenceSlotLabels.length === 0 &&
     staleSlotLabels.length === 0 &&

@@ -351,12 +351,18 @@ describe("invite creation and session anchoring", () => {
     required: true
   };
 
-  it("keeps the one-time invite token from the create response for the shareable link", async () => {
+  it("keeps the one-time invite token and the refreshed draft from the create response", async () => {
     // token 明文只在创建响应出现一次：客户端必须留存它生成含
     // ?inviteToken= 的邀请链接，丢掉 token 的链接在 accept 处必然 403。
+    // 服务端同时回写刷新后的草稿（如 awaiting_participants 推进），客户端
+    // 不得继续用创建前的陈旧草稿判定启动门。
     const client = clientWith({
       "/product/orders/draft-1/invites": {
-        body: { invite: { inviteId: "invite-1", status: "active" }, inviteToken: "one-time-invite-token" }
+        body: {
+          invite: { inviteId: "invite-1", status: "active" },
+          draft: { draftId: "draft-1", status: "awaiting_participants" },
+          inviteToken: "one-time-invite-token"
+        }
       }
     });
 
@@ -364,6 +370,8 @@ describe("invite creation and session anchoring", () => {
 
     assert.equal(result.data.inviteToken, "one-time-invite-token");
     assert.equal(result.data.invite.inviteId, "invite-1");
+    assert.equal(result.data.draft.draftId, "draft-1");
+    assert.equal(result.data.draft.status, "awaiting_participants");
   });
 
   it("fails closed when the create response omits the one-time token", async () => {
@@ -385,6 +393,20 @@ describe("invite creation and session anchoring", () => {
     const client = clientWith({
       "/product/orders/draft-1/invites": {
         body: { inviteToken: "one-time-invite-token" }
+      }
+    });
+
+    await assert.rejects(
+      () => client.createInvite("draft-1", inviteInput),
+      (error: unknown) => error instanceof Error && error.message === "invite_response_invalid"
+    );
+  });
+
+  it("fails closed when the create response omits the refreshed draft", async () => {
+    // 草稿是创建邀请后的权威状态快照：缺失时不得静默沿用创建前的陈旧草稿。
+    const client = clientWith({
+      "/product/orders/draft-1/invites": {
+        body: { invite: { inviteId: "invite-1", status: "active" }, inviteToken: "one-time-invite-token" }
       }
     });
 

@@ -338,8 +338,29 @@ export function StoreSearchPage({
     if (!reviewDraft) {
       return;
     }
+    // 提交审核以编辑器当前内容为准：JSON 非法或与已保存版本不一致（未保存
+    // 的编辑）都先拦下——否则审核的是上次保存的 schema，而操作者以为提交
+    // 的是最新 JSON。
+    let parsed: StoreProductSchemaDTO | undefined;
+    try {
+      parsed = parseSchemaText(schemaText, productSchema);
+    } catch {
+      setSchemaAction({ phase: "error", message: "当前 JSON 编辑内容无法解析；请修正后先保存，再提交审核" });
+      return;
+    }
+    if (!parsed || !productSchema || !schemaContentEquals(parsed, productSchema)) {
+      setSchemaAction({ phase: "error", message: "编辑器中的 schema 尚未保存；请先点击「保存」，再提交审核" });
+      return;
+    }
     setSchemaAction({ phase: "pending", message: "正在提交 Store 审核" });
     try {
+      // 提交前校验与「校验」按钮同一单源：阻断项未清零时服务端会拒绝，
+      // 前端先挡并给出可操作的待办数。
+      const validation = await onValidateDraftProductSchema(reviewDraft.draftId, parsed);
+      if (!validation.data.validation.ok) {
+        setSchemaAction({ phase: "error", message: `当前 schema 仍有 ${validation.data.validation.issues.length} 个阻断项，处理后才可提交审核` });
+        return;
+      }
       const result = await onSubmitDraftReview(reviewDraft.draftId);
       setReviewDraft(result.data.draft);
       setSchemaAction({ phase: "success", message: `已提交 Store 审核，当前草稿状态：${draftStatusLabel(result.data.draft.status)}；审核结论由服务端治理流程给出。` });
@@ -1208,6 +1229,26 @@ function parseSchemaText(
     throw new Error("schema JSON must be an object");
   }
   return parsed as unknown as StoreProductSchemaDTO;
+}
+
+/**
+ * 编辑器内容与已保存 schema 的深比较（键序无关）：提交审核的"已保存"判据
+ * 不依赖文本逐字相等，重排键序/空白不构成未保存编辑。
+ */
+function schemaContentEquals(left: unknown, right: unknown): boolean {
+  return JSON.stringify(canonicalSchemaValue(left)) === JSON.stringify(canonicalSchemaValue(right));
+}
+
+function canonicalSchemaValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalSchemaValue);
+  }
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.keys(value).sort().map((key) => [key, canonicalSchemaValue(value[key])])
+    );
+  }
+  return value;
 }
 
 type PluginReviewScope = "top-level" | "slot";

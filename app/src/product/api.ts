@@ -163,6 +163,8 @@ export interface ProductInviteDTO {
 /** 服务端创建邀请的响应：invite 只带哈希，一次性明文 token 只在本次响应出现。 */
 export interface ProductInviteCreationDTO {
   readonly invite: ProductInviteDTO;
+  /** 服务端创建邀请后回写的刷新版草稿（状态推进的权威快照）。 */
+  readonly draft: ProductOrderDraftDTO;
   readonly inviteToken: string;
 }
 
@@ -470,7 +472,11 @@ export class HttpProductApiClient implements ProductApiClient {
   }
 
   async createInvite(draftId: string, input: CreateInviteInput): Promise<ProductApiResult<ProductInviteCreationDTO>> {
-    const result = await this.requestWithSource<{ readonly invite?: unknown; readonly inviteToken?: unknown }>(
+    const result = await this.requestWithSource<{
+      readonly invite?: unknown;
+      readonly draft?: unknown;
+      readonly inviteToken?: unknown;
+    }>(
       "POST",
       `/product/orders/${encodeURIComponent(draftId)}/invites`,
       input
@@ -483,9 +489,13 @@ export class HttpProductApiClient implements ProductApiClient {
     // invite 记录（邀请列表/状态的载体）缺失同样按畸形响应拒绝，不以空对象
     // 冒充——与 evidence/prepared/submission 的 requiredRecord 门同口径。
     const invite = requiredRecord(result.data.invite, "invite_response_invalid");
+    // 服务端契约随创建响应回写刷新后的草稿（如 awaiting_participants 推进）：
+    // 缺失同样按畸形响应拒绝，调用方不得用创建前的陈旧草稿冒充新状态。
+    const draft = requiredRecord(result.data.draft, "invite_response_invalid");
     return {
       data: {
         invite: invite as unknown as ProductInviteDTO,
+        draft: draft as unknown as ProductOrderDraftDTO,
         inviteToken: result.data.inviteToken
       },
       source: result.source

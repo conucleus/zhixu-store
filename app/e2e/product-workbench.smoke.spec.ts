@@ -4,6 +4,7 @@ import {
   installStubWallet,
   installWorkbenchRoutes,
   STUB_API_BASE,
+  stubDraft,
   stubPreparedSubmit,
   stubSpeclessTask,
   stubOrder,
@@ -301,6 +302,11 @@ test.describe("Product Workbench browser smoke", () => {
         // 全部关键参与方已接受：启动门槛（requiredReady）打开
         "/product/orders/draft-3001/participants": {
           body: { participants: stubParticipants.map((participant) => ({ ...participant, status: "accepted" })) }
+        },
+        // 草稿回读以服务端为权威：全部接受后 GET 草稿返回 ready_to_trigger，
+        // re-prepare 门读到刷新后的状态才放行启动（不再依赖创建时的快照）。
+        "/product/order-drafts/draft-3001": {
+          body: { draft: { ...stubDraft, status: "ready_to_trigger" } }
         }
       }
     });
