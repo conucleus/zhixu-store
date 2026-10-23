@@ -148,9 +148,9 @@ export function StoreSupplierPage({
     <section className="page-shell" data-testid="store-supplier-page">
       <div className="page-title-row">
         <div>
-          <h2>供应商目录</h2>
+          <h2>在册主体</h2>
           <p>
-            查看主体与钱包的链上身份映射，并维护 Store 内部资料和匹配标签。
+            查看主体与钱包的链上身份映射，并维护 Store 侧在册资料与能力标签。
           </p>
         </div>
         <button
@@ -177,7 +177,7 @@ export function StoreSupplierPage({
         <div className="store-access-note">
           <ShieldCheck />
           <span>
-            当前会话可以维护 Store 的供应商能力 metadata；这些资料只用于本 Store 的检索和匹配。
+            当前会话可以维护 Store 侧的在册能力 metadata；这些资料只用于本 Store 的组织与在册展示。
           </span>
         </div>
       )}
@@ -288,7 +288,7 @@ export function StoreSupplierPage({
                     <div className="store-access-note compact">
                       <ShieldCheck />
                       <span>
-                        能力标签用于 Store 内部检索和匹配；链上只登记主体与钱包映射。
+                        能力标签用于 Store 内部组织与在册展示；链上只登记主体与钱包映射。
                       </span>
                     </div>
                     <SupplierEditPanel

@@ -1,39 +1,53 @@
-import { AlertTriangle, ExternalLink, GitBranch, KeyRound, Loader2, PackageSearch, ShieldCheck, Store, Truck, UserPlus, Users } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Activity,
+  AlertTriangle,
+  KeyRound,
+  Link2,
+  Loader2,
+  MessageSquareWarning,
+  Paintbrush,
+  ShieldCheck,
+  Store,
+  Users
+} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
   accessFromStoreSession,
   createStoreApiClient,
   readableStoreError,
   readStoredStoreSessionToken,
-  storeStoreSessionToken,
+  storeStoreSessionToken
 } from "./api";
 import { StoreAccountPage } from "./StoreAccountPage";
-import { StoreDockingPage } from "./docking/StoreDockingPage";
-import { StoreJoinPage } from "./StoreJoinPage";
-import { StoreRuntimePage } from "./runtime/StoreRuntimePage";
-import { StoreSearchPage } from "./catalog/StoreSearchPage";
-import { StoreSupplierPage } from "./suppliers/StoreSupplierPage";
-import { StoreZhixuDetailPage } from "./catalog/StoreZhixuDetailPage";
+import { StoreDesignPage } from "./design/StoreDesignPage";
+import { StoreJoinLinkView } from "./links/StoreJoinLinkView";
+import { StoreLinkPage } from "./links/StoreLinkPage";
+import { StoreMaintenancePage } from "./maintenance/StoreMaintenancePage";
+import { StoreOperationsPage } from "./operations/StoreOperationsPage";
+import { StoreOrganizationPage } from "./organization/StoreOrganizationPage";
+import { StoreShareView } from "./links/StoreShareView";
 import { loginStoreSessionWithWallet } from "./session";
 import type { StoreApiClient } from "./api";
-import type { StoreApiSource, StoreSearchInput, StoreSessionDTO, StoreZhixuSearchResultDTO } from "./types";
+import type { StoreSessionDTO, StoreZhixuSearchResultDTO } from "./types";
 import { shortValue } from "../lib/frontend";
 
-type StoreView = "search" | "detail" | "suppliers" | "runtime" | "docking" | "account" | "join";
+type StoreView = "design" | "organization" | "operations" | "maintenance" | "links" | "account";
 
-type StoreLoadState =
-  | { readonly status: "loading" }
-  | { readonly status: "ready"; readonly data: StoreZhixuSearchResultDTO; readonly source: StoreApiSource }
-  | { readonly status: "error"; readonly message: string };
+type LinkEntry =
+  | { readonly kind: "join"; readonly zhixuId: string }
+  | { readonly kind: "share"; readonly zhixuId: string };
 
-export function StoreApp({ productHref = "/app" }: { readonly productHref?: string | undefined }) {
-  // 会话 token 状态只做 UI/引导信号（退出按钮渲染、登录/退出后重取会话
-  // 刷新 access）；请求凭据由 client 每请求现读存储（product 侧同口径），
-  // 过期即弃，不靠服务端 401 兜底。
+/**
+ * Store Console：凝结核/运营方的工作台，只承载四块职责——设计、组织、运营、维护，
+ * 外加链接入口（邀请/分享链接生成）与账号工具。目录、搜索、公开上架与参与方履约面
+ * 不在本应用；参与方与读者只通过链接进入各自的确认/查看页。
+ */
+export function StoreApp() {
+  // 会话 token 状态只做 UI/引导信号（退出按钮渲染、登录/退出后重取会话刷新 access）；
+  // 请求凭据由 client 每请求现读存储，过期即弃，不靠服务端 401 兜底。
   const [sessionToken, setSessionToken] = useState<string | undefined>(() => readStoredStoreSessionToken());
-  // env 只提供引导态（无会话时的缺省 access）；会话取回后 access 一律以
-  // 服务端 session 为准，UI 门控与 client 前置门共用同一份，消除两源不一致。
+  // env 只提供引导态（无会话时的缺省 access）；会话取回后 access 一律以服务端 session 为准。
   const baseAccess = useMemo(() => createStoreApiClient().access, []);
   const [session, setSession] = useState<StoreSessionDTO | undefined>();
 
@@ -66,83 +80,38 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
     () => createStoreApiClient(access),
     [access],
   );
-  const [view, setView] = useState<StoreView>("search");
-  const [selectedZhixuId, setSelectedZhixuId] = useState<string | undefined>();
-  const [joinPlanFilter, setJoinPlanFilter] = useState<string | undefined>();
-  const [joinZhixuFilter, setJoinZhixuFilter] = useState<string | undefined>();
-  const [loadState, setLoadState] = useState<StoreLoadState>({ status: "loading" });
+
+  const [view, setView] = useState<StoreView>("design");
+  const [catalog, setCatalog] = useState<StoreZhixuSearchResultDTO | undefined>();
+  const [catalogError, setCatalogError] = useState<string | undefined>();
   const [loginBusy, setLoginBusy] = useState(false);
   const [loginMessage, setLoginMessage] = useState<string | undefined>();
-  // 目录晚到响应作废（useProductWorkbenchData 同款单调序号）：首屏加载、
-  // 检索与手动刷新都写同一份目录状态，只防卸载不防"被更新请求取代"会让
-  // 慢搜索结果覆盖新会话/新查询的结果。
-  const catalogSequenceRef = useRef(0);
+  const linkEntry = useMemo(() => readLinkEntry(), []);
 
-  async function loadCatalog(input?: StoreSearchInput): Promise<StoreZhixuSearchResultDTO | undefined> {
-    const sequence = catalogSequenceRef.current + 1;
-    catalogSequenceRef.current = sequence;
+  async function loadCatalog(): Promise<StoreZhixuSearchResultDTO | undefined> {
     try {
-      const result = await api.search(input);
-      if (catalogSequenceRef.current !== sequence) {
-        // 已有更新的目录请求接管状态：本次结果既不落地也不上报。
-        return undefined;
-      }
-      setLoadState({ status: "ready", data: result.data, source: result.source });
-      setSelectedZhixuId((current) => current ?? result.data.zhixus[0]?.zhixuId);
+      const result = await api.search({});
+      setCatalog(result.data);
+      setCatalogError(undefined);
       return result.data;
     } catch (error) {
-      if (catalogSequenceRef.current !== sequence) {
-        return undefined;
-      }
-      throw error;
+      setCatalogError(readableStoreError(error, "Store 可见秩序加载失败"));
+      return undefined;
     }
   }
 
   useEffect(() => {
-    let cancelled = false;
-    void loadCatalog().catch((error) => {
-      if (!cancelled) {
-        setLoadState({ status: "error", message: readableStoreError(error, "秩序商店加载失败") });
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-    // 只在挂载与会话 client 重建时首载目录；loadCatalog 是本组件内函数。
+    void loadCatalog();
+    // 只在挂载与会话 client 重建时首载秩序清单；loadCatalog 是组件内函数。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api]);
 
-  const navItems: Array<{ readonly view: StoreView; readonly label: string; readonly icon: ReactNode }> = [
-    { view: "search", label: "秩序检索", icon: <PackageSearch /> },
-    { view: "suppliers", label: "供应商", icon: <Users /> },
-    { view: "join", label: "加入申请", icon: <UserPlus /> },
-    { view: "runtime", label: "运行态", icon: <Truck /> },
-    { view: "docking", label: "试拼沙箱", icon: <GitBranch /> },
-    { view: "account", label: "账号与地址", icon: <KeyRound /> }
-  ];
-
-  function openDetail(zhixuId: string): void {
-    setSelectedZhixuId(zhixuId);
-    setView("detail");
-  }
-
-  async function handleSearch(input: StoreSearchInput): Promise<StoreZhixuSearchResultDTO> {
-    const data = await loadCatalog(input);
-    if (!data) {
-      // 更新的检索已接管目录状态：本次结果已作废，如实按失败上报，
-      // 不让旧的检索动作宣告成功。
-      throw new Error("已发起更新的检索，本次结果已作废");
-    }
-    return data;
-  }
-
-  /** 新会话落盘：过期时间由服务端会话响应声明（必填），与读取端口径一致。 */
-  function handleSessionEstablished(session: { readonly token: string; readonly expiresAt: string }): void {
-    storeStoreSessionToken(session);
-    setSessionToken(session.token);
+  function handleSessionEstablished(established: { readonly token: string; readonly expiresAt: string }): void {
+    storeStoreSessionToken(established);
+    setSessionToken(established.token);
   }
 
   function handleSessionCleared(): void {
-    // 退出：token 与会话态立即同步清除，权限门随 access 回到引导态。
     storeStoreSessionToken(undefined);
     setSession(undefined);
     setSessionToken(undefined);
@@ -180,31 +149,63 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
     setLoginBusy(false);
   }
 
+  if (linkEntry) {
+    return (
+      <div className="product-app" data-testid="store-link-entry">
+        <main className="product-main">
+          {linkEntry.kind === "share" ? (
+            <>
+              <p className="page-subtitle"><a href="/store">返回 Store Console</a></p>
+              <StoreShareView api={api} zhixuId={linkEntry.zhixuId} />
+            </>
+          ) : (
+            <StoreJoinLinkView
+              access={access}
+              api={api}
+              zhixuId={linkEntry.zhixuId}
+              onSessionEstablished={handleSessionEstablished}
+              onSessionCleared={handleSessionCleared}
+            />
+          )}
+        </main>
+      </div>
+    );
+  }
+
+  const navItems: Array<{ readonly view: StoreView; readonly label: string; readonly icon: ReactNode }> = [
+    { view: "design", label: "设计", icon: <Paintbrush /> },
+    { view: "organization", label: "组织", icon: <Users /> },
+    { view: "operations", label: "运营", icon: <Activity /> },
+    { view: "maintenance", label: "维护", icon: <MessageSquareWarning /> },
+    { view: "links", label: "链接", icon: <Link2 /> },
+    { view: "account", label: "账号与地址", icon: <KeyRound /> }
+  ];
+
   return (
-    <section className="store-console-shell" data-testid="store-app" data-store-access={access.level} data-store-anchored={access.anchoredAddress ? "anchored" : "unanchored"}>
+    <section
+      className="store-console-shell"
+      data-testid="store-app"
+      data-store-access={access.level}
+      data-store-anchored={access.anchoredAddress ? "anchored" : "unanchored"}
+    >
       <header className="store-console-head">
         <div className="store-console-brand">
           <span className="store-console-mark"><Store /></span>
           <div>
             <h1>Store Console</h1>
-            <p>凝结核和治理操作员查看秩序、供应商、运行态和试拼草稿。</p>
+            <p>凝结核运营台：设计秩序、组织参与方、看秩序整体概况、发维护意见信号。</p>
           </div>
         </div>
 
-        <div className="store-tabs" role="tablist" aria-label="秩序商店导航">
+        <div className="store-tabs" role="tablist" aria-label="Store 运营台导航">
           {navItems.map((item) => (
             <button
               aria-selected={view === item.view}
               className={`store-tab ${view === item.view ? "is-active" : ""}`}
               key={item.view}
-              onClick={() => {
-                if (item.view === "join") {
-                  // 导航进入"加入申请"时清除上一详情页带来的 plan 过滤。
-                  setJoinPlanFilter(undefined);
-                }
-                setView(item.view);
-              }}
+              onClick={() => setView(item.view)}
               role="tab"
+              type="button"
             >
               {item.icon}
               {item.label}
@@ -221,120 +222,68 @@ export function StoreApp({ productHref = "/app" }: { readonly productHref?: stri
             <ShieldCheck /> {access.label}
             {access.anchoredAddress ? <span className="store-anchored-chip" data-testid="store-anchored-chip">锚定 {shortValue(access.anchoredAddress)}</span> : null}
           </span>
-          {/* 退出以"本地持有会话 token"为准渲染：服务端会话过期/锚定被撤后
-              session 可能不再回锚定地址，但仍持有的 token 必须可主动退出，
-              否则过期凭据既清不掉也换不成登录入口。 */}
           {sessionToken !== undefined || access.anchoredAddress ? (
-            <button className="secondary-button" onClick={() => void handleHeaderLogout()} disabled={loginBusy} data-testid="store-head-logout">
+            <button className="secondary-button" onClick={() => void handleHeaderLogout()} disabled={loginBusy} data-testid="store-head-logout" type="button">
               退出
             </button>
           ) : (
-            <button className="secondary-button" onClick={() => void handleHeaderLogin()} disabled={loginBusy} data-testid="store-head-login">
+            <button className="secondary-button" onClick={() => void handleHeaderLogin()} disabled={loginBusy} data-testid="store-head-login" type="button">
               {loginBusy ? <Loader2 className="spin" /> : null} 钱包登录
             </button>
           )}
-          <a className="secondary-button store-workbench-link" href={productHref}>前往订单工作台 <ExternalLink /></a>
         </div>
       </header>
 
       {loginMessage ? <p className="store-head-login-message" data-testid="store-login-message">{loginMessage}</p> : null}
 
-      {loadState.status === "loading" ? (
-        <StoreStatePanel icon={<Loader2 className="spin" />} title="正在加载秩序商店" desc="读取 Store 目录和链上投影摘要。" />
-      ) : null}
-
-      {loadState.status === "error" ? (
-        <StoreStatePanel icon={<AlertTriangle />} title="秩序商店加载失败" desc={loadState.message} tone="error" />
-      ) : null}
-
-      {loadState.status === "ready" && view === "search" ? (
-        <StoreSearchPage
+      {view === "design" ? (
+        <StoreDesignPage
           access={access}
           api={api}
-          result={loadState.data}
-          onSearch={handleSearch}
-          onGoDocking={() => setView("docking")}
-          onOpenZhixu={openDetail}
-          onImportDraft={(input) => api.importZhixuDraft(input)}
-          onCompileDraft={(draftId) => api.compileZhixuDraft(draftId)}
-          onGetDraftProductSchema={(draftId) => api.getDraftProductSchema(draftId)}
-          onUpdateDraftProductSchema={(draftId, productSchema) => api.updateDraftProductSchema(draftId, productSchema)}
-          onValidateDraftProductSchema={(draftId, productSchema) => api.validateDraftProductSchema(draftId, productSchema)}
-          onSubmitDraftReview={(draftId) => api.submitZhixuDraftReview(draftId)}
-          onRestoreDraft={(draftId) => api.getZhixuDraft(draftId)}
-          onRefreshCatalog={async () => {
-            const data = await loadCatalog();
-            if (!data) {
-              throw new Error("已发起更新的目录请求，本次刷新结果已作废");
-            }
-            return data;
-          }}
+          catalog={catalog}
+          catalogError={catalogError}
+          onRefreshCatalog={loadCatalog}
         />
       ) : null}
 
-      {loadState.status === "ready" && view === "detail" && selectedZhixuId ? (
-        <StoreZhixuDetailPage
-          access={access}
+      {view === "organization" ? (
+        <StoreOrganizationPage access={access} api={api} onOpenLinks={() => setView("links")} />
+      ) : null}
+
+      {view === "operations" ? (
+        <StoreOperationsPage
           api={api}
-          onBack={() => setView("search")}
-          onOpenDocking={() => setView("docking")}
-          onOpenJoinForPlan={(planId, zhixuId) => {
-            setJoinPlanFilter(planId);
-            setJoinZhixuFilter(zhixuId);
-            setView("join");
-          }}
-          zhixuId={selectedZhixuId}
+          catalog={catalog}
+          catalogError={catalogError}
+          onRefreshCatalog={loadCatalog}
         />
       ) : null}
 
-      {/* suppliers/runtime 自带数据与加载态，不依赖目录首屏加载结果；
-          目录加载态只门控消费目录数据的页面（检索/详情/试拼）。 */}
-      {view === "suppliers" ? (
-        <StoreSupplierPage access={access} api={api} />
+      {view === "maintenance" ? (
+        <StoreMaintenancePage access={access} catalog={catalog} catalogError={catalogError} />
       ) : null}
 
-      {view === "runtime" ? (
-        <StoreRuntimePage api={api} />
-      ) : null}
-
-      {loadState.status === "ready" && view === "docking" ? (
-        <StoreDockingPage
-          access={access}
-          api={api}
-          initialSourceZhixuId={selectedZhixuId}
-          zhixus={loadState.data.zhixus}
-        />
+      {view === "links" ? (
+        <StoreLinkPage catalog={catalog} catalogError={catalogError} />
       ) : null}
 
       {view === "account" ? (
         <StoreAccountPage access={access} api={api} onSessionEstablished={handleSessionEstablished} onSessionCleared={handleSessionCleared} />
       ) : null}
-
-      {view === "join" ? (
-        <StoreJoinPage access={access} api={api} planIdFilter={joinPlanFilter} zhixuFilter={joinZhixuFilter} />
-      ) : null}
     </section>
   );
 }
 
-function StoreStatePanel({
-  icon,
-  title,
-  desc,
-  tone = "muted"
-}: {
-  readonly icon: ReactNode;
-  readonly title: string;
-  readonly desc: string;
-  readonly tone?: "muted" | "error" | undefined;
-}) {
-  return (
-    <section className={`state-panel ${tone}`}>
-      <span>{icon}</span>
-      <div>
-        <h2>{title}</h2>
-        <p>{desc}</p>
-      </div>
-    </section>
-  );
+function readLinkEntry(): LinkEntry | undefined {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+  const params = new URLSearchParams(window.location.search);
+  const zhixuId = params.get("join")?.trim() || params.get("share")?.trim();
+  if (!zhixuId) {
+    return undefined;
+  }
+  return params.get("join")?.trim()
+    ? { kind: "join", zhixuId }
+    : { kind: "share", zhixuId };
 }

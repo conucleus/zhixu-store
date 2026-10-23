@@ -4,7 +4,6 @@ import {
   ChevronDown,
   ChevronLeft,
   CircleDashed,
-  GitBranch,
   Loader2,
   Puzzle,
   ShieldCheck,
@@ -15,9 +14,7 @@ import {
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { readableStoreError, type StoreApiClient } from "../api";
-import { StoreAnchorPanel, joinEntrySuppressed, joinSuppressionReason } from "../StoreAnchorPanel";
 import { StoreDecorationEditor } from "../authoring/StoreDecorationEditor";
-import { StoreJoinEntry } from "../StoreJoinEntry";
 import type { CapabilityPluginSource, StoreCapabilityReviewStatus, StoreZhixuDetailDTO } from "@uvp-eth/product-dto";
 import type { StoreAccessState, StoreZhixuOverlayView } from "../types";
 import { shortValue } from "../../lib/frontend";
@@ -27,20 +24,21 @@ type DetailState =
   | { readonly status: "ready"; readonly zhixu: StoreZhixuDetailDTO; readonly overlay?: StoreZhixuOverlayView | undefined }
   | { readonly status: "error"; readonly message: string };
 
-export function StoreZhixuDetailPage({
+/**
+ * 设计块里的秩序详情：设计事实、角色/插槽能力审查、装修编辑与版本边界。
+ * 这里不提供加入入口、上架审核或公开目录动作；读者面归订单 app、组织面在
+ * 组织块，设计面只负责"这份秩序被设计成什么"。
+ */
+export function StoreDesignDetail({
   access,
   api,
   zhixuId,
-  onBack,
-  onOpenDocking,
-  onOpenJoinForPlan
+  onBack
 }: {
   readonly access: StoreAccessState;
   readonly api: StoreApiClient;
   readonly zhixuId: string;
   readonly onBack: () => void;
-  readonly onOpenDocking: () => void;
-  readonly onOpenJoinForPlan: (planId: string, zhixuId: string) => void;
 }) {
   const [state, setState] = useState<DetailState>({ status: "loading" });
   const [proofOpen, setProofOpen] = useState(false);
@@ -63,56 +61,34 @@ export function StoreZhixuDetailPage({
   }, [api, zhixuId]);
 
   if (state.status === "loading") {
-    return <StatePanel icon={<Loader2 className="spin" />} title="正在加载秩序详情" desc={zhixuId} />;
+    return <StatePanel icon={<Loader2 className="spin" />} title="正在加载秩序设计" desc={zhixuId} />;
   }
 
   if (state.status === "error") {
-    return <StatePanel icon={<AlertTriangle />} title="秩序详情加载失败" desc={state.message} tone="error" />;
+    return <StatePanel icon={<AlertTriangle />} title="秩序设计加载失败" desc={state.message} tone="error" />;
   }
 
   const zhixu = state.zhixu;
   const overlay = state.overlay;
   const stageTitleById = new Map(zhixu.stages.map((stage) => [stage.stageId, stage.title]));
   const slotReviewSummary = summarizeSlotReviews(zhixu.roleSlots);
-  const suppressionReason = joinSuppressionReason(overlay?.anchorVerification, overlay?.listing);
-  const joinSuppressed = joinEntrySuppressed(overlay?.anchorVerification, overlay?.listing);
   const reloadDetail = () => {
     void api.getZhixuDetailWithOverlay(zhixuId).then((result) => {
       setState({ status: "ready", zhixu: result.data.zhixu, ...(result.data.overlay ? { overlay: result.data.overlay } : {}) });
     }).catch(() => {
-      // 刷新失败保留当前视图。
+      // 刷新失败保留当前视图，装修已落盘的事实以下次成功读取为准。
     });
   };
   const decorationTheme = overlay?.decoration?.current?.data.theme;
   return (
-    <section className="page-shell" data-testid="store-zhixu-detail-page" data-anchor-status={overlay?.anchorVerification?.status ?? "unknown"}>
-      <button className="back-line" onClick={onBack}><ChevronLeft /> 返回秩序检索</button>
-
-      {suppressionReason ? (
-        <div className="store-suppression-banner" role="alert" data-testid="store-suppression-banner">
-          <AlertTriangle />
-          <div>
-            <strong>{
-              overlay?.anchorVerification?.status === "conflict"
-                ? "listing 与链上事实冲突"
-                : overlay?.listing?.status === "rejected"
-                  ? "该秩序上架审核未通过"
-                  : overlay?.listing?.status === "imported"
-                    ? "该秩序上架审核未完成"
-                    : overlay?.listing?.status === "delisted"
-                      ? "该秩序已下架"
-                      : "该秩序未完成上架或状态未知"
-            }</strong>
-            <p>{suppressionReason}</p>
-          </div>
-        </div>
-      ) : null}
+    <section className="page-shell" data-testid="store-design-detail-page">
+      <button className="back-line" onClick={onBack} type="button"><ChevronLeft /> 返回设计台</button>
 
       <div className="store-detail-grid">
         <section className="panel-card">
           <div className="panel-heading">
             <div>
-              <span className="store-section-kicker">秩序详情</span>
+              <span className="store-section-kicker">设计 · 秩序详情</span>
               <h2>{decorationTheme?.displayName ?? zhixu.title}</h2>
               <p>{decorationTheme?.description ?? zhixu.subtitle}</p>
             </div>
@@ -194,37 +170,6 @@ export function StoreZhixuDetailPage({
         </section>
 
         <aside className="right-stack">
-          <section className="side-panel">
-            <div className="side-panel-title">
-              <h3>下一步</h3>
-            </div>
-            <div className="quick-order-card">
-              <strong>{zhixu.nextAction}</strong>
-              <span>链上运行事实来自 UVPStateMachine 投影。</span>
-            </div>
-            {access.canWrite ? (
-              <button className="primary-button block" onClick={onOpenDocking}><GitBranch /> 试拼对接</button>
-            ) : (
-              <div className="store-access-note compact">
-                <ShieldCheck />
-                <span>只读访问不显示试拼保存、导入和版本操作。</span>
-              </div>
-            )}
-          </section>
-
-          <StoreAnchorPanel verification={overlay?.anchorVerification} listing={overlay?.listing} />
-
-          {joinSuppressed ? null : (
-            <StoreJoinEntry
-              access={access}
-              api={api}
-              planId={zhixu.planId}
-              roleSlots={zhixu.roleSlots.map((slot) => ({ slotId: slot.roleSlotId, title: slot.title }))}
-              stageIds={zhixu.stages.map((stage) => stage.stageId)}
-              onSubmitted={() => onOpenJoinForPlan(zhixu.planId, zhixu.zhixuId)}
-            />
-          )}
-
           <StoreDecorationEditor
             access={access}
             api={api}
@@ -237,7 +182,7 @@ export function StoreZhixuDetailPage({
           />
 
           {overlay?.viewerPermission?.viewerActiveDelegations && overlay.viewerPermission.viewerActiveDelegations.length > 0 ? (
-            <p className="muted store-delegation-hint">当前会话经发布者委托获得该秩序的装修/加入审核权。</p>
+            <p className="muted store-delegation-hint">当前会话经发布者委托获得该秩序的装修操作权。</p>
           ) : null}
 
           <section className="side-panel" data-testid="store-version-governance-boundary">
@@ -250,7 +195,7 @@ export function StoreZhixuDetailPage({
                 <strong>{zhixu.lifecycleReason}</strong>
                 <p>{zhixu.usageGuidance}</p>
                 {zhixu.lifecycleStatus === "active" && zhixu.planPublication.status === "published" ? (
-                  <p>当前版本的 PlanRegistered 事件已被索引，可创建订单。Store 目录的“可创建订单”标签表示该信号容器已发布。</p>
+                  <p>当前版本的 PlanRegistered 事件已被索引，可创建订单。</p>
                 ) : (
                   <p>未发布的版本不可激活；请先完成 StateMachine Plan 注册并等待索引。</p>
                 )}
@@ -266,21 +211,6 @@ export function StoreZhixuDetailPage({
               ))}
             </div>
           </section>
-
-          {access.canAdmin ? (
-            <section className="side-panel">
-              <div className="side-panel-title">
-                <h3>治理边界</h3>
-              </div>
-              <div className="plain-help-box">
-                <ShieldCheck />
-                <div>
-                  <strong>身份登记与撤销走 Admin Governance</strong>
-                  <p>Store 的目录资料不能代替 Identity Registry 的主体—账户绑定。</p>
-                </div>
-              </div>
-            </section>
-          ) : null}
         </aside>
       </div>
 
@@ -289,7 +219,7 @@ export function StoreZhixuDetailPage({
           <div>
             <span className="store-section-kicker"><Puzzle /> 履约插槽</span>
             <h2>能力插件审查</h2>
-            <p>Store 操作员检查每个责任位置的业务身份、覆盖阶段和已安装能力；订单提交动作仍在订单工作台完成。</p>
+            <p>检查每个责任位置的业务身份、覆盖阶段和已安装能力；插件必须逐条显式确认后才进入发布流程。</p>
           </div>
           <span className={`status-badge ${slotReviewTone(slotReviewSummary.status)}`}>{slotReviewSummary.label}</span>
         </div>
@@ -331,7 +261,7 @@ export function StoreZhixuDetailPage({
                 )) : (
                   <div className="store-slot-missing">
                     <AlertTriangle />
-                    <span>该插槽还没有显式能力插件，发布前需要 Store 操作员补齐或确认迁移结果。</span>
+                    <span>该插槽还没有显式能力插件，发布前需要操作员补齐或确认迁移结果。</span>
                   </div>
                 )}
               </div>
@@ -341,7 +271,7 @@ export function StoreZhixuDetailPage({
       </section>
 
       <section className="proof-panel store-proof-panel">
-        <button className="proof-toggle" onClick={() => setProofOpen((open) => !open)}>
+        <button className="proof-toggle" onClick={() => setProofOpen((open) => !open)} type="button">
           <span><ShieldCheck /> 高级链上证明</span>
           <small>{zhixu.planPublication.label}</small>
           <ChevronDown className={proofOpen ? "rotate" : ""} />
@@ -410,7 +340,7 @@ function Metric({ icon, label, value }: { readonly icon: ReactNode; readonly lab
 function storeMetricValue(
   zhixu: Pick<StoreZhixuDetailDTO, "metricsStatus" | "orderCount" | "openTaskCount" | "supplierCount">,
   field: "orderCount" | "openTaskCount" | "supplierCount",
-  suffix: string,
+  suffix: string
 ): string {
   if (zhixu.metricsStatus !== "observed") {
     return "未知";

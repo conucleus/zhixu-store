@@ -164,7 +164,10 @@ test.describe("Store docking sandbox target selection", () => {
 
     await page.goto("/store");
     await expect(page.getByTestId("store-app")).toBeVisible();
-    await page.getByRole("tab", { name: /试拼沙箱/ }).click();
+    // 收敛后试拼沙箱不再是顶层导航，而是设计块里的工具入口。
+    await page.getByRole("tab", { name: "设计" }).click();
+    await expect(page.getByTestId("store-design-page")).toBeVisible();
+    await page.getByTestId("store-open-docking-button").click();
     await expect(page.getByTestId("store-docking-page")).toBeVisible();
 
     // 未选择目标时不能创建：不再静默取“第一个非来源秩序”
@@ -240,7 +243,10 @@ test.describe("Store docking sandbox target selection", () => {
 
     await page.goto("/store");
     await expect(page.getByTestId("store-app")).toBeVisible();
-    await page.getByRole("tab", { name: /试拼沙箱/ }).click();
+    // 收敛后试拼沙箱不再是顶层导航，而是设计块里的工具入口。
+    await page.getByRole("tab", { name: "设计" }).click();
+    await expect(page.getByTestId("store-design-page")).toBeVisible();
+    await page.getByTestId("store-open-docking-button").click();
     await expect(page.getByTestId("store-docking-page")).toBeVisible();
 
     const options = page.getByTestId("store-docking-target-select").locator("option");

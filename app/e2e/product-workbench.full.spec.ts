@@ -34,7 +34,14 @@ class FullFlowStageError extends Error {
 
 test.describe.configure({ mode: "serial" });
 
-test.describe("Product Workbench full browser Product E2E @full", () => {
+/**
+ * 参与者工作台 full E2E —— 冻结的迁移载荷，默认整组 skip。
+ *
+ * 原因同 product-workbench.smoke.spec.ts：参与者面（含 `/app` 入口）已不在本仓
+ * 提供服务，全链路用例只有在宿主 app 中存在真实入口时才有意义。迁移到
+ * uvp-order-app 后再恢复，不在本仓以 skip 之外的假绿方式保留。
+ */
+test.describe.skip("Product Workbench full browser Product E2E @full (participant surface retired to uvp-order-app)", () => {
   test("happy path creates an order draft from a real catalog, saves it, and invites required participants", async ({ page }, testInfo) => {
     skipUnlessFullBackend();
     const closure: Partial<ProductWorkbenchStateSnapshot> = {};

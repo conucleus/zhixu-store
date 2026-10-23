@@ -161,7 +161,7 @@ export function StoreJoinPage({
         <p>
           {planIdFilter
             ? "该秩序的加入申请审核队列（publisher 或受托成员可操作：开始审核 → 通过 → 链上身份配对）。"
-            : "我的加入申请：申请 → 凝结核审核 → 链上授权（记录交易证据）→ 收到工作台待办后生效。"}
+            : "加入申请：运营方/发布者可在此审核；其他会话只看到自己提交的申请。"}
         </p>
       </header>
 
@@ -176,7 +176,7 @@ export function StoreJoinPage({
 
       {state.status === "ready" ? (
         state.applications.length === 0 ? (
-          <p className="muted">暂无申请。在秩序详情页选择角色槽位即可发起加入申请。</p>
+          <p className="muted">暂无申请。参与者通过运营台「链接」块生成的邀请链接打开加入页后提交申请。</p>
         ) : (
           <table className="store-data-table" data-testid="store-join-table">
             <thead>

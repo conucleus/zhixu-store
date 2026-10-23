@@ -4,7 +4,7 @@ import { readableStoreError, type StoreApiClient } from "./api";
 import type { StoreAccessState, StoreJoinApplicationSubmitInput } from "./types";
 
 /**
- * 详情页加入入口：选 role slot + 授权类型 → 提交申请。
+ * 邀请链接加入页的申请入口：选 role slot + 授权类型 → 提交申请。
  * 只有会话已锚定地址才可提交（红线由服务端强制，前端只做提示）。
  */
 export function StoreJoinEntry({
@@ -38,7 +38,7 @@ export function StoreJoinEntry({
           <h3><UserPlus /> 加入这条秩序</h3>
         </div>
         <p className="store-account-warn">
-          <ShieldAlert /> 提交加入申请要求会话已锚定钱包地址。请先在「账号与地址」页连接钱包登录。
+          <ShieldAlert /> 提交加入申请要求会话已锚定钱包地址。请先完成钱包登录后再提交。
         </p>
       </section>
     );

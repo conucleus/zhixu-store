@@ -1,15 +1,36 @@
 # Zhixu Store
 
-Zhixu Store 是 UVP 的链下经营入口。它面向现实中的机构与人员展示可读名称、资料和工作流，并通过 Chain Services 读取链上事实、准备交易和提交经营侧数据。
+Zhixu Store 是 UVP 的 **operator（凝结核运营方）面**：设计秩序、组织参与方、看秩序整体概况、
+发维护意见信号、生成邀请/分享链接、管理账号与地址。它通过 Chain Services 读取链上事实、
+准备交易并提交经营侧数据。
 
-## 页面
+参与者履约面（订单、待办、证据上传、签名提交）**不在本应用**，归 uvp-order-app。
+本仓库的 `src/product/**` 仅为迁移冻结保留：源码还在，但入口已从路由移除，页面不可达。
 
-- 秩序目录和详情：浏览已发布 Plan 与运行状态。
-- 秩序草稿：导入、编辑、校验、编译和准备发布。
-- 供应商：维护链下主体资料、能力标签、内部记录和搜索数据。
-- Docking：把现实业务材料整理成凝结核工作流。
-- Runtime：查看当前部署、模块、索引和服务状态。
-- Product Workbench：从参与者视角查看 Order、Task、证据和可执行动作。
+## 定位与路由
+
+只有一面，任何路径都进 Store Console：
+
+| 路径 | 行为 |
+| --- | --- |
+| `/` | 规整（`history.replaceState`）到 `/store`，渲染运营台 |
+| `/store` | 运营台 |
+| `/store?join=<zhixuId>` | 邀请链接的加入页（`StoreJoinLinkView`），不在导航中 |
+| `/store?share=<zhixuId>` | 分享链接的只读读者页（`StoreShareView`），不在导航中 |
+| `/app`、`/orders` 等其它路径 | 不再有参与者工作台，统一落到运营台 |
+
+导航固定为六块：
+
+- **设计**：写秩序（导入草稿、编译、能力插件逐条确认、提交审核）、装修、版本边界；
+  试拼沙箱（Docking）作为设计块内的工具入口，不是顶层导航。
+- **组织**：在册主体与能力标签、加入申请审核、跳转到链接块。
+- **运营**：秩序整体概况（秩序/订单/待办/阻塞计数、索引进度降级）。
+- **维护**：规则外异常时生成一条普通意见信号草稿（写路径未接入，显式 fail-closed）。
+- **链接**：为 Store 可见秩序生成邀请/分享链接；入口只有链接。
+- **账号与地址**：钱包登录/退出、会话锚定、地址表。
+
+**不做**：秩序目录/检索、公开上架（listing）流程、参与者工作台、订单/任务/证据/签名动作、
+审计与治理后门。
 
 ## 边界
 
@@ -18,39 +39,35 @@ Zhixu Store 是 UVP 的链下经营入口。它面向现实中的机构与人员
 - 供应商能力、匹配和推荐属于各 Store 自己的链下经营数据。
 - Store 对自己的供应商资料和推荐负责；推荐结果停留在 Store 数据域。
 - 交易和业务签名遵循对应链上合约的权限规则。
+- 参与方与读者只通过链接进入本站的确认/查看页；完整履约动作在订单 app 完成。
 
 ## 目录结构
 
-`src/` 按"装配 / 运营侧 / 参与者侧 / 共享"组织：
-
 ```text
 src/
-├── app/            # 装配与入口路由：App.tsx（/store 与 /app、/orders 分流）
+├── app/            # 装配与入口：App.tsx 只有一个 operator 面（/ 与 /store）
 ├── main.tsx        # Vite 入口（index.html 固定引用 /src/main.tsx）
-├── store/          # 运营侧（Store Console）
-│   ├── StoreApp.tsx            # 运营台壳：会话、导航与视图装配
+├── store/          # operator 面（Store Console）
+│   ├── StoreApp.tsx            # 运营台壳：会话、六块导航与视图装配
 │   ├── api.ts / session.ts / types.ts / wallet.ts   # Store API、会话与类型
-│   ├── StoreAccountPage / StoreJoinPage / StoreJoinEntry / StoreAnchorPanel
-│   ├── catalog/    # 检索（StoreSearchPage）、目录与详情查看（StoreZhixuDetailPage）
-│   ├── authoring/  # 装修与任务定义编辑（StoreDecorationEditor）
-│   ├── publishing/ # listing 导入与发布面板（StoreListingPanel，只消费既有编译/API）
-│   ├── suppliers/  # 供应商资料（StoreSupplierPage）
-│   ├── docking/    # 试拼沙箱（StoreDockingPage）
-│   └── runtime/    # 运行态观察（StoreRuntimePage）
-├── product/        # 参与者侧（订单工作台）
-│   ├── api.ts / wallet.ts / WalletLoginPanel.tsx / demo/  # 参与者侧共享模块
-│   ├── workbench/  # 编排入口 ProductWorkbenchApp + 流程/状态（useOrderDraftFlow、
-│   │               # useOrderRegistrationFlow、useTaskSubmissionFlow、
-│   │               # useProductWorkbenchData、workbenchSupport/Types）与
-│   │               # 工作台壳/通用组件/秩序库视图
-│   ├── order/      # CreateOrderPage、OrderOverviewPage、draftStatusLabel
-│   ├── signing/    # ParticipantsPage（参与方确认与订单启动）
-│   ├── tasks/      # TaskPage、SubmitPage
-│   └── evidence/   # EvidenceUploadZone
+│   ├── StoreAccountPage / StoreJoinPage / StoreJoinEntry
+│   ├── design/     # 设计块（StoreDesignPage、StoreDesignDetail、插件确认）
+│   ├── organization/ # 组织块（在册主体、加入审核）
+│   ├── operations/ # 运营块（聚合概况、索引进度）
+│   ├── maintenance/# 维护块（普通意见信号草稿）
+│   ├── links/      # 链接块（StoreLinkPage）+ 加入页/分享页
+│   ├── authoring/  # 装修编辑（StoreDecorationEditor）
+│   ├── docking/    # 试拼沙箱（设计块内入口）
+│   └── suppliers/  # 供应商资料（组织块内）
+├── product/        # 冻结：参与者侧源码，等待迁移到 uvp-order-app（本应用不可达）
 ├── lib/            # 本仓纯前端工具（frontend.ts：基地址解析、短值显示等）
 └── shared/         # frontend-shared submodule（chain 轨单源；本仓只消费
                     # chain/、contracts/、domain/，见该仓 README 分轨边界）
 ```
+
+`src/product/**` 里仍保留的页面（CreateOrderPage、TaskPage、SubmitPage、ParticipantsPage、
+OrderOverviewPage、ProductWorkbenchApp、ZhixuCatalogViews 等）是 order app 迁移的输入，
+本仓不新增功能、不改契约；无人引用的残留代码随迁移一并带走。
 
 ## 运行
 
@@ -72,8 +89,19 @@ pnpm run dev
 
 ```bash
 pnpm run typecheck
-pnpm run build
-pnpm run test:e2e
+pnpm run build     # tsc --noEmit + vite build
+pnpm test          # 单元测试（tsx --test src/**/*.test.ts）
+pnpm test:e2e      # Playwright（fixture 全桩，不需要真实链/外部服务）
 ```
 
-E2E 测试验证当前页面、权限和业务流，不承担开发历史记录。
+其它 e2e 脚本：
+
+- `pnpm test:e2e:fixture`：operator 面的 fixture 用例集合（入口契约、会话/账号、链接、
+  运营信任语义、能力插件逐条确认）。
+- `pnpm test:e2e:docking`：试拼沙箱写路径，需要 `UVP_PRODUCT_BROWSER_E2E_STORE_ACCESS_LEVEL=store_operator`
+  独立 profile；常规 fixture 跑会整组 skip。
+- `pnpm test:e2e:full` / `e2e/product-workbench.*.spec.ts`：参与者工作台的旧用例，
+  **整组 skip**。`/app` 已不是参与者入口，这些用例只有在 uvp-order-app 宿主里才有意义；
+  迁移时随 `src/product/**` 一起搬走，恢复执行。
+
+E2E 全部使用页面级 stub（`e2e/workbench-stubs.ts` 提供 `STUB_API_BASE`），不依赖真实链。

@@ -1,6 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 import { STUB_API_BASE } from "./workbench-stubs";
 
+/**
+ * 运营块的信任语义（fixture 全桩）：
+ * 投影未观测到的指标显示"未知"，绝不折算为 0；索引进度降级要显式暴露。
+ * 收敛后这些事实在「运营」块呈现（原检索页摘要条 + 运行态页已删除）。
+ */
+
 const storeRow = {
   zhixuId: "store-generic-1",
   title: "通用秩序",
@@ -69,18 +75,34 @@ async function installStoreTrustRoutes(page: Page): Promise<void> {
   });
 }
 
-test("Store renders unknown metrics without converting them to zero and exposes indexer degradation", async ({ page }) => {
+test("operations block renders unknown metrics without converting them to zero", async ({ page }) => {
   await installStoreTrustRoutes(page);
   await page.goto("/store");
 
-  await expect(page.getByTestId("store-search-page")).toBeVisible();
-  await expect(page.locator('[data-metric-status="unknown"]')).toContainText("未知");
-  await expect(page.locator('[data-metric-status="unknown"]')).not.toContainText("0 单");
-  await expect(page.locator(".store-summary-strip .summary-item").filter({ hasText: "运行订单" })).toContainText("未知");
-  await expect(page.locator(".store-summary-strip .summary-item").filter({ hasText: "已登记执行方" })).toContainText("未知");
+  await page.getByRole("tab", { name: "运营" }).click();
+  await expect(page.getByTestId("store-operations-page")).toBeVisible();
 
-  await page.getByRole("tab", { name: "运行态" }).click();
-  await expect(page.getByTestId("store-runtime-page")).toBeVisible();
+  // 投影未观测到 → "未知"，不是 0 单。
+  const runningOrders = page.locator('.store-summary-strip .summary-item').filter({ hasText: "运行订单" });
+  await expect(runningOrders).toContainText("未知");
+  await expect(runningOrders).not.toContainText("0 单");
+  await expect(runningOrders).toHaveAttribute("data-metric-status", "unknown");
+
+  const suppliers = page.locator('.store-summary-strip .summary-item').filter({ hasText: "已登记执行方" });
+  await expect(suppliers).toContainText("未知");
+  await expect(suppliers).not.toContainText("0 个");
+});
+
+test("operations block exposes indexer degradation and aggregate order/task counts", async ({ page }) => {
+  await installStoreTrustRoutes(page);
+  await page.goto("/store");
+
+  await page.getByRole("tab", { name: "运营" }).click();
+  await expect(page.getByTestId("store-operations-page")).toBeVisible();
+
   await expect(page.getByTestId("store-runtime-indexer-status")).toContainText("索引降级");
-  await expect(page.getByText("阻塞订单")).toBeVisible();
+  const runtimeGrid = page.locator(".store-runtime-grid");
+  await expect(runtimeGrid).toContainText("阻塞订单");
+  await expect(runtimeGrid).toContainText("运行订单");
+  await expect(runtimeGrid).toContainText("开放待办");
 });

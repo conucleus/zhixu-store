@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "test:e2e": "playwright test",
-    "test:e2e:fixture": "playwright test e2e/product-workbench.smoke.spec.ts",
+    "test:e2e:fixture": "playwright test e2e/entry-split.spec.ts e2e/store-session-listing.spec.ts e2e/store-trust-semantics.spec.ts e2e/store-operator-permissions-audit.spec.ts e2e/store-plugin-explicit-confirm.spec.ts",
     "test:e2e:docking": "UVP_PRODUCT_BROWSER_E2E_STORE_ACCESS_LEVEL=store_operator UVP_PRODUCT_BROWSER_E2E_PORT=4177 playwright test e2e/store-docking.spec.ts",
     "test:e2e:full": "playwright test e2e/product-workbench.full.spec.ts",
     "test:e2e:headed": "playwright test --headed"

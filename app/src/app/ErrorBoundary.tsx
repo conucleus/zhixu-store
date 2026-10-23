@@ -59,10 +59,9 @@ export class AppErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundar
                   className="secondary-button"
                   type="button"
                   onClick={() => {
-                    // 回当前入口首页后整页重载：崩溃可能来自某个具体页面
-                    // 子树，保留原路径重载可能立刻复现同一错误。
-                    const home = window.location.pathname.startsWith("/store") ? "/store" : "/app";
-                    window.location.assign(home);
+                    // 回运营台首页后整页重载：崩溃可能来自某个具体页面子树，
+                    // 保留原路径重载可能立刻复现同一错误。本应用只有 /store 一面。
+                    window.location.assign("/store");
                   }}
                 >
                   回到首页

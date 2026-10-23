@@ -14,7 +14,15 @@ import {
   stubParticipants
 } from "./workbench-stubs";
 
-test.describe("Product Workbench browser smoke", () => {
+/**
+ * 参与者工作台 browser smoke —— 冻结的迁移载荷，默认整组 skip。
+ *
+ * 收敛后本站只剩 operator 面：`/app` 不再是参与者入口，ProductWorkbenchApp
+ * 不再挂载，`src/product/**` 仅为 order app 迁移冻结保留。这些用例描述的是
+ * 参与者侧契约（订单/待办/证据/签名），目标宿主是 uvp-order-app；迁移完成后
+ * 整套 spec 随 product/ 源码一起搬过去，而不是在本仓继续断言一个不可达的页面。
+ */
+test.describe.skip("Product Workbench browser smoke (participant surface retired to uvp-order-app)", () => {
   test("renders catalog, order, and task pages against stubbed product API", async ({ page }, testInfo) => {
     await installWorkbenchRoutes(page);
     await page.goto("/app");

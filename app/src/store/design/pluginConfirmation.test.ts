@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { SlotCapabilityPluginDTO, StoreProductSchemaDTO } from "@uvp-eth/product-dto";
-import { collectPluginReviewItems, confirmSchemaPluginsExplicit } from "./StoreSearchPage";
+import { collectPluginReviewItems, confirmSchemaPluginsExplicit } from "./pluginConfirmation";
 
 function plugin(kind: string, source: "explicit" | "inferred" | "missing", stageIds: readonly string[] = ["stage-export"]): SlotCapabilityPluginDTO {
   return {
