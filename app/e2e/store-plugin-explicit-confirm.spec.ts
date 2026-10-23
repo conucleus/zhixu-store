@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { STUB_API_BASE } from "./workbench-stubs";
+import { STUB_API_BASE } from "./stub-api";
 
 /**
  * 能力插件逐条确认 e2e（fixture 模式，全桩）：

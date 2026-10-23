@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { installWorkbenchRoutes, STUB_API_BASE } from "./workbench-stubs";
+import { STUB_API_BASE } from "./stub-api";
 
 // 写路径用例要求独立 profile 的 dev server（VITE_UVP_STORE_ACCESS_LEVEL=store_operator）；
 // 常规 fixture 跑（anonymous_read，403 是写失败边界）时整组跳过。
@@ -69,7 +69,6 @@ const storeSummary = {
 
 test.describe("Store docking sandbox target selection", () => {
   test("requires an explicit target, refuses source==target, and creates real sessions for distinct pairs", async ({ page }) => {
-    await installWorkbenchRoutes(page);
     const dockingRequests: Array<{ readonly sourceZhixuId?: string; readonly targetZhixuId?: string }> = [];
     await page.route(`${STUB_API_BASE}/store/**`, async (route) => {
       const pathname = new URL(route.request().url()).pathname;
@@ -206,7 +205,6 @@ test.describe("Store docking sandbox target selection", () => {
   });
 
   test("single-zhixu catalog cannot create a self-docking session", async ({ page }) => {
-    await installWorkbenchRoutes(page);
     await page.route(`${STUB_API_BASE}/store/**`, async (route) => {
       const pathname = new URL(route.request().url()).pathname;
       if (pathname === "/store/session") {

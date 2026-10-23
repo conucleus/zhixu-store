@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { STUB_API_BASE } from "./workbench-stubs";
+import { STUB_API_BASE } from "./stub-api";
 
 /**
  * operator 面的边界回归（fixture 全桩）：

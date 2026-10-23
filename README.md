@@ -1,6 +1,6 @@
 # zhixu-store
 
-Store and workbench product boundary.
+Store operator product boundary.
 
 This domain is for the nucleus/operator side of UVP: designing, organizing,
 maintaining, and running Zhixu orders through chain-backed Product DTOs.
@@ -10,12 +10,13 @@ in [STORE-CHARTER.md](./STORE-CHARTER.md). Agent orientation and debugging
 boundaries are in [AGENTS.md](./AGENTS.md). New features must be classified
 against the charter before implementation.
 
-- `app/`: current Store and order workbench frontend. Source layout is
-  organized by user task (`src/app`, `src/lib`, `src/store/{catalog,authoring,publishing,suppliers,docking,runtime}`,
-  `src/product/{workbench,order,signing,tasks,evidence}`); `src/shared` is the
-  frontend-shared submodule mount (single source for the chain track, consumed
-  via `chain/`, `contracts/`, `domain/`). See [app/README.md](./app/README.md)
-  for the directory map.
+- `app/`: current Store operator console frontend. Source layout is organized
+  by user task (`src/app`, `src/lib`, `src/store`, `src/styles`); `src/shared` is
+  the frontend-shared submodule mount (single source for the chain track,
+  consumed via `chain/`, `contracts/`, `domain/`). The participant workbench
+  source that used to live in `src/product` has been removed; participant
+  flows (orders, tasks, evidence, submission) are owned by `uvp-order-app`.
+  See [app/README.md](./app/README.md) for the directory map and migration gaps.
 
 ## Development Topology
 

@@ -174,7 +174,7 @@ export function createStoreApiClient(
 ): StoreApiClient {
   return new BrowserStoreApiClient(resolveStoreApiBaseUrl(), {
     access,
-    // 会话头与 product 侧同口径：每请求现读存储（过期即弃），不固化在
+    // 会话头与参与者面同口径：每请求现读存储（过期即弃），不固化在
     // client 里等重建——挂起页面上过期/被清除的 token 不再随请求外发。
     sessionToken: readStoredStoreSessionToken
   });
@@ -311,7 +311,7 @@ export function readableStoreError(error: unknown, fallback: string): string {
 }
 
 /**
- * 生产与测试共用的 HTTP 客户端（与 product 侧 HttpProductApiClient 同款口径）。
+ * 生产与测试共用的 HTTP 客户端（与参与者面 HttpProductApiClient 同款口径）。
  * fetchImpl 仅用于测试注入；生产代码必须使用默认的全局 fetch。
  */
 export class BrowserStoreApiClient implements StoreApiClient {

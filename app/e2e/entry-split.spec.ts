@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { STUB_API_BASE } from "./workbench-stubs";
+import { STUB_API_BASE } from "./stub-api";
 
 /**
  * 入口契约（operator-only，fixture 全桩）：

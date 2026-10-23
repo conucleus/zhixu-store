@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { STUB_API_BASE } from "./workbench-stubs";
+import { STUB_API_BASE } from "./stub-api";
 
 /**
  * Store 会话与链接入口 e2e（fixture 模式，全桩）——operator 契约：

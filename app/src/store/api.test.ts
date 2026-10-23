@@ -282,7 +282,7 @@ describe("store client session header sourcing", () => {
   }
 
   it("re-reads the stored session token on every request instead of pinning it at construction", async () => {
-    // 与 product 侧同口径：凭据头每请求现读存储，token 落盘/更换后下一次
+    // 与参与者面同口径：凭据头每请求现读存储，token 落盘/更换后下一次
     // 请求即刻生效，不等 client 重建。
     installMemoryWindow();
     try {

@@ -15,13 +15,9 @@ const storeAccessLevel = process.env.UVP_PRODUCT_BROWSER_E2E_STORE_ACCESS_LEVEL;
 const fixtureDevEnv = chainBackedMode
     ? ""
     : [
-      // 签名域预期值走部署配置注入：与 e2e 桩 typedData.domain 的状态机
-      // 地址（workbench-stubs 0x...01）一致，否则合法用例会被拒签。
+      // 任何未打桩的请求立即网络失败（fail-closed）：需要页面数据的用例
+      // 通过 page.route 注入 /store/** 响应。
       "VITE_UVP_CHAIN_SERVICES_URL=http://127.0.0.1:9",
-      "VITE_UVP_STATE_MACHINE_ADDRESS=0x0000000000000000000000000000000000000001",
-      // 邀请链接基地址 fail-closed（缺配置拒绝生成）：fixture 模式注入桩值，
-      // 否则"复制链接"用例会在配置门处失败（fixture 里没有真实 order-app）。
-      "VITE_UVP_ORDER_APP_URL=http://127.0.0.1:9",
       ...(storeAccessLevel ? [`VITE_UVP_STORE_ACCESS_LEVEL=${storeAccessLevel}`] : [])
     ].join(" ") + " ";
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://${host}:${port}`;

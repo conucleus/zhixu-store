@@ -5,7 +5,8 @@ Zhixu Store 是 UVP 的 **operator（凝结核运营方）面**：设计秩序�
 准备交易并提交经营侧数据。
 
 参与者履约面（订单、待办、证据上传、签名提交）**不在本应用**，归 uvp-order-app。
-本仓库的 `src/product/**` 仅为迁移冻结保留：源码还在，但入口已从路由移除，页面不可达。
+历史上冻结在 `src/product/**` 的参与者工作台源码与旧 e2e 载荷已删除；本仓只保留 operator 面，
+不再维护第二份参与者实现。迁移缺口见下文「迁移缺口」。
 
 ## 定位与路由
 
@@ -59,15 +60,24 @@ src/
 │   ├── authoring/  # 装修编辑（StoreDecorationEditor）
 │   ├── docking/    # 试拼沙箱（设计块内入口）
 │   └── suppliers/  # 供应商资料（组织块内）
-├── product/        # 冻结：参与者侧源码，等待迁移到 uvp-order-app（本应用不可达）
 ├── lib/            # 本仓纯前端工具（frontend.ts：基地址解析、短值显示等）
 └── shared/         # frontend-shared submodule（chain 轨单源；本仓只消费
                     # chain/、contracts/、domain/，见该仓 README 分轨边界）
 ```
 
-`src/product/**` 里仍保留的页面（CreateOrderPage、TaskPage、SubmitPage、ParticipantsPage、
-OrderOverviewPage、ProductWorkbenchApp、ZhixuCatalogViews 等）是 order app 迁移的输入，
-本仓不新增功能、不改契约；无人引用的残留代码随迁移一并带走。
+## 迁移缺口（归 uvp-order-app）
+
+删除前已逐文件核对 order app 的覆盖情况；以下能力在 order app 尚无等价物，需后续补齐
+（本仓不再为它们保留冻结实现）：
+
+- **参与方替换/补位**：store 版 `ParticipantsPage` 对已邀请但未确认的参与方提供「替换」动作；
+  order app `src/orders` 只覆盖开单与邀请发送（生成邀请链接），没有替换/补位入口。
+- **多接口诊断面板**：store 版工作台在多个 `/product/*` 接口同时失败时聚合为诊断面板
+  （`WorkbenchEndpointDiagnostic`）；order app 当前只有单条加载错误横幅，没有按接口列出的诊断视图。
+
+其余参与者面已由 order app 覆盖：创建订单/邀请 → `src/orders`；任务、提交、证据 →
+`src/tasks`、`src/evidence`；订单总览 → `src/order-room`；实体登记 → `src/registration`；
+钱包登录 → `src/onboarding/WalletLoginPanel`。
 
 ## 运行
 
@@ -79,9 +89,9 @@ pnpm run dev
 
 主要环境变量：
 
-- `VITE_UVP_CHAIN_SERVICES_URL`: Chain Services 地址
-- `VITE_UVP_ORDER_APP_URL`: uvp-order-app 部署地址。参与方邀请链接（`?invite=&inviteToken=`）的消费逻辑只在 uvp-order-app，本站不读这组参数；缺配置时邀请链接 fail-closed 拒绝生成（不产出死链、不外泄一次性令牌），邀请创建本身不受影响。
-- `VITE_UVP_STATE_MACHINE_ADDRESS`: 状态机部署地址，签名域交叉核对的预期值；缺配置或格式非法时拒绝签名。它是构建期钉死的单地址（Vite 内联进产物，运行期改环境变量不生效）：状态机部署轮换（activeDeployment 指针前移）后必须重建前端，签名域门才会按新地址核对；同一时间只支持一个部署地址。`.env.example` 里的示例值是格式非法占位：照抄部署会走"地址未配置"的显式报错分支，而不是以全零地址通过格式门后在每次签名时报"与 0x0… 不一致"。
+- `VITE_UVP_CHAIN_SERVICES_URL`: Chain Services 地址（Store Console 的读写 API）。
+- `VITE_UVP_STORE_ACCESS_LEVEL`: 可选，本地开发访问级别（缺省 `anonymous_read`）。
+- `VITE_UVP_STORE_FETCH_TIMEOUT_MS`: 可选，读写超时毫秒（缺省 6000）。
 
 完整清单与缺省行为见 `.env.example`。前端只读取这些当前变量名。身份只认登录会话与环境变量，仓库不含 mock/demo 运行路径。
 
@@ -100,8 +110,5 @@ pnpm test:e2e      # Playwright（fixture 全桩，不需要真实链/外部服�
   运营信任语义、能力插件逐条确认）。
 - `pnpm test:e2e:docking`：试拼沙箱写路径，需要 `UVP_PRODUCT_BROWSER_E2E_STORE_ACCESS_LEVEL=store_operator`
   独立 profile；常规 fixture 跑会整组 skip。
-- `pnpm test:e2e:full` / `e2e/product-workbench.*.spec.ts`：参与者工作台的旧用例，
-  **整组 skip**。`/app` 已不是参与者入口，这些用例只有在 uvp-order-app 宿主里才有意义；
-  迁移时随 `src/product/**` 一起搬走，恢复执行。
 
-E2E 全部使用页面级 stub（`e2e/workbench-stubs.ts` 提供 `STUB_API_BASE`），不依赖真实链。
+E2E 全部使用页面级 stub（`e2e/stub-api.ts` 提供 `STUB_API_BASE`），不依赖真实链。
