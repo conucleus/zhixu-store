@@ -20,10 +20,6 @@ type RuntimeState =
   | { readonly status: "ready"; readonly summary: StoreRuntimeSummaryDTO }
   | { readonly status: "error"; readonly message: string };
 
-/**
- * 运营块：只看秩序整体的聚合概况（秩序数、订单/待办/阻塞计数、索引进度），
- * 不逐单、不干预单笔执行；单笔异常走维护入口发普通意见信号。
- */
 export function StoreOperationsPage({
   api,
   catalog,

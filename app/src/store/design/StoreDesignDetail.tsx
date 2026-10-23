@@ -24,11 +24,6 @@ type DetailState =
   | { readonly status: "ready"; readonly zhixu: StoreZhixuDetailDTO; readonly overlay?: StoreZhixuOverlayView | undefined }
   | { readonly status: "error"; readonly message: string };
 
-/**
- * 设计块里的秩序详情：设计事实、角色/插槽能力审查、装修编辑与版本边界。
- * 这里不提供加入入口、上架审核或公开目录动作；读者面归订单 app、组织面在
- * 组织块，设计面只负责"这份秩序被设计成什么"。
- */
 export function StoreDesignDetail({
   access,
   api,
@@ -76,7 +71,6 @@ export function StoreDesignDetail({
     void api.getZhixuDetailWithOverlay(zhixuId).then((result) => {
       setState({ status: "ready", zhixu: result.data.zhixu, ...(result.data.overlay ? { overlay: result.data.overlay } : {}) });
     }).catch(() => {
-      // 刷新失败保留当前视图，装修已落盘的事实以下次成功读取为准。
     });
   };
   const decorationTheme = overlay?.decoration?.current?.data.theme;

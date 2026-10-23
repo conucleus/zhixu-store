@@ -38,16 +38,8 @@ type LinkEntry =
   | { readonly kind: "join"; readonly zhixuId: string }
   | { readonly kind: "share"; readonly zhixuId: string };
 
-/**
- * Store Console：凝结核/运营方的工作台，只承载四块职责——设计、组织、运营、维护，
- * 外加链接入口（邀请/分享链接生成）与账号工具。目录、搜索、公开上架与参与方履约面
- * 不在本应用；参与方与读者只通过链接进入各自的确认/查看页。
- */
 export function StoreApp() {
-  // 会话 token 状态只做 UI/引导信号（退出按钮渲染、登录/退出后重取会话刷新 access）；
-  // 请求凭据由 client 每请求现读存储，过期即弃，不靠服务端 401 兜底。
   const [sessionToken, setSessionToken] = useState<string | undefined>(() => readStoredStoreSessionToken());
-  // env 只提供引导态（无会话时的缺省 access）；会话取回后 access 一律以服务端 session 为准。
   const baseAccess = useMemo(() => createStoreApiClient().access, []);
   const [session, setSession] = useState<StoreSessionDTO | undefined>();
 
@@ -62,7 +54,6 @@ export function StoreApp() {
         setSession(result.data);
       }
     }).catch(() => {
-      // 会话不可得（未登录/接口失败）即回到 env 引导态，不猜权限。
       if (!cancelled) {
         setSession(undefined);
       }
@@ -102,7 +93,6 @@ export function StoreApp() {
 
   useEffect(() => {
     void loadCatalog();
-    // 只在挂载与会话 client 重建时首载秩序清单；loadCatalog 是组件内函数。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api]);
 
@@ -142,7 +132,6 @@ export function StoreApp() {
     try {
       await api.authLogout();
     } catch {
-      // token 已失效也按退出处理。
     }
     handleSessionCleared();
     setLoginMessage("已退出会话");

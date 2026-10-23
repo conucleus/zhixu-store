@@ -56,7 +56,6 @@ describe("plugin confirmation keys are keyed by plugin identity, not array index
     });
     const keysBefore = collectPluginReviewItems(before).map((item) => item.key);
 
-    // 在槽位首位插入一条新插件：既有插件的下标全部 +1，内容身份不变。
     const after = schemaWithPlugins({
       slotPlugins: [plugin("payment_placeholder", "inferred"), plugin("delivery_update", "inferred"), plugin("evidence_submission", "inferred")],
       topLevelPlugins: [plugin("validation_confirm", "inferred")]
@@ -73,12 +72,9 @@ describe("plugin confirmation keys are keyed by plugin identity, not array index
       slotPlugins: [plugin("delivery_update", "inferred"), plugin("evidence_submission", "inferred")],
       topLevelPlugins: []
     });
-    // 发布者只勾选 evidence_submission（原下标 1）。
     const checkedKey = collectPluginReviewItems(before).find((item) => item.plugin.pluginKind === "evidence_submission")?.key;
     assert.ok(checkedKey, "应能取到 evidence_submission 的确认键");
 
-    // JSON 编辑器里把两条插件调序后保存：按旧下标键控会写到错位的
-    // delivery_update 上；按身份键控必须仍写中 evidence_submission。
     const edited = schemaWithPlugins({
       slotPlugins: [plugin("evidence_submission", "inferred"), plugin("delivery_update", "inferred")],
       topLevelPlugins: []

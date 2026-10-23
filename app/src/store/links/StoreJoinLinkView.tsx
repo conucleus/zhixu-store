@@ -13,10 +13,6 @@ type JoinLinkState =
   | { readonly status: "ready"; readonly zhixu: StoreZhixuDetailDTO; readonly overlay?: StoreZhixuOverlayView | undefined }
   | { readonly status: "error"; readonly message: string };
 
-/**
- * 邀请链接的确认加入页：参与方从链接进入（不在导航中），确认角色后提交加入申请。
- * 申请进入凝结核的组织块审核队列；本页不是运营台，也不提供订单/任务动作。
- */
 export function StoreJoinLinkView({
   access,
   api,
@@ -77,7 +73,6 @@ export function StoreJoinLinkView({
     try {
       await api.authLogout();
     } catch {
-      // token 已失效也按退出处理。
     }
     onSessionCleared();
     setLoginMessage("已退出会话");
@@ -108,8 +103,6 @@ export function StoreJoinLinkView({
 
   const zhixu = state.zhixu;
   const theme = state.overlay?.decoration?.current?.data.theme;
-  // 红线：未上架（含从未走上架流）/锚冲突/锚未确认时不出现加入入口，
-  // 也不发任何 join 请求。服务端对"没有 listing"是放行的，前端是这部分唯一门。
   const joinGate = evaluateJoinEntryGate(state.overlay);
   return (
     <section className="page-shell" data-testid="store-join-link-view" data-zhixu-id={zhixuId}>

@@ -1,10 +1,5 @@
 import type { SlotCapabilityPluginDTO, StoreProductSchemaDTO } from "@uvp-eth/product-dto";
 
-/**
- * 能力插件逐条确认的纯函数单源：确认键按插件内容身份键控，不按数组下标。
- * Store 草稿的 Product Schema 可在 JSON 编辑器里插入/重排插件，下标键控会把
- * "保存勾选项为 explicit"写到另一条插件上；身份键控与展示顺序解耦。
- */
 
 export type PluginReviewScope = "top-level" | "slot";
 
@@ -43,7 +38,6 @@ function scopePluginReviewKeys(
   });
 }
 
-/** 顶层清单与每个插槽的插件全部逐条列出（含 missing），供发布者逐条确认。 */
 export function collectPluginReviewItems(schema: StoreProductSchemaDTO): readonly PluginReviewItem[] {
   const slotPlugins = schema.roleSlots.flatMap((slot) => {
     const keys = scopePluginReviewKeys("slot", slot.slotId, slot.capabilityPlugins ?? []);
@@ -64,10 +58,6 @@ export function collectPluginReviewItems(schema: StoreProductSchemaDTO): readonl
   return [...slotPlugins, ...topLevelPlugins];
 }
 
-/**
- * 逐条确认状态跟随 schema 版本同步：服务端已判 explicit 的条目视为已确认，
- * 其余条目保留发布者在本轮编辑中的勾选（校验/保存不会清掉未提交的选择）。
- */
 export function syncPluginConfirmations(
   schema: StoreProductSchemaDTO | undefined,
   current: Record<string, boolean>
@@ -86,8 +76,6 @@ export function confirmSchemaPluginsExplicit(
   schema: StoreProductSchemaDTO,
   confirmedKeys: ReadonlySet<string>
 ): StoreProductSchemaDTO {
-  // 只把发布者逐条勾选的插件 source 改为 explicit：槽位插件与顶层插件清单的
-  // 成员关系保持原样，不用槽位集合重建顶层清单（那会丢掉未挂在槽位上的顶层插件）。
   const roleSlots = schema.roleSlots.map((slot) => {
     const keys = scopePluginReviewKeys("slot", slot.slotId, slot.capabilityPlugins ?? []);
     return {

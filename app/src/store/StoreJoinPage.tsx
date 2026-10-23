@@ -24,10 +24,6 @@ const JOIN_STATUS_LABELS: Record<StoreJoinApplicationStatus, string> = {
   revoked: "已撤销"
 };
 
-/**
- * 加入闭环页：供应商看"我的申请"，publisher（或受托成员）按 plan
- * 看审核队列。通过审批即执行身份配对并记录链上交易证据。
- */
 export function StoreJoinPage({
   access,
   api,
@@ -37,19 +33,16 @@ export function StoreJoinPage({
   readonly access: StoreAccessState;
   readonly api: StoreApiClient;
   readonly planIdFilter?: string | undefined;
-  /** plan 过滤视图对应的 zhixuId：用于向服务端查询当前会话的审核能力。 */
   readonly zhixuFilter?: string | undefined;
 }) {
   const [state, setState] = useState<JoinListState>({ status: "loading" });
   const [busyId, setBusyId] = useState<string | undefined>();
-  // 已排队待执行的治理动作所在行：治理动作不允许被静默丢弃，其他行 busy 时入队串行执行。
   const [queuedIds, setQueuedIds] = useState<readonly string[]>([]);
   const actionQueueRef = useRef<readonly (() => Promise<void>)[]>([]);
   const drainingRef = useRef(false);
   const [message, setMessage] = useState<string | undefined>();
   const [rejectTarget, setRejectTarget] = useState<string | undefined>();
   const [rejectReason, setRejectReason] = useState("");
-  // 服务端声明的审核能力（publisher 或受托成员）；未查询到即视为无能力（fail-closed）。
   const [viewerMayReviewPlan, setViewerMayReviewPlan] = useState(false);
 
   const anchored = access.anchoredAddress;
@@ -70,7 +63,6 @@ export function StoreJoinPage({
         (permission.viewerIsPublisher || permission.viewerActiveDelegations.length > 0),
       );
     }).catch(() => {
-      // 叠加层不可得时按无审核能力渲染，不猜服务端权限。
       if (!cancelled) {
         setViewerMayReviewPlan(false);
       }
@@ -104,7 +96,6 @@ export function StoreJoinPage({
     void reload();
   }, [reload]);
 
-  /** 治理动作串行队列：其他行 busy 时入队而非丢弃，队列按提交顺序逐个执行。 */
   function enqueueAction(action: () => Promise<void>): void {
     actionQueueRef.current = [...actionQueueRef.current, action];
     if (drainingRef.current) {
@@ -150,8 +141,6 @@ export function StoreJoinPage({
   }
 
   const isOperator = access.level === "store_operator" || access.level === "store_admin";
-  // 审核操作位按服务端能力渲染：运营方能力，或服务端叠加层声明当前会话是
-  // publisher/受托成员。任意已锚定会话不再默认获得写入口（点下去只会得到 403）。
   const viewerCanReview = isOperator || (Boolean(planIdFilter) && viewerMayReviewPlan);
 
   return (
@@ -246,7 +235,6 @@ function JoinApplicationRow({
 }: {
   readonly detail: StoreJoinApplicationDetailView;
   readonly busy: boolean;
-  /** 该行的治理动作已排队等待前序动作完成，未被执行也未被丢弃。 */
   readonly queued: boolean;
   readonly isOperator: boolean;
   readonly viewerCanReview: boolean;
@@ -348,10 +336,6 @@ function evidenceKindLabel(kind: string): string {
   }
 }
 
-/**
- * 入驻成功文案：\"模拟交易未上链\"的提示只在该次审批产生的链上证据
- * executionMode=simulated 时附带；真实上链执行不得再挂模拟话术。
- */
 function joinApproveMessage(result: unknown): string {
   const base = "已通过：身份配对已执行，见下方证据栏的交易记录";
   const detail = (result as StoreApiResult<StoreJoinApplicationDetailView> | undefined)?.data;

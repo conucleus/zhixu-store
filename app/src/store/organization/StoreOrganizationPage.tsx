@@ -10,10 +10,6 @@ type RosterState =
   | { readonly status: "ready"; readonly suppliers: readonly StoreSupplierDTO[] }
   | { readonly status: "error"; readonly message: string };
 
-/**
- * 组织块：在册主体（供应商资料/能力标签）+ 加入申请审核 + 邀请链接入口。
- * 组织只管"谁在这条秩序里、以什么角色在册"，不指派订单执行者。
- */
 export function StoreOrganizationPage({
   access,
   api,

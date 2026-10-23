@@ -9,10 +9,6 @@ type ShareState =
   | { readonly status: "ready"; readonly zhixu: StoreZhixuDetailDTO; readonly overlay?: StoreZhixuOverlayView | undefined }
   | { readonly status: "error"; readonly message: string };
 
-/**
- * 分享链接的只读读者页：展示凝结核提供的装修主题、阶段要求与角色/证据清单。
- * 只读、无操作、无目录检索；不出现链上术语，也不构成对任何主体的背书。
- */
 export function StoreShareView({ api, zhixuId }: { readonly api: StoreApiClient; readonly zhixuId: string }) {
   const [state, setState] = useState<ShareState>({ status: "loading" });
 

@@ -3,10 +3,6 @@ import { useState } from "react";
 import { readableStoreError, type StoreApiClient } from "./api";
 import type { StoreAccessState, StoreJoinApplicationSubmitInput } from "./types";
 
-/**
- * 邀请链接加入页的申请入口：选 role slot + 授权类型 → 提交申请。
- * 只有会话已锚定地址才可提交（红线由服务端强制，前端只做提示）。
- */
 export function StoreJoinEntry({
   access,
   api,

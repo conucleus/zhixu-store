@@ -12,13 +12,6 @@ const SIGNAL_CATEGORY_OPTIONS: readonly { readonly value: SignalCategory; readon
   { value: "opinion", label: "一般意见", hint: "规则未覆盖的异常/争议，陈述意见即可" }
 ];
 
-/**
- * 维护块：规则外争议/异常出现时，由运营方发一条普通意见信号。
- * 不设争议中心、不仲裁、不判责；信号就是普通动作，不是管理员处置。
- *
- * 当前 Store API / StoreApiClient 没有意见信号写路径，本页只提供入口与
- * 可复制的信号草稿，不伪造提交成功（fail-closed）。写路径接入后在这里接线。
- */
 export function StoreMaintenancePage({
   access,
   catalog,

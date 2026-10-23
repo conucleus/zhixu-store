@@ -62,13 +62,8 @@ const initialImportDraftForm: ImportDraftFormState = {
   content: ""
 };
 
-/** 发布流程的会话级指针：只记"哪个 draftId 在审"，草稿本体一律经 API 重取。 */
 const REVIEW_DRAFT_ID_STORAGE_KEY = "uvp-store-review-draft-id";
 
-/**
- * 设计块：导入/编译/能力插件审查/提交发布 + 秩序装修设计 + 试拼沙箱。
- * 不含目录、检索或公开上架入口；读设计对象只能从 Store 可见的秩序清单选。
- */
 export function StoreDesignPage({
   access,
   api,
@@ -93,14 +88,10 @@ export function StoreDesignPage({
   const [pluginConfirmations, setPluginConfirmations] = useState<Record<string, boolean>>({});
   const [refreshAction, setRefreshAction] = useState<ActionState>({ phase: "idle" });
 
-  // 逐条确认状态跟随 schema 版本同步：服务端已判 explicit 的条目视为已确认，
-  // 其余条目保留发布者在本轮编辑中的勾选（校验/保存不会清掉未提交的选择）。
   useEffect(() => {
     setPluginConfirmations((current) => syncPluginConfirmations(productSchema, current));
   }, [productSchema]);
 
-  // 发布流程状态按 draftId 持久化：本地只存"哪个草稿在审"，草稿本体经
-  // getZhixuDraft 重取（Store 服务端是事实来源，本地指针不冒充草稿内容）。
   useEffect(() => {
     if (!reviewDraft) {
       return;
@@ -108,11 +99,9 @@ export function StoreDesignPage({
     try {
       window.sessionStorage.setItem(REVIEW_DRAFT_ID_STORAGE_KEY, reviewDraft.draftId);
     } catch {
-      // sessionStorage 不可用时退化为本次会话的内存流程态。
     }
   }, [reviewDraft]);
 
-  // 刷新后恢复在审草稿；恢复失败（草稿已不存在/不可见）清除指针，不装作恢复成功。
   useEffect(() => {
     let storedDraftId: string | undefined;
     try {
@@ -139,20 +128,16 @@ export function StoreDesignPage({
       try {
         window.sessionStorage.removeItem(REVIEW_DRAFT_ID_STORAGE_KEY);
       } catch {
-        // 清理失败不影响主流程（下次恢复仍会失败并再次尝试清除）。
       }
     });
     return () => {
       cancelled = true;
     };
-    // 仅挂载时恢复一次。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const zhixus = catalog?.zhixus ?? [];
   const schemaLocked = reviewDraft ? isSchemaLockedStatus(reviewDraft.status) : false;
-  // "可建单"判据以链上投影为准（目录 console DTO 的 lifecycleStatus）：
-  // draft.status 只描述 Store 工作流，不是第二套判据。
   const draftProjection = reviewDraft?.zhixuId
     ? zhixus.find((zhixu) => zhixu.zhixuId === reviewDraft.zhixuId)
     : undefined;
@@ -280,7 +265,6 @@ export function StoreDesignPage({
     }
     setSchemaAction({ phase: "pending", message: `正在把 ${confirmedKeys.size} 条勾选插件写入 explicit` });
     try {
-      // 从编辑器当前内容构建：勾选保存不得用旧 state 覆盖编辑器，丢弃未保存的 JSON 编辑。
       const parsed = parseSchemaText(schemaText, productSchema);
       if (!parsed) {
         throw new Error("当前没有可保存的 schema");
@@ -758,7 +742,6 @@ function PluginExplicitConfirmationPanel({
   }
   const confirmedCount = items.filter((item) => confirmations[item.key]).length;
   const allConfirmed = confirmedCount === items.length;
-  // 服务端已判 explicit 的条目视为预确认；只有新勾选的非 explicit 条目才构成一次写请求。
   const pendingConfirmCount = items.filter(
     (item) => item.plugin.source !== "explicit" && confirmations[item.key]
   ).length;
@@ -976,10 +959,6 @@ function parseSchemaText(
   return parsed as unknown as StoreProductSchemaDTO;
 }
 
-/**
- * 编辑器内容与已保存 schema 的深比较（键序无关）：提交审核的"已保存"判据
- * 不依赖文本逐字相等，重排键序/空白不构成未保存编辑。
- */
 function schemaContentEquals(left: unknown, right: unknown): boolean {
   return JSON.stringify(canonicalSchemaValue(left)) === JSON.stringify(canonicalSchemaValue(right));
 }

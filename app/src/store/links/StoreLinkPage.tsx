@@ -4,10 +4,6 @@ import type { StoreZhixuSearchResultDTO } from "../types";
 
 type LinkKind = "invite" | "share";
 
-/**
- * 链接入口：运营台不提供目录/搜索/公开上架；参与方与读者一律通过链接进入。
- * 生成的是本站可消费的链接（邀请加入页 / 装修分享页），不依赖未定义的跨端参数。
- */
 export function StoreLinkPage({
   catalog,
   catalogError
