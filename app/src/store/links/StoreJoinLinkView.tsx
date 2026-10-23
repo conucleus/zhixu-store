@@ -1,7 +1,8 @@
-import { AlertTriangle, Loader2, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Loader2, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { readableStoreError, type StoreApiClient } from "../api";
 import { StoreJoinEntry } from "../StoreJoinEntry";
+import { evaluateJoinEntryGate } from "./joinEntryGate";
 import { loginStoreSessionWithWallet } from "../session";
 import type { StoreAccessState, StoreZhixuOverlayView } from "../types";
 import type { StoreZhixuDetailDTO } from "@uvp-eth/product-dto";
@@ -107,6 +108,9 @@ export function StoreJoinLinkView({
 
   const zhixu = state.zhixu;
   const theme = state.overlay?.decoration?.current?.data.theme;
+  // 红线：未上架（含从未走上架流）/锚冲突/锚未确认时不出现加入入口，
+  // 也不发任何 join 请求。服务端对"没有 listing"是放行的，前端是这部分唯一门。
+  const joinGate = evaluateJoinEntryGate(state.overlay);
   return (
     <section className="page-shell" data-testid="store-join-link-view" data-zhixu-id={zhixuId}>
       <header className="panel-card">
@@ -164,14 +168,32 @@ export function StoreJoinLinkView({
         </section>
 
         <aside className="right-stack">
-          <StoreJoinEntry
-            access={access}
-            api={api}
-            planId={zhixu.planId}
-            roleSlots={zhixu.roleSlots.map((slot) => ({ slotId: slot.roleSlotId, title: slot.title }))}
-            stageIds={zhixu.stages.map((stage) => stage.stageId)}
-            onSubmitted={() => undefined}
-          />
+          {joinGate.open ? (
+            <StoreJoinEntry
+              access={access}
+              api={api}
+              planId={zhixu.planId}
+              roleSlots={zhixu.roleSlots.map((slot) => ({ slotId: slot.roleSlotId, title: slot.title }))}
+              stageIds={zhixu.stages.map((stage) => stage.stageId)}
+              onSubmitted={() => undefined}
+            />
+          ) : (
+            <section
+              className="side-panel store-suppression-banner"
+              data-testid="store-join-suppression"
+              data-suppression-code={joinGate.code}
+              role="status"
+            >
+              <div className="side-panel-title">
+                <h3><ShieldAlert /> 暂不开放加入</h3>
+              </div>
+              <p>{joinGate.reason}</p>
+              <p className="muted">
+                加入入口只在秩序已上架且锚定核验一致时开放；未上架、已下架或锚定冲突时不会出现可提交的入口，
+                也不会发出加入申请。
+              </p>
+            </section>
+          )}
           <section className="side-panel">
             <div className="side-panel-title"><h3>说明</h3></div>
             <p className="muted">

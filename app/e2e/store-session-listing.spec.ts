@@ -74,6 +74,8 @@ const zhixuDetail = {
 };
 
 const decorationOverlay = {
+  listing: { status: "public" },
+  anchorVerification: { status: "consistent" },
   decoration: {
     planId: PLAN_ID,
     current: {
