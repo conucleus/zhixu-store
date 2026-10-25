@@ -8,7 +8,7 @@ const PLAN_HASH = `0x${"0b".repeat(32)}`;
 function bundle(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     schema: "uvp.order-config/v3",
-    configId: "used-car/proxy_buy",
+    configId: "example/flow",
     version: "3.0.0",
     status: "published",
     stages: [{ key: "sourcing", funded: true }],
@@ -18,7 +18,7 @@ function bundle(overrides: Record<string, unknown> = {}): Record<string, unknown
 
 function input(overrides: Record<string, unknown> = {}) {
   return {
-    configId: "used-car/proxy_buy",
+    configId: "example/flow",
     version: "3.0.0",
     planId: PLAN_ID,
     planHash: PLAN_HASH,
@@ -55,7 +55,7 @@ describe("publishV3Config", () => {
           session: (init?.headers as Record<string, string>)["x-uvp-store-session"]
         });
         return new Response(JSON.stringify({
-          configId: "used-car/proxy_buy",
+          configId: "example/flow",
           version: "3.0.0",
           status: "published",
           configHash: `0x${"cc".repeat(32)}`,
