@@ -139,7 +139,7 @@ describe("stored wallet session token expiry", () => {
     // 否则该条目永远占着存储键（与过期/缺失口径一致，均为损坏）。
     const backing = installMemoryWindow();
     try {
-      window.localStorage.setItem(STORE_SESSION_TOKEN_STORAGE_KEY, "uvs_legacy_raw_token");
+      window.localStorage.setItem(STORE_SESSION_TOKEN_STORAGE_KEY, "uvs_stale_raw_token");
       assert.equal(readStoredStoreSessionToken(), undefined);
       assert.equal(backing.has(STORE_SESSION_TOKEN_STORAGE_KEY), false);
     } finally {

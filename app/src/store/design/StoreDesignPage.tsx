@@ -20,12 +20,6 @@ import type { StoreProductSchemaDTO } from "@uvp-eth/product-dto";
 import { readableStoreError, type StoreApiClient } from "../api";
 import { StoreDesignDetail } from "./StoreDesignDetail";
 import { StoreDockingPage } from "../docking/StoreDockingPage";
-import {
-  collectPluginReviewItems,
-  confirmSchemaPluginsExplicit,
-  syncPluginConfirmations,
-  type PluginReviewItem
-} from "./pluginConfirmation";
 import type {
   StoreAccessState,
   StoreZhixuDraftDTO,
@@ -85,12 +79,8 @@ export function StoreDesignPage({
   const [reviewDraft, setReviewDraft] = useState<StoreZhixuDraftDTO | undefined>();
   const [productSchema, setProductSchema] = useState<StoreProductSchemaDTO | undefined>();
   const [schemaText, setSchemaText] = useState("");
-  const [pluginConfirmations, setPluginConfirmations] = useState<Record<string, boolean>>({});
   const [refreshAction, setRefreshAction] = useState<ActionState>({ phase: "idle" });
 
-  useEffect(() => {
-    setPluginConfirmations((current) => syncPluginConfirmations(productSchema, current));
-  }, [productSchema]);
 
   useEffect(() => {
     if (!reviewDraft) {
@@ -248,58 +238,8 @@ export function StoreDesignPage({
     }
   }
 
-  async function handleConfirmExplicitPlugins(): Promise<void> {
-    if (!reviewDraft || !productSchema) {
-      return;
-    }
-    const items = collectPluginReviewItems(productSchema);
-    const confirmedKeys = new Set(
-      items.filter((item) => pluginConfirmations[item.key]).map((item) => item.key)
-    );
-    const pendingCount = items.filter(
-      (item) => item.plugin.source !== "explicit" && pluginConfirmations[item.key]
-    ).length;
-    if (pendingCount === 0) {
-      setSchemaAction({ phase: "error", message: "尚未勾选任何待确认插件；每条 inferred/missing 插件都必须由发布者逐条确认后才会写入 explicit。" });
-      return;
-    }
-    setSchemaAction({ phase: "pending", message: `正在把 ${confirmedKeys.size} 条勾选插件写入 explicit` });
-    try {
-      const parsed = parseSchemaText(schemaText, productSchema);
-      if (!parsed) {
-        throw new Error("当前没有可保存的 schema");
-      }
-      const explicitSchema = confirmSchemaPluginsExplicit(parsed, confirmedKeys);
-      setSchemaText(prettySchema(explicitSchema));
-      const result = await api.updateDraftProductSchema(reviewDraft.draftId, explicitSchema);
-      setReviewDraft(result.data.draft);
-      setProductSchema(result.data.productSchema);
-      setSchemaText(prettySchema(result.data.productSchema));
-      setSchemaAction({
-        phase: result.data.validation.ok ? "success" : "error",
-        message: result.data.validation.ok
-          ? `${confirmedKeys.size} 条插件已逐条确认 explicit，可提交 Store 审核`
-          : `${result.data.validation.issues.length} 个阻断项仍需处理`
-      });
-    } catch (error) {
-      setSchemaAction({ phase: "error", message: readableStoreError(error, "确认插件失败") });
-    }
-  }
 
-  function togglePluginConfirmation(key: string): void {
-    setPluginConfirmations((current) => ({ ...current, [key]: !current[key] }));
-  }
 
-  function toggleAllPluginConfirmations(): void {
-    if (!productSchema) {
-      return;
-    }
-    const items = collectPluginReviewItems(productSchema);
-    const nextChecked = !items.every((item) => pluginConfirmations[item.key]);
-    setPluginConfirmations(
-      Object.fromEntries(items.map((item) => [item.key, nextChecked]))
-    );
-  }
 
   async function handleSubmitReview(): Promise<void> {
     if (!reviewDraft) {
@@ -504,14 +444,7 @@ export function StoreDesignPage({
                           <div>
                             <strong>{slot.performanceSlotLabel ?? slot.label}</strong>
                             <p>{slot.businessPersonaLabels?.join("、") || slot.duty}</p>
-                            <small>{slot.capabilityPlugins?.flatMap((plugin) => plugin.stageIds).join(" / ") || "未覆盖阶段"}</small>
-                          </div>
-                          <div className="schema-plugin-tags">
-                            {(slot.capabilityPlugins ?? []).map((plugin, index) => (
-                              <span className={`status-badge ${plugin.source === "explicit" ? "success" : "warning"}`} data-plugin-source={plugin.source} key={`${slot.slotId}-${index}`}>
-                                {plugin.pluginKind} · {plugin.source}
-                              </span>
-                            ))}
+                            <small>V3 配置不再声明 capability 插件</small>
                           </div>
                         </article>
                       ))}
@@ -525,15 +458,6 @@ export function StoreDesignPage({
                         ))}
                       </div>
                     ) : null}
-                    <PluginExplicitConfirmationPanel
-                      confirmations={pluginConfirmations}
-                      locked={schemaLocked}
-                      productSchema={productSchema}
-                      pending={schemaAction.phase === "pending"}
-                      onSave={() => void handleConfirmExplicitPlugins()}
-                      onToggle={togglePluginConfirmation}
-                      onToggleAll={toggleAllPluginConfirmations}
-                    />
                     <label className="field schema-json-editor" data-testid="store-schema-textarea-label">
                       <span>Product Schema Bundle JSON</span>
                       <textarea value={schemaText} onChange={(event) => setSchemaText(event.target.value)} />
@@ -715,108 +639,6 @@ function DraftGovernancePanel({
   );
 }
 
-function PluginExplicitConfirmationPanel({
-  productSchema,
-  confirmations,
-  pending,
-  locked,
-  onToggle,
-  onToggleAll,
-  onSave
-}: {
-  readonly productSchema: StoreProductSchemaDTO;
-  readonly confirmations: Record<string, boolean>;
-  readonly pending: boolean;
-  readonly locked: boolean;
-  readonly onToggle: (key: string) => void;
-  readonly onToggleAll: () => void;
-  readonly onSave: () => void;
-}) {
-  const items = collectPluginReviewItems(productSchema);
-  if (items.length === 0) {
-    return (
-      <div className="inline-empty" data-testid="store-plugin-confirm-empty">
-        当前 schema 没有能力插件需要确认。
-      </div>
-    );
-  }
-  const confirmedCount = items.filter((item) => confirmations[item.key]).length;
-  const allConfirmed = confirmedCount === items.length;
-  const pendingConfirmCount = items.filter(
-    (item) => item.plugin.source !== "explicit" && confirmations[item.key]
-  ).length;
-  return (
-    <section className="schema-plugin-confirm" data-testid="store-plugin-confirm-panel">
-      <div className="schema-plugin-confirm-head">
-        <div>
-          <h3>逐条确认能力插件</h3>
-          <p>顶层清单与每个插槽的插件都逐条展示；只有发布者逐条勾选的条目才会写入 explicit。</p>
-        </div>
-        <span
-          className={`status-badge ${allConfirmed ? "success" : "warning"}`}
-          data-testid="store-plugin-confirm-summary"
-        >
-          {confirmedCount}/{items.length} 已确认
-        </span>
-      </div>
-      <ul className="schema-plugin-confirm-list">
-        {items.map((item: PluginReviewItem) => (
-          <li
-            className="schema-plugin-confirm-item"
-            data-plugin-source={item.plugin.source}
-            data-plugin-scope={item.scope}
-            data-testid="store-plugin-confirm-item"
-            key={item.key}
-          >
-            <label>
-              <input
-                checked={confirmations[item.key] ?? false}
-                disabled={pending || locked}
-                onChange={() => onToggle(item.key)}
-                type="checkbox"
-              />
-              <span className="schema-plugin-confirm-body">
-                <strong>{item.plugin.pluginKind}</strong>
-                <small>
-                  {item.scope === "slot" ? `插槽 ${item.slotLabel ?? item.slotId ?? ""}` : "顶层清单"}
-                  {" · "}
-                  {item.plugin.stageIds.length > 0 ? item.plugin.stageIds.join(" / ") : "未覆盖阶段"}
-                  {item.plugin.title ? ` · ${item.plugin.title}` : ""}
-                </small>
-              </span>
-              <span className={`status-badge ${item.plugin.source === "explicit" ? "success" : "warning"}`}>
-                {item.plugin.source}
-                {item.plugin.source !== "explicit" && confirmations[item.key] ? " · 待写入 explicit" : ""}
-              </span>
-            </label>
-          </li>
-        ))}
-      </ul>
-      <div className="button-row schema-review-actions">
-        <button
-          className="secondary-button"
-          data-testid="store-plugin-confirm-select-all"
-          disabled={pending || locked}
-          onClick={onToggleAll}
-          type="button"
-        >
-          <CheckCircle2 />
-          {allConfirmed ? "取消全选" : "全选"}
-        </button>
-        <button
-          className="primary-button"
-          data-testid="store-plugin-confirm-save"
-          disabled={pending || locked || pendingConfirmCount === 0}
-          onClick={onSave}
-          type="button"
-        >
-          {pending ? <Loader2 className="spin" /> : <Save />}
-          保存勾选项为 explicit（{confirmedCount}/{items.length}）
-        </button>
-      </div>
-    </section>
-  );
-}
 
 function ActionNotice({ state, testId }: { readonly state: ActionState; readonly testId?: string | undefined }) {
   if (state.phase === "idle") {

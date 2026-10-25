@@ -396,19 +396,9 @@ export interface StoreDecorationThemeView {
   readonly highlights?: readonly string[] | undefined;
 }
 
-export interface StoreDecorationEvidenceSpecSlotView {
-  readonly key: string;
-  readonly label: string;
-  readonly inputKind?: "file" | "text" | "date" | undefined;
-  readonly accept?: readonly string[] | undefined;
-  readonly required?: boolean | undefined;
-  readonly description?: string | undefined;
-}
-
 export interface StoreDecorationTaskDeclarationView {
   readonly stageId?: string | undefined;
   readonly taskId?: string | undefined;
-  readonly evidenceSpec?: readonly StoreDecorationEvidenceSpecSlotView[] | undefined;
 }
 
 export interface StoreDecorationDataView {

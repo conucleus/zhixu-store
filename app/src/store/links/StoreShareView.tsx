@@ -153,15 +153,6 @@ function evidenceSlotsForStage(
     if ((declaration.stageId ?? "").trim().toLowerCase() !== stageId.trim().toLowerCase()) {
       continue;
     }
-    for (const slot of declaration.evidenceSpec ?? []) {
-      const label = slot.label?.trim();
-      const key = slot.key?.trim();
-      if (!label || !key || seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      slots.push({ label, required: slot.required });
-    }
   }
   return slots;
 }

@@ -10,7 +10,7 @@ import type {
 /**
  * 装修编辑器（详情页侧栏抽屉）：
  * - 只有 planPublisher（或受托成员）能保存——服务端强制，前端只读权限视图做展示。
- * - theme 为纯展示字段；taskDeclarations.evidenceSpec 走结构校验（服务端
+ * - theme 为纯展示字段；任务级证据要求由 V3 配置 fileResources 句柄表达
  *   validateTaskEvidenceSpec 同源规则），永不编码业务预期。
  * - 版本 append-only：每次保存产生新版本，可回滚到历史版本展示。
  * - 委托表：publisher 本人才可增删团队成员地址（只传 Store 侧操作权）。
@@ -201,7 +201,7 @@ export function StoreDecorationEditor({
           <p className="muted">版本 v{current.version} · {(current.data.taskDeclarations ?? []).length} 条任务级声明</p>
         </div>
       ) : (
-        <p className="muted">尚无装修数据。展示名、描述与任务级声明（evidenceSpec）由发布者以纯数据提供，Store 通用渲染。</p>
+        <p className="muted">尚无装修数据。展示名与描述由发布者以纯数据提供，Store 通用渲染。</p>
       )}
 
       {open && canWrite ? (
@@ -225,7 +225,7 @@ export function StoreDecorationEditor({
               onChange={(event) => setSpecText(event.target.value)}
               rows={8}
               spellCheck={false}
-              placeholder='[{"stageId":"...","evidenceSpec":[{"key":"invoice","label":"发票","inputKind":"file","required":true}]}]'
+              placeholder='[{"stageId":"...","taskId":"..."}]'
               data-testid="store-decoration-spec"
             />
           </label>

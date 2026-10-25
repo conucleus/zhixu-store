@@ -15,7 +15,7 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { readableStoreError, type StoreApiClient } from "../api";
 import { StoreDecorationEditor } from "../authoring/StoreDecorationEditor";
-import type { CapabilityPluginSource, StoreCapabilityReviewStatus, StoreZhixuDetailDTO } from "@uvp-eth/product-dto";
+import type { StoreZhixuDetailDTO } from "@uvp-eth/product-dto";
 import type { StoreAccessState, StoreZhixuOverlayView } from "../types";
 import { shortValue } from "../../lib/frontend";
 
@@ -66,7 +66,6 @@ export function StoreDesignDetail({
   const zhixu = state.zhixu;
   const overlay = state.overlay;
   const stageTitleById = new Map(zhixu.stages.map((stage) => [stage.stageId, stage.title]));
-  const slotReviewSummary = summarizeSlotReviews(zhixu.roleSlots);
   const reloadDetail = () => {
     void api.getZhixuDetailWithOverlay(zhixuId).then((result) => {
       setState({ status: "ready", zhixu: result.data.zhixu, ...(result.data.overlay ? { overlay: result.data.overlay } : {}) });
@@ -139,14 +138,13 @@ export function StoreDesignDetail({
 
           <section className="store-role-matrix" aria-label="角色与阶段配置">
             <div className="store-mini-heading">
-              <h3>角色/能力审查</h3>
-              <span>{slotReviewSummary.label}</span>
+              <h3>角色与阶段配置</h3>
             </div>
             <div className="store-role-matrix-grid">
               {zhixu.roleSlots.slice(0, 4).map((slot) => (
-                <div className={`store-role-matrix-row ${slotReviewTone(slot.capabilityReviewStatus)}`} key={slot.roleSlotId}>
+                <div className="store-role-matrix-row" key={slot.roleSlotId}>
                   <strong>{slot.performanceSlotLabel}</strong>
-                  <span>{slot.capabilityReviewLabel}</span>
+                  <span>{slot.statusLabel}</span>
                   <small>{slot.expectedEvidence.join("、") || "未声明凭证"}</small>
                 </div>
               ))}
@@ -208,57 +206,30 @@ export function StoreDesignDetail({
         </aside>
       </div>
 
-      <section className="store-slot-review-section" aria-label="履约插槽能力审查">
+      <section className="store-slot-review-section" aria-label="履约插槽">
         <div className="store-slot-review-head">
           <div>
             <span className="store-section-kicker"><Puzzle /> 履约插槽</span>
-            <h2>能力插件审查</h2>
-            <p>检查每个责任位置的业务身份、覆盖阶段和已安装能力；插件必须逐条显式确认后才进入发布流程。</p>
+            <h2>责任位置与凭证要求</h2>
+            <p>每个责任位置的业务身份与所需凭证；V3 配置用 slots/senders 与 fileResources 句柄表达。</p>
           </div>
-          <span className={`status-badge ${slotReviewTone(slotReviewSummary.status)}`}>{slotReviewSummary.label}</span>
         </div>
 
         <div className="store-slot-grid">
           {zhixu.roleSlots.map((slot) => (
-            <article className={`store-slot-card ${slotReviewTone(slot.capabilityReviewStatus)}`} key={slot.roleSlotId}>
+            <article className="store-slot-card" key={slot.roleSlotId}>
               <div className="store-slot-card-head">
                 <div>
                   <span className="store-slot-id">插槽 {slot.roleSlotId}</span>
                   <h3>{slot.performanceSlotLabel}</h3>
                   <p>{slot.title} · {slot.required ? "必需" : "可选"} · {slot.statusLabel}</p>
                 </div>
-                <span className={`status-badge ${slotReviewTone(slot.capabilityReviewStatus)}`}>
-                  {slotReviewIcon(slot.capabilityReviewStatus)}
-                  {slot.capabilityReviewLabel}
-                </span>
               </div>
 
               <p className="store-slot-duty">{slot.description}</p>
               <TagList label="业务身份" values={slot.businessPersonaLabels} empty="未声明业务身份" />
               <TagList label="所需凭证" values={slot.expectedEvidence} empty="未声明凭证要求" />
 
-              <div className="store-capability-list">
-                {slot.capabilityPlugins.length > 0 ? slot.capabilityPlugins.map((plugin) => (
-                  <div className="store-capability-row" key={`${slot.roleSlotId}:${plugin.pluginKind}:${plugin.stageIds.join(",")}`}>
-                    <div className="store-capability-title">
-                      <span>{capabilityKindLabel(plugin.pluginKind)}</span>
-                      <strong>{plugin.title}</strong>
-                    </div>
-                    <p>{plugin.summary}</p>
-                    <div className="store-capability-meta">
-                      <span>覆盖阶段：{coveredStageLabel(plugin.stageIds, stageTitleById)}</span>
-                      <span>来源：{capabilitySourceLabel(plugin.source)}</span>
-                      {plugin.primaryActionLabel ? <span>动作：{plugin.primaryActionLabel}</span> : null}
-                    </div>
-                    <TagList label="插件凭证" values={plugin.requiredEvidence} empty="无额外凭证声明" />
-                  </div>
-                )) : (
-                  <div className="store-slot-missing">
-                    <AlertTriangle />
-                    <span>该插槽还没有显式能力插件，发布前需要操作员补齐或确认迁移结果。</span>
-                  </div>
-                )}
-              </div>
             </article>
           ))}
         </div>
@@ -372,64 +343,6 @@ function statusTone(status: string): "success" | "warning" | "info" | "default" 
     return "info";
   }
   return "default";
-}
-
-function summarizeSlotReviews(
-  slots: StoreZhixuDetailDTO["roleSlots"]
-): { readonly status: StoreCapabilityReviewStatus; readonly label: string } {
-  if (slots.length === 0 || slots.some((slot) => slot.capabilityReviewStatus === "missing")) {
-    return { status: "missing", label: "存在缺失能力配置" };
-  }
-  if (slots.some((slot) => slot.capabilityReviewStatus === "inferred")) {
-    return { status: "inferred", label: "存在推断待确认" };
-  }
-  return { status: "explicit", label: "全部显式配置" };
-}
-
-function slotReviewTone(status: StoreCapabilityReviewStatus): "success" | "warning" | "info" {
-  if (status === "explicit") {
-    return "success";
-  }
-  if (status === "missing") {
-    return "warning";
-  }
-  return "info";
-}
-
-function slotReviewIcon(status: StoreCapabilityReviewStatus): ReactNode {
-  if (status === "explicit") {
-    return <CheckCircle2 />;
-  }
-  if (status === "missing") {
-    return <AlertTriangle />;
-  }
-  return <CircleDashed />;
-}
-
-function capabilityKindLabel(kind: StoreZhixuDetailDTO["roleSlots"][number]["capabilityPlugins"][number]["pluginKind"]): string {
-  switch (kind) {
-    case "payment_placeholder":
-      return "资金动作占位";
-    case "evidence_submission":
-      return "履约凭证";
-    case "delivery_update":
-      return "交付更新";
-    case "validation_confirm":
-      return "验收确认";
-    case "dispute_material":
-      return "争议材料";
-  }
-}
-
-function capabilitySourceLabel(source: CapabilityPluginSource): string {
-  switch (source) {
-    case "explicit":
-      return "显式配置";
-    case "inferred":
-      return "旧版本推断";
-    case "missing":
-      return "缺失";
-  }
 }
 
 function coveredStageLabel(stageIds: readonly string[], stageTitleById: ReadonlyMap<string, string>): string {
