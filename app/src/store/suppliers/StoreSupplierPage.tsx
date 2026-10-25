@@ -358,8 +358,6 @@ function SupplierEditPanel({
           <span>capabilityTags</span>
           <textarea
             onBlur={(event) =>
-              // 归一放到失焦/保存时：onChange 归一会吞掉行尾换行与逗号，
-              // 让“每行一个”的输入方式在敲回车的瞬间就被破坏。
               setForm({
                 ...form,
                 capabilityTagsText: normalizeTextList(
@@ -543,7 +541,5 @@ function normalizeTextList(value: string): readonly string[] {
 }
 
 function uniqueSorted(values: readonly string[]): readonly string[] {
-  // 码点序（等价 UTF-8 字节序）：该列表会随 metadata 持久化并参与摘要，
-  // localeCompare 依赖机器 locale，跨机器会产生不同顺序。
   return [...new Set(values)].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
 }

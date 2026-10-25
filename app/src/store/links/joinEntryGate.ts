@@ -1,6 +1,4 @@
-/**
- * 加入入口的 fail-closed 门：listing 必须 public，锚定必须 consistent。
- */
+/* 加入入口 fail-closed 门：listing 须 public，锚定须 consistent。 */
 export interface JoinEntryOverlayLike {
   readonly listing?: { readonly status?: string | undefined } | undefined;
   readonly anchorVerification?: {

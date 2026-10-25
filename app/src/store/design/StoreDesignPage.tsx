@@ -444,7 +444,7 @@ export function StoreDesignPage({
                           <div>
                             <strong>{slot.performanceSlotLabel ?? slot.label}</strong>
                             <p>{slot.businessPersonaLabels?.join("、") || slot.duty}</p>
-                            <small>V3 配置不再声明 capability 插件</small>
+                            <small>配置不再声明 capability 插件</small>
                           </div>
                         </article>
                       ))}

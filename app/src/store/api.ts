@@ -53,7 +53,6 @@ export interface StoreApiClient {
     query?: StoreSearchInput,
   ): Promise<StoreApiResult<StoreZhixuSearchResultDTO>>;
   getZhixuDetail(zhixuId: string): Promise<StoreApiResult<StoreZhixuDetailDTO>>;
-  /** 详情 + 上架/锚核验/装修叠加层。 */
   getZhixuDetailWithOverlay(
     zhixuId: string,
   ): Promise<StoreApiResult<{ readonly zhixu: StoreZhixuDetailDTO; readonly overlay?: StoreZhixuOverlayView | undefined }>>;
@@ -94,7 +93,6 @@ export interface StoreApiClient {
   getDockingSession(
     sessionId: string,
   ): Promise<StoreApiResult<StoreDockingSessionDTO>>;
-  // ---- 钱包会话 ----
   authChallenge(
     input: { readonly address: string; readonly intent?: "login" | "anchor_address" },
   ): Promise<StoreApiResult<StoreWalletSessionChallengeDTO>>;
@@ -106,13 +104,11 @@ export interface StoreApiClient {
     StoreApiResult<{ readonly accountId: string; readonly addresses: readonly { readonly address: string; readonly status: "active" | "revoked"; readonly anchoredAt: string }[] }>
   >;
   revokeAccountAddress(address: string): Promise<StoreApiResult<{ readonly accountId: string; readonly addresses: readonly { readonly address: string; readonly status: "active" | "revoked"; readonly anchoredAt: string }[] }>>;
-  // ---- 装修与委托 ----
   saveDecoration(planId: string, decoration: StoreDecorationDataView, note?: string): Promise<StoreApiResult<StoreDecorationView>>;
   restoreDecorationVersion(planId: string, version: number): Promise<StoreApiResult<StoreDecorationView>>;
   listDelegations(publisherAddress: string): Promise<StoreApiResult<{ readonly delegations: readonly StorePublisherDelegationView[] }>>;
   grantDelegation(publisherAddress: string, memberAddress: string): Promise<StoreApiResult<{ readonly delegations: readonly StorePublisherDelegationView[] }>>;
   revokeDelegation(delegationId: string, reason?: string): Promise<StoreApiResult<{ readonly delegations: readonly StorePublisherDelegationView[] }>>;
-  // ---- 上架 ----
   importListing(
     input: { readonly planId: string; readonly planHash?: string | undefined; readonly deploymentId?: string | undefined },
   ): Promise<StoreApiResult<{ readonly listing: StoreListingView; readonly anchorVerification: { readonly status: string; readonly checks: readonly { readonly id: string; readonly outcome: string }[] } }>>;
@@ -120,7 +116,6 @@ export interface StoreApiClient {
   reviewListing(listingId: string, decision: "approve" | "reject", note?: string): Promise<StoreApiResult<{ readonly listing: StoreListingView }>>;
   delistListing(listingId: string, reason?: string): Promise<StoreApiResult<{ readonly listing: StoreListingView }>>;
   relistListing(listingId: string): Promise<StoreApiResult<{ readonly listing: StoreListingView }>>;
-  // ---- 加入闭环 ----
   submitJoinApplication(input: StoreJoinApplicationSubmitInput): Promise<StoreApiResult<StoreJoinApplicationDetailView>>;
   listJoinApplications(query?: { readonly planId?: string; readonly status?: StoreJoinApplicationStatus }): Promise<StoreApiResult<{ readonly applications: readonly StoreJoinApplicationDetailView[] }>>;
   getJoinApplication(applicationId: string): Promise<StoreApiResult<StoreJoinApplicationDetailView>>;
@@ -154,7 +149,6 @@ export class StoreApiError extends Error {
   }
 }
 
-/** Store 读写在挂起时必须超时（与工作台读路径同口径），否则页面无限 loading。 */
 const STORE_FETCH_TIMEOUT_MS = Number(
   (import.meta.env ?? {})?.VITE_UVP_STORE_FETCH_TIMEOUT_MS
 ) || 6000;
@@ -174,24 +168,12 @@ export function createStoreApiClient(
 ): StoreApiClient {
   return new BrowserStoreApiClient(resolveStoreApiBaseUrl(), {
     access,
-    // 会话头与参与者面同口径：每请求现读存储（过期即弃），不固化在
-    // client 里等重建——挂起页面上过期/被清除的 token 不再随请求外发。
     sessionToken: readStoredStoreSessionToken
   });
 }
 
-/**
- * 钱包会话 token 的本地持久化（仅 token + 服务端声明的过期时间，不含任何
- * 链上签名材料）。过期时间是本地卫生线：服务端仍按会话 TTL 拒绝过期 token，
- * 本地按同一时间点弃置，避免长期持有必然失效的凭据。
- */
 export const STORE_SESSION_TOKEN_STORAGE_KEY = "uvp-store-session-token";
 
-/**
- * 落盘形状的过期时间必填：读取端（readStoredStoreSessionToken）把无
- * expiresAt 或非 JSON 的条目按损坏清除——写入口径与之一致，否则内存态
- * 有效的会话重载即丢。退出登录走 storeStoreSessionToken(undefined)。
- */
 interface StoredStoreSession {
   readonly token: string;
   readonly expiresAt: string;
@@ -211,16 +193,12 @@ export function readStoredStoreSessionToken(): string | undefined {
     const parsed = JSON.parse(raw) as Partial<StoredStoreSession>;
     const token = typeof parsed.token === "string" && parsed.token.startsWith("uvs_") ? parsed.token : undefined;
     const expiresAt = Date.parse(parsed.expiresAt ?? "");
-    // 服务端会话响应必带 expiresAt：缺失/非法（NaN）的过期时间只可能来自
-    // 篡改或损坏的存储，按已过期处理并清除——放行等于让凭据无限期有效。
     if (!token || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
       window.localStorage.removeItem(STORE_SESSION_TOKEN_STORAGE_KEY);
       return undefined;
     }
     return token;
   } catch {
-    // 非 JSON 载荷（旧落盘格式或损坏存储）永不被本读法接受：同样按损坏
-    // 清除，否则会在 localStorage 里永久滞留。
     window.localStorage.removeItem(STORE_SESSION_TOKEN_STORAGE_KEY);
     return undefined;
   }
@@ -236,11 +214,9 @@ export function storeStoreSessionToken(
       window.localStorage.removeItem(STORE_SESSION_TOKEN_STORAGE_KEY);
     }
   } catch {
-    // localStorage 不可用时退化为内存态（本次会话内仍可用）。
   }
 }
 
-/** 访问级别只认显式环境配置；运行时不认 query/localStorage 注入链。 */
 export function configuredStoreAccessLevel(): StoreAccessLevel | undefined {
   const value = import.meta.env.VITE_UVP_STORE_ACCESS_LEVEL;
   return normalizeStoreAccessLevel(
@@ -310,10 +286,6 @@ export function readableStoreError(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-/**
- * 生产与测试共用的 HTTP 客户端（与参与者面 HttpProductApiClient 同款口径）。
- * fetchImpl 仅用于测试注入；生产代码必须使用默认的全局 fetch。
- */
 export class BrowserStoreApiClient implements StoreApiClient {
   readonly baseUrl?: string | undefined;
   readonly access: StoreAccessState;
@@ -378,7 +350,6 @@ export class BrowserStoreApiClient implements StoreApiClient {
     );
   }
 
-  /** 详情 + 上架/锚核验/装修叠加层（详情页专用）。 */
   async getZhixuDetailWithOverlay(
     zhixuId: string,
   ): Promise<StoreApiResult<{ readonly zhixu: StoreZhixuDetailDTO; readonly overlay?: StoreZhixuOverlayView | undefined }>> {
@@ -490,8 +461,6 @@ export class BrowserStoreApiClient implements StoreApiClient {
   ): Promise<StoreApiResult<StoreZhixuDraftReviewResultDTO>> {
     const pathname = `/store/zhixu-drafts/${encodeURIComponent(draftId)}/submit-review`;
     this.requireWriteAccess(pathname);
-    // 提交审核 ≠ 自审自批：不携带硬编码的批准结论，
-    // 由服务端治理审核流程给出结论（缺省 status=submitted）。
     return await this.realWrite<StoreZhixuDraftReviewResultDTO>(
       "POST",
       pathname,
@@ -564,8 +533,6 @@ export class BrowserStoreApiClient implements StoreApiClient {
     }));
   }
 
-  // ---- 钱包会话 ----
-
   async authChallenge(
     input: { readonly address: string; readonly intent?: "login" | "anchor_address" },
   ): Promise<StoreApiResult<StoreWalletSessionChallengeDTO>> {
@@ -613,8 +580,6 @@ export class BrowserStoreApiClient implements StoreApiClient {
     return await this.realWrite<{ readonly accountId: string; readonly addresses: { readonly address: string; readonly status: "active" | "revoked"; readonly anchoredAt: string }[] }>("POST", pathname, { address });
   }
 
-  // ---- 装修与委托 ----
-
   async saveDecoration(planId: string, decoration: StoreDecorationDataView, note?: string): Promise<StoreApiResult<StoreDecorationView>> {
     const pathname = `/store/decoration/${encodeURIComponent(planId)}`;
     this.requireAnchoredSession(pathname);
@@ -651,16 +616,10 @@ export class BrowserStoreApiClient implements StoreApiClient {
     });
   }
 
-  // ---- 上架 ----
-
   async importListing(
     input: { readonly planId: string; readonly planHash?: string | undefined; readonly deploymentId?: string | undefined },
   ): Promise<StoreApiResult<{ readonly listing: StoreListingView; readonly anchorVerification: { readonly status: string; readonly checks: readonly { readonly id: string; readonly outcome: string }[] } }>> {
     const pathname = "/store/listings/import";
-    // 服务端口径（store-listings 路由）：导入是敏感写，运营方（store.listing.manage）
-    // 与 publisher（导入自己的秩序）两条路径都一律要求会话已锚定地址；
-    // "运营方或 plan publisher"的资源归属核验在服务层完成。本地镜像共同的
-    // 锚定前置门（双层防御），不再按"能力或锚定"放行未锚定的运营方会话。
     this.requireAnchoredSession(pathname);
     return await this.realWrite<{ readonly listing: StoreListingView; readonly anchorVerification: { readonly status: string; readonly checks: readonly { readonly id: string; readonly outcome: string }[] } }>("POST", pathname, input);
   }
@@ -674,7 +633,6 @@ export class BrowserStoreApiClient implements StoreApiClient {
 
   async reviewListing(listingId: string, decision: "approve" | "reject", note?: string): Promise<StoreApiResult<{ readonly listing: StoreListingView }>> {
     const pathname = `/store/listings/${encodeURIComponent(listingId)}/review`;
-    // 服务端口径：审核/下架/重新上架是敏感治理写，能力之外还要求会话已锚定。
     this.requireCapability(pathname, "store.listing.manage");
     this.requireAnchoredSession(pathname);
     return await this.realWrite<{ readonly listing: StoreListingView }>("POST", pathname, {
@@ -698,8 +656,6 @@ export class BrowserStoreApiClient implements StoreApiClient {
     this.requireAnchoredSession(pathname);
     return await this.realWrite<{ readonly listing: StoreListingView }>("POST", pathname, {});
   }
-
-  // ---- 加入闭环 ----
 
   async submitJoinApplication(input: StoreJoinApplicationSubmitInput): Promise<StoreApiResult<StoreJoinApplicationDetailView>> {
     const pathname = "/store/join-applications";
@@ -794,8 +750,6 @@ export class BrowserStoreApiClient implements StoreApiClient {
     body?: unknown,
   ): Promise<TResponse> {
     const baseUrl = this.requireBaseUrl(pathname);
-    // 每请求现读：登录落盘、退出清除与过期弃置都在下一次请求即刻生效，
-    // 不依赖 client 重建，也不把必然失效的凭据留给服务端 401 兜底。
     const token = this.#sessionToken?.();
     return await fetchStoreJson<TResponse>(baseUrl, pathname, {
       method,
@@ -826,12 +780,6 @@ export class BrowserStoreApiClient implements StoreApiClient {
     }
   }
 
-  /**
-   * 锚定会话前置门：服务端对这些写路径按"会话锚定地址 + 资源归属
-   * （publisher/受托成员/申请人本人）"授权，而不是按运营方能力授权；
-   * 本地镜像同一口径，未锚定会话直接 403（双层防御），不误伤
-   * 只有锚定身份、没有运营方能力的 publisher 会话。
-   */
   private requireAnchoredSession(pathname: string): void {
     if (!this.access.anchoredAddress) {
       throw new StoreApiError(pathname, 403, "forbidden", {
@@ -879,9 +827,6 @@ async function fetchStoreJson<TResponse>(
       method: init.method,
       headers,
       ...(body !== undefined ? { body } : {}),
-      // 禁止跟随重定向（executor-kit 同款）：这些请求携带钱包会话头
-      // （x-uvp-store-session），3xx 会让凭据头随重定向重放到 Location
-      // 指向的任意主机。
       redirect: "manual",
       signal: AbortSignal.timeout(STORE_FETCH_TIMEOUT_MS),
     });
@@ -895,8 +840,6 @@ async function fetchStoreJson<TResponse>(
     );
   }
 
-  // manual 模式下浏览器的跨源重定向是 status 0 的 opaqueredirect：与所有
-  // 3xx 一样按错误处理，凭据头绝不重放。
   if (response.status === 0 || (response.status >= 300 && response.status < 400)) {
     throw new StoreApiError(pathname, response.status, `redirect_refused:${response.status}`, {
       code: "redirect_refused",
@@ -913,7 +856,6 @@ async function fetchStoreJson<TResponse>(
   try {
     return (await response.json()) as TResponse;
   } catch (error) {
-    // 2xx 但不是 JSON：归入统一错误链，而不是抛裸 SyntaxError。
     throw new StoreApiError(
       pathname,
       0,
@@ -947,11 +889,6 @@ async function readStoreError(
   }
 }
 
-/**
- * 试拼会话响应校验：sessionId/status/createdBy 是服务端恒产出字段
- * （createdBy 为资源租户归属断言的比对基准），缺失/非法即 fail-closed，
- * 不做盲转型放行。
- */
 export function parseStoreDockingSession(
   response: unknown,
   pathname = "/store/docking-sessions",
@@ -1051,7 +988,6 @@ function storeSupplierFromResponse(value: unknown, pathname: string): StoreSuppl
     stringValue(record.supplierSubjectId) ??
     stringValue(record.subjectId);
   if (!supplierId) {
-    // fail-closed：不伪造 "unknown-supplier" 兜底身份。
     throw new StoreApiError(pathname, 0, "store_supplier_response_invalid");
   }
   const supplierSubjectId =
@@ -1164,8 +1100,6 @@ function requiredStoreString(value: unknown, pathname: string, code: string): st
 }
 
 function requiredStoreAddress(value: unknown, pathname: string, code: string): string {
-  // 服务端类型是 Address（20 字节 hex）：与 prepare-trigger 签名域地址
-  // 同一判法，非地址字符串不能充当租户归属比对基准。
   if (typeof value !== "string" || !/^0x[0-9a-fA-F]{40}$/u.test(value)) {
     throw new StoreApiError(pathname, 0, code, { code });
   }
@@ -1345,8 +1279,6 @@ function sessionFromResponse(
   fallback: StoreAccessState,
 ): StoreSessionDTO {
   const record = isRecord(response) ? response : {};
-  // 服务端固定返回 { session: {...} }（store-console.ts）；
-  // 畸形响应一律按缺省（未登录/环境配置）处理。
   const session: Record<string, unknown> = isRecord(record.session)
     ? record.session
     : {};
@@ -1444,7 +1376,6 @@ function normalizeStoreAccessLevel(
 }
 
 function resolveStoreApiBaseUrl(): string | undefined {
-  // node 测试环境没有 import.meta.env（同文件超时常量同款防御性读取）。
   return resolveFrontendApiBaseUrl((import.meta.env ?? {})?.VITE_UVP_CHAIN_SERVICES_URL);
 }
 

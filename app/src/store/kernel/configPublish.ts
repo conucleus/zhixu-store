@@ -1,11 +1,10 @@
-// V3 配置发布：Store 产出「V3 config version + 已编译 plan 的 planId/planHash」；
-// 本地校验 bundle 身份与 plan 成对，校验失败与上游失败分开返回，不伪造成功。
+/* 配置发布：config version 与已编译 plan 成对登记，校验失败不伪造成功。 */
 
-export const ORDER_CONFIG_V3_SCHEMA = "uvp.order-config/v3";
+export const ORDER_CONFIG_SCHEMA = "uvp.order-config/v3";
 
 const BYTES32 = /^0x[0-9a-fA-F]{64}$/u;
 
-export interface V3ConfigPublishInput {
+export interface ConfigPublishInput {
   readonly configId: string;
   readonly version: string;
   readonly planId: string;
@@ -14,7 +13,7 @@ export interface V3ConfigPublishInput {
   readonly status?: "draft" | "published" | undefined;
 }
 
-export interface V3ConfigPublishResult {
+export interface ConfigPublishResult {
   readonly configId: string;
   readonly version: string;
   readonly status: string;
@@ -23,20 +22,19 @@ export interface V3ConfigPublishResult {
   readonly planHash?: string;
 }
 
-export type V3ConfigPublishOutcome =
-  | { readonly kind: "published"; readonly value: V3ConfigPublishResult }
+export type ConfigPublishOutcome =
+  | { readonly kind: "published"; readonly value: ConfigPublishResult }
   | { readonly kind: "invalid"; readonly code: string; readonly message: string }
   | { readonly kind: "failed"; readonly status: number; readonly code?: string; readonly message: string };
 
-export interface V3ConfigPublishPorts {
+export interface ConfigPublishPorts {
   readonly baseUrl: string;
   readonly sessionToken?: string | undefined;
   readonly fetcher?: typeof fetch | undefined;
   readonly timeoutMs?: number | undefined;
 }
 
-/** 发布前本地校验：v0 产品字段、schema/configId/version、plan 成对与格式。 */
-export function validateV3ConfigPublish(input: V3ConfigPublishInput): { readonly ok: true } | { readonly ok: false; readonly code: string; readonly message: string } {
+export function validateConfigPublish(input: ConfigPublishInput): { readonly ok: true } | { readonly ok: false; readonly code: string; readonly message: string } {
   if (input.configId.trim().length === 0) {
     return { ok: false, code: "invalid_config_id", message: "configId 不能为空" };
   }
@@ -46,8 +44,8 @@ export function validateV3ConfigPublish(input: V3ConfigPublishInput): { readonly
   if (!BYTES32.test(input.planId) || !BYTES32.test(input.planHash)) {
     return { ok: false, code: "invalid_plan", message: "planId 与 planHash 必须是 0x 32 字节摘要（成对登记）" };
   }
-  if (input.bundle.schema !== ORDER_CONFIG_V3_SCHEMA) {
-    return { ok: false, code: "invalid_schema", message: `bundle.schema 必须是 ${ORDER_CONFIG_V3_SCHEMA}` };
+  if (input.bundle.schema !== ORDER_CONFIG_SCHEMA) {
+    return { ok: false, code: "invalid_schema", message: `bundle.schema 必须是 ${ORDER_CONFIG_SCHEMA}` };
   }
   if (input.bundle.configId !== input.configId || input.bundle.version !== input.version) {
     return { ok: false, code: "config_identity_mismatch", message: "bundle 的 configId/version 必须与发布参数一致" };
@@ -58,12 +56,11 @@ export function validateV3ConfigPublish(input: V3ConfigPublishInput): { readonly
   return { ok: true };
 }
 
-/** 发布 V3 config version（POST /product/v3/configs），身份只经 x-uvp-store-session。 */
-export async function publishV3Config(
-  input: V3ConfigPublishInput,
-  ports: V3ConfigPublishPorts
-): Promise<V3ConfigPublishOutcome> {
-  const checked = validateV3ConfigPublish(input);
+export async function publishConfig(
+  input: ConfigPublishInput,
+  ports: ConfigPublishPorts
+): Promise<ConfigPublishOutcome> {
+  const checked = validateConfigPublish(input);
   if (!checked.ok) {
     return { kind: "invalid", code: checked.code, message: checked.message };
   }

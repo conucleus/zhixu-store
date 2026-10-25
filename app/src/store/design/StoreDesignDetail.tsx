@@ -211,7 +211,7 @@ export function StoreDesignDetail({
           <div>
             <span className="store-section-kicker"><Puzzle /> 履约插槽</span>
             <h2>责任位置与凭证要求</h2>
-            <p>每个责任位置的业务身份与所需凭证；V3 配置用 slots/senders 与 fileResources 句柄表达。</p>
+            <p>每个责任位置的业务身份与所需凭证；配置用 slots/senders 与 fileResources 句柄表达。</p>
           </div>
         </div>
 

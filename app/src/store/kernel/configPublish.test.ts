@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { publishV3Config, validateV3ConfigPublish } from "./configPublish";
+import { publishConfig, validateConfigPublish } from "./configPublish";
 
 const PLAN_ID = `0x${"0a".repeat(32)}`;
 const PLAN_HASH = `0x${"0b".repeat(32)}`;
@@ -27,14 +27,14 @@ function input(overrides: Record<string, unknown> = {}) {
   };
 }
 
-describe("validateV3ConfigPublish", () => {
-  it("accepts a V3 bundle with a paired published plan", () => {
-    assert.deepEqual(validateV3ConfigPublish(input()), { ok: true });
+describe("validateConfigPublish", () => {
+  it("accepts a bundle with a paired published plan", () => {
+    assert.deepEqual(validateConfigPublish(input()), { ok: true });
   });
 
 
   it("requires planId and planHash together", () => {
-    const missing = validateV3ConfigPublish(input({ planHash: "not-a-hash" }));
+    const missing = validateConfigPublish(input({ planHash: "not-a-hash" }));
     assert.equal(missing.ok, false);
     if (!missing.ok) {
       assert.equal(missing.code, "invalid_plan");
@@ -42,10 +42,10 @@ describe("validateV3ConfigPublish", () => {
   });
 });
 
-describe("publishV3Config", () => {
-  it("posts the V3 config with the store session and returns the server metadata", async () => {
+describe("publishConfig", () => {
+  it("posts the config with the store session and returns the server metadata", async () => {
     const calls: { url: string; body?: unknown; session?: string | undefined }[] = [];
-    const outcome = await publishV3Config(input(), {
+    const outcome = await publishConfig(input(), {
       baseUrl: "https://product.test/",
       sessionToken: "session-1",
       fetcher: (async (url: string, init?: RequestInit) => {
@@ -74,7 +74,7 @@ describe("publishV3Config", () => {
   });
 
   it("surfaces server error codes instead of a fake success", async () => {
-    const outcome = await publishV3Config(input(), {
+    const outcome = await publishConfig(input(), {
       baseUrl: "https://product.test",
       fetcher: (async () => new Response(
         JSON.stringify({ error: "config_publish_forbidden", message: "wallet is not a publisher" }),

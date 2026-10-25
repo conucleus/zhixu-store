@@ -1,8 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { STUB_API_BASE } from "./stub-api";
 
-// 写路径用例要求独立 profile 的 dev server（VITE_UVP_STORE_ACCESS_LEVEL=store_operator）；
-// 常规 fixture 跑（anonymous_read，403 是写失败边界）时整组跳过。
 test.skip(
   process.env.UVP_PRODUCT_BROWSER_E2E_STORE_ACCESS_LEVEL !== "store_operator",
   "store docking write e2e requires UVP_PRODUCT_BROWSER_E2E_STORE_ACCESS_LEVEL=store_operator (pnpm run test:e2e:docking)"
@@ -48,13 +46,13 @@ const targetInterfaces = [
     interfaceName: "fulfillment_service",
     orderModes: ["new"],
     inputs: [{ portName: "execute", label: "执行入口", hook: "fulfillment.intake#EXECUTE" }],
-    outputs: [{ portName: "completed", label: "完成", signal: "seller::fulfillment.delivery.cmp" }]
+    outputs: [{ portName: "completed", label: "完成", signal: "supplier::fulfillment.completion.cmp" }]
   },
   {
     interfaceName: "production_evidence",
     orderModes: ["new", "existing"],
     inputs: [{ portName: "amend", label: "补证", hook: "fulfillment.review#AMEND" }],
-    outputs: [{ portName: "scrap_declared", label: "报废申报", signal: "seller::fulfillment.review.scrap" }]
+    outputs: [{ portName: "scrap_declared", label: "报废申报", signal: "supplier::fulfillment.review.scrap" }]
   }
 ] as const;
 
@@ -126,8 +124,6 @@ test.describe("Store docking sandbox target selection", () => {
             session: {
               sessionId: "dock_test-0001",
               status: "draft",
-              // 服务端创建响应恒携带的租户归属基准（会话锚定地址，
-              // 20 字节 hex；桩值须与响应门同口径）。
               createdBy: "0xd0c0000000000000000000000000000000000001",
               source: {
                 zhixuId: source.zhixuId,
@@ -163,22 +159,18 @@ test.describe("Store docking sandbox target selection", () => {
 
     await page.goto("/store");
     await expect(page.getByTestId("store-app")).toBeVisible();
-    // 收敛后试拼沙箱不再是顶层导航，而是设计块里的工具入口。
     await page.getByRole("tab", { name: "设计" }).click();
     await expect(page.getByTestId("store-design-page")).toBeVisible();
     await page.getByTestId("store-open-docking-button").click();
     await expect(page.getByTestId("store-docking-page")).toBeVisible();
 
-    // 未选择目标时不能创建：不再静默取“第一个非来源秩序”
     await expect(page.getByTestId("store-create-docking-session-button")).toBeDisabled();
     await expect(page.getByText("尚未选择")).toBeVisible();
 
-    // 选择与来源相同的秩序：显式拒绝，不发请求
     await page.getByTestId("store-docking-target-select").selectOption(storeZhixuA.zhixuId);
     await expect(page.getByTestId("store-docking-same-target-warning")).toBeVisible();
     await expect(page.getByTestId("store-create-docking-session-button")).toBeDisabled();
 
-    // 选择不同的目标秩序：以默认接口（首个）创建会话
     await page.getByTestId("store-docking-target-select").selectOption(storeZhixuB.zhixuId);
     await expect(page.getByTestId("store-docking-same-target-warning")).toHaveCount(0);
     await page.getByTestId("store-create-docking-session-button").click();
@@ -187,7 +179,6 @@ test.describe("Store docking sandbox target selection", () => {
     await expect(page.getByTestId("store-docking-mode-select")).toHaveValue("new");
     expect(dockingRequests).toEqual([{ sourceZhixuId: storeZhixuA.zhixuId, targetZhixuId: storeZhixuB.zhixuId }]);
 
-    // 切换到双模式接口：会话以显式接口参数重建，模式跟随接口开放集
     await page.getByTestId("store-docking-interface-select").selectOption("production_evidence");
     await expect(page.getByTestId("store-docking-mode-select")).toHaveValue("new");
     expect(dockingRequests).toEqual([
@@ -195,7 +186,6 @@ test.describe("Store docking sandbox target selection", () => {
       { sourceZhixuId: storeZhixuA.zhixuId, targetZhixuId: storeZhixuB.zhixuId, targetInterfaceName: "production_evidence", orderMode: "new" }
     ]);
 
-    // 切换下单模式：显式 orderMode 重建
     await page.getByTestId("store-docking-mode-select").selectOption("existing");
     expect(dockingRequests).toEqual([
       { sourceZhixuId: storeZhixuA.zhixuId, targetZhixuId: storeZhixuB.zhixuId },
@@ -241,14 +231,13 @@ test.describe("Store docking sandbox target selection", () => {
 
     await page.goto("/store");
     await expect(page.getByTestId("store-app")).toBeVisible();
-    // 收敛后试拼沙箱不再是顶层导航，而是设计块里的工具入口。
     await page.getByRole("tab", { name: "设计" }).click();
     await expect(page.getByTestId("store-design-page")).toBeVisible();
     await page.getByTestId("store-open-docking-button").click();
     await expect(page.getByTestId("store-docking-page")).toBeVisible();
 
     const options = page.getByTestId("store-docking-target-select").locator("option");
-    await expect(options).toHaveCount(2); // 占位项 + 唯一秩序
+    await expect(options).toHaveCount(2);
     await page.getByTestId("store-docking-target-select").selectOption(storeZhixuA.zhixuId);
     await expect(page.getByTestId("store-docking-same-target-warning")).toBeVisible();
     await expect(page.getByTestId("store-create-docking-session-button")).toBeDisabled();

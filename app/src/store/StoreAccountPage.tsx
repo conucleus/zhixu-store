@@ -12,10 +12,7 @@ type AddressesState =
   | { readonly status: "ready"; readonly accountId: string; readonly addresses: readonly { readonly address: string; readonly status: "active" | "revoked"; readonly anchoredAt: string }[] }
   | { readonly status: "error"; readonly message: string };
 
-/**
- * 账号页：钱包登录（SIWE 式签名证明）+ 地址管理。
- * 一个账号可关联多个地址（凝结核团队成员）；当前会话锚定的地址不可撤销。
- */
+/* 账号页：钱包登录 + 地址管理；一个账号可关联多个地址，锚定地址不可撤销。 */
 export function StoreAccountPage({
   access,
   api,
@@ -24,7 +21,6 @@ export function StoreAccountPage({
 }: {
   readonly access: StoreAccessState;
   readonly api: StoreApiClient;
-  /** 新会话（token + 服务端声明的过期时间）：登录路径必带两者。 */
   readonly onSessionEstablished: (session: { readonly token: string; readonly expiresAt: string }) => void;
   readonly onSessionCleared: () => void;
 }) {
@@ -79,7 +75,6 @@ export function StoreAccountPage({
       await api.authLogout();
       setMessage("已退出会话");
     } catch (error) {
-      // 服务端撤销失败也按退出处理：本地 token 不保留（与顶栏口径一致）。
       setMessage(`已退出本地会话（服务端撤销失败：${readableStoreError(error, "退出失败")}）`);
     } finally {
       onSessionCleared();

@@ -1,7 +1,4 @@
-/**
- * 会话配对编排：challenge → 钱包 personal_sign → verify → token。
- * 签名消息由服务端下发并明示"只建立会话，不授权任何链上动作"。
- */
+/* 会话配对编排（challenge → 钱包签名 → verify → token），单源为 store/api.ts 的客户端。 */
 import type { StoreApiClient } from "./api";
 import { personalSignMessage, requestStoreWalletAddress } from "./wallet";
 import type { StoreWalletSessionVerifyResult } from "./types";
@@ -11,10 +8,6 @@ export interface StoreLoginResult {
   readonly address: string;
 }
 
-/**
- * 登录：挑战必须发给"将要签名的地址"，因此先取钱包当前活动账户，
- * 再取挑战并签名（挑战一次性、带 TTL）。
- */
 export async function loginStoreSessionWithWallet(
   api: StoreApiClient,
 ): Promise<StoreLoginResult> {
@@ -22,20 +15,12 @@ export async function loginStoreSessionWithWallet(
   const challenge = await api.authChallenge({ address, intent: "login" });
   const signature = await personalSignMessage(address, challenge.data.message);
   const verify = await api.authVerify({ nonce: challenge.data.nonce, signature });
-  // 会话过期时间是本地弃置 token 的依据；服务端未声明即视为畸形响应，
-  // 不得把无过期口径的 token 永久落进 localStorage。
   if (!verify.data.session?.expiresAt) {
     throw new Error("会话响应缺少过期时间，已放弃本次登录");
   }
   return { verify: verify.data, address };
 }
 
-/**
- * 为当前账号锚定另一个地址：持有会话 token 的用户请求 anchor_address
- * 挑战，由钱包当前活动地址签名（切换到团队成员地址后操作）。
- * 响应虽新铸了 token，调用侧有意不采用：会话保持登录时锚定的地址，
- * 要以新地址操作需显式重新登录，不静默换锚。
- */
 export async function anchorAdditionalWalletToAccount(
   api: StoreApiClient,
 ): Promise<StoreWalletSessionVerifyResult> {

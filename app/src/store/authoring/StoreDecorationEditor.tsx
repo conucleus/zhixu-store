@@ -7,14 +7,7 @@ import type {
   StoreDecorationView
 } from "../types";
 
-/**
- * 装修编辑器（详情页侧栏抽屉）：
- * - 只有 planPublisher（或受托成员）能保存——服务端强制，前端只读权限视图做展示。
- * - theme 为纯展示字段；任务级证据要求由 V3 配置 fileResources 句柄表达
- *   validateTaskEvidenceSpec 同源规则），永不编码业务预期。
- * - 版本 append-only：每次保存产生新版本，可回滚到历史版本展示。
- * - 委托表：publisher 本人才可增删团队成员地址（只传 Store 侧操作权）。
- */
+/* 装修编辑器侧栏抽屉：theme 纯展示、版本 append-only、publisher 委托表；写权限单源在服务端。 */
 export function StoreDecorationEditor({
   access,
   api,
@@ -31,14 +24,10 @@ export function StoreDecorationEditor({
   readonly decoration: StoreDecorationView | undefined;
   readonly viewerIsPublisher: boolean;
   readonly viewerIsDelegate: boolean;
-  /** 服务端权限视图声明的 planPublisher 地址；委托授予必须以它为 publisher。 */
   readonly publisherAddress?: string | undefined;
   readonly onChanged: () => void;
 }) {
-  // publisher 与受托成员都可写装修；委托只传 Store 侧操作权。
   const canWrite = (viewerIsPublisher || viewerIsDelegate) && Boolean(access.anchoredAddress);
-  // 委托面板只对 publisher 本人可见：受托成员以自己锚定地址发起授予，
-  // 等于冒充 publisher 增发委托，服务端角色必须与面板渲染角色一致。
   const canManageDelegations = viewerIsPublisher && Boolean(access.anchoredAddress);
   const current = decoration?.current;
   const [open, setOpen] = useState(false);
@@ -68,11 +57,6 @@ export function StoreDecorationEditor({
     }
   }
 
-  /**
-   * 委托授予的 publisher 一律取服务端权限视图声明的 planPublisher；
-   * viewerIsPublisher 已保证会话锚定地址即 publisher，字段缺失时才用
-   * 锚定地址兜底——两种来源在"本人就是 publisher"的前提下等价。
-   */
   function delegationPublisher(): string {
     return publisherAddress ?? access.anchoredAddress ?? "";
   }

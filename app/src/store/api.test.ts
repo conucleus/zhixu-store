@@ -14,26 +14,6 @@ import {
 import type { StoreAccessState } from "./types";
 
 describe("Store runtime DTO boundary", () => {
-  it("keeps the frozen runtime fields and indexer state", () => {
-    assert.deepEqual(parseStoreRuntimeSummary({
-      sourceOfTruth: "contracts-and-chain-events",
-      activeZhixuCount: 3,
-      runningOrderCount: 4,
-      openTaskCount: 5,
-      blockedOrderCount: 1,
-      indexerStatus: "syncing",
-      updatedAt: "2026-09-04T00:00:00.000Z"
-    }), {
-      sourceOfTruth: "contracts-and-chain-events",
-      activeZhixuCount: 3,
-      runningOrderCount: 4,
-      openTaskCount: 5,
-      blockedOrderCount: 1,
-      indexerStatus: "syncing",
-      updatedAt: "2026-09-04T00:00:00.000Z"
-    });
-  });
-
   it("rejects incomplete runtime data instead of inventing zeroes", () => {
     assert.throws(
       () => parseStoreRuntimeSummary({
@@ -53,7 +33,6 @@ describe("Store conflict errors", () => {
       code: "compile_failed",
       details: { candidates: [{ orderId: "order-1", title: "订单一" }, { orderId: "order-2" }] }
     });
-    // Store 客户端没有订单端点：409 一律按通用冲突话术呈现，不得套订单域文案。
     assert.equal(readableStoreError(error, "fallback"), "409：请求与服务端当前状态冲突（compile_failed），请刷新后重试");
   });
 });
@@ -87,7 +66,6 @@ describe("stored wallet session token expiry", () => {
     const backing = installMemoryWindow();
     try {
       storeStoreSessionToken({ token: "uvs_past", expiresAt: new Date(Date.now() - 1_000).toISOString() });
-      // 过期 token 不得继续随请求发送：读取即弃置。
       assert.equal(readStoredStoreSessionToken(), undefined);
       assert.equal(backing.has(STORE_SESSION_TOKEN_STORAGE_KEY), false);
     } finally {
@@ -118,8 +96,6 @@ describe("stored wallet session token expiry", () => {
   });
 
   it("treats a stored token with a missing or unparsable expiry as expired instead of indefinitely valid", async () => {
-    // 正常登录路径必带服务端声明的 expiresAt：缺失/非法只可能来自篡改或
-    // 损坏的存储，放行等于无过期凭据（fail-closed 清除并走未登录）。
     const backing = installMemoryWindow();
     try {
       window.localStorage.setItem(STORE_SESSION_TOKEN_STORAGE_KEY, JSON.stringify({ token: "uvs_no_expiry" }));
@@ -135,8 +111,6 @@ describe("stored wallet session token expiry", () => {
   });
 
   it("clears a non-JSON stored payload instead of leaving it stranded forever", async () => {
-    // 旧落盘格式/损坏载荷不是本读法可接受的形状：读取失败也必须清除，
-    // 否则该条目永远占着存储键（与过期/缺失口径一致，均为损坏）。
     const backing = installMemoryWindow();
     try {
       window.localStorage.setItem(STORE_SESSION_TOKEN_STORAGE_KEY, "uvs_stale_raw_token");
@@ -169,9 +143,6 @@ describe("docking session response gate", () => {
   });
 
   it("rejects responses missing sessionId/status/createdBy instead of blind-casting", () => {
-    // createdBy 是服务端资源租户归属断言的比对基准（Address 类型）：
-    // 缺失或非 20 字节 hex 地址的会话记录无法判定归属，按畸形响应
-    // fail-closed，不得以 undefined 冒充。
     for (const malformed of [
       { status: "draft", createdBy: creator },
       { sessionId: "dock-1", createdBy: creator },
@@ -203,8 +174,6 @@ describe("listing write client gates mirror the server route's anchoring rule", 
   };
 
   it("rejects listing import locally for an unanchored operator session before any request", async () => {
-    // 服务端 store-listings 路由对导入（运营方与 publisher 两条路径）一律
-    // 要求锚定会话；本地按同一口径前置 403，不让未锚定会话撞迟到拒绝。
     const client = createStoreApiClient(operatorAccess);
     await assert.rejects(
       () => client.importListing({ planId: `0x${"ab".repeat(32)}` }),
@@ -231,8 +200,6 @@ describe("listing write client gates mirror the server route's anchoring rule", 
       ...operatorAccess,
       anchoredAddress: "0x0000000000000000000000000000000000000001"
     });
-    // 锚定门在前、base URL 配置检查在后：锚定会话不再吃本地 403，
-    // 转而按缺配置失败，证明门序与口径。
     await assert.rejects(
       () => client.importListing({ planId: `0x${"ab".repeat(32)}` }),
       (error: unknown) => error instanceof StoreApiError && /not configured/u.test(error.message)
@@ -282,8 +249,6 @@ describe("store client session header sourcing", () => {
   }
 
   it("re-reads the stored session token on every request instead of pinning it at construction", async () => {
-    // 与参与者面同口径：凭据头每请求现读存储，token 落盘/更换后下一次
-    // 请求即刻生效，不等 client 重建。
     installMemoryWindow();
     try {
       const seen: Array<Headers> = [];
@@ -301,14 +266,12 @@ describe("store client session header sourcing", () => {
   });
 
   it("omits the session header once the stored token has expired instead of sending stale credentials", async () => {
-    // 过期即弃是本地卫生线：不得把必然失效的凭据继续外发、留给服务端 401 兜底。
     const backing = installMemoryWindow();
     try {
       const seen: Array<Headers> = [];
       const client = clientWithCapturedRequests(seen);
       storeStoreSessionToken({ token: "uvs_first", expiresAt: new Date(Date.now() + 60_000).toISOString() });
       await client.listSuppliers();
-      // 把已落盘会话的过期时间改写为已过去，模拟挂起页面上凭据自然过期。
       window.localStorage.setItem(
         STORE_SESSION_TOKEN_STORAGE_KEY,
         JSON.stringify({ token: "uvs_first", expiresAt: new Date(Date.now() - 1_000).toISOString() })

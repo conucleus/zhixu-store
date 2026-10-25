@@ -1,9 +1,4 @@
-/**
- * Store 侧钱包连接：仅用于"证明控制地址"的会话签名
- * （eth_requestAccounts + eth_personalSign）。与参与者面的 EIP-712 交易签名
- * （uvp-order-app `src/wallet`）互不替代——Store 会话签名永远
- * 不授权链上动作（消息文本明示这一点）。
- */
+/* Store 侧钱包连接：仅做会话签名，不授权任何链上动作。 */
 
 export class StoreWalletError extends Error {
   constructor(message: string) {

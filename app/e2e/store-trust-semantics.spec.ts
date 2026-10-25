@@ -1,12 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { STUB_API_BASE } from "./stub-api";
 
-/**
- * 运营块的信任语义（fixture 全桩）：
- * 投影未观测到的指标显示"未知"，绝不折算为 0；索引进度降级要显式暴露。
- * 收敛后这些事实在「运营」块呈现（原检索页摘要条 + 运行态页已删除）。
- */
-
 const storeRow = {
   zhixuId: "store-generic-1",
   title: "通用秩序",
@@ -82,7 +76,6 @@ test("operations block renders unknown metrics without converting them to zero",
   await page.getByRole("tab", { name: "运营" }).click();
   await expect(page.getByTestId("store-operations-page")).toBeVisible();
 
-  // 投影未观测到 → "未知"，不是 0 单。
   const runningOrders = page.locator('.store-summary-strip .summary-item').filter({ hasText: "运行订单" });
   await expect(runningOrders).toContainText("未知");
   await expect(runningOrders).not.toContainText("0 单");

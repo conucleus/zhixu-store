@@ -56,7 +56,6 @@ export interface StoreAccessState {
   readonly canWrite: boolean;
   readonly canAdmin: boolean;
   readonly headers: Readonly<Record<string, string>>;
-  /** 会话已证明控制的钱包地址（未锚定为 undefined）。 */
   readonly anchoredAddress?: string | undefined;
   readonly anchorSource?: "wallet_session" | "dev_header" | undefined;
 }
@@ -68,7 +67,6 @@ export interface StoreSessionDTO {
   readonly roles: readonly StoreRole[];
   readonly capabilities: readonly StoreCapability[];
   readonly authMode: StoreAuthMode;
-  /** 钱包会话叠加字段。 */
   readonly anchoredAddress?: string | undefined;
   readonly anchorSource?: string | undefined;
   readonly accountId?: string | undefined;
@@ -128,9 +126,7 @@ export interface StoreCompilePreviewDTO {
 export interface StoreZhixuDraftDTO {
   readonly draftId: string;
   readonly status: StoreZhixuDraftStatus;
-  /** 定义派生身份（编译产物 zhixuId）。 */
   readonly zhixuId?: string;
-  /** 显示名口径：uid 去 zx- 前缀后取前 8 hex。 */
   readonly zhixuDisplay?: string;
   readonly title: string;
   readonly maintainer: string;
@@ -198,20 +194,15 @@ export interface StoreSupplierMutationResultDTO {
   readonly governance?: unknown;
 }
 
-/** Frozen Store runtime DTO; this consumer must not rename or drop fields. */
 export type StoreRuntimeSummaryDTO = FrozenStoreRuntimeSummaryDTO;
 
-/** dock 下单模式（{new, existing}）。 */
 export type StoreDockOrderMode = "new" | "existing";
-/** 草稿映射行方向：input=本地通道→接口输入端口，output=本地信号→接口输出端口。 */
 export type StoreDockBindingKind = "input" | "output";
 
 export interface StoreDockingSessionCreateDTO {
   readonly sourceZhixuId: string;
   readonly targetZhixuId: string;
-  /** 目标具名接口；缺省取目标首个接口。 */
   readonly targetInterfaceName?: string;
-  /** 下单模式；缺省取所选接口的首个开放模式。 */
   readonly orderMode?: StoreDockOrderMode;
 }
 
@@ -229,13 +220,10 @@ export interface StoreDockingZhixuRefDTO {
 export interface StoreDockingInterfacePortDTO {
   readonly portName: string;
   readonly label: string;
-  /** input 端口的目标侧 hook 引用（<task>.<stage>#<channel>）。 */
   readonly hook?: string;
-  /** output 端口的目标侧 canonical signal。 */
   readonly signal?: string;
 }
 
-/** 目标定义发布的具名 dock 接口（试拼沙箱消费的 v2 接口形状）。 */
 export interface StoreDockingInterfaceDTO {
   readonly interfaceName: string;
   readonly orderModes: readonly StoreDockOrderMode[];
@@ -301,14 +289,9 @@ export interface StoreDockingValidationDTO {
 export interface StoreDockingSessionDTO {
   readonly sessionId: string;
   readonly status: StoreDockingSessionStatus;
-  /**
-   * 创建会话的锚定地址（资源租户）：服务端读写归属断言（非创建者不可
-   * 读写、管理员保留跨租户可见性）的比对基准，必填。
-   */
   readonly createdBy: string;
   readonly source: StoreDockingZhixuRefDTO;
   readonly target: StoreDockingZhixuRefDTO;
-  /** 目标定义当前发布的具名接口全集（供操作员切换试拼对象）。 */
   readonly interfaces: readonly StoreDockingInterfaceDTO[];
   readonly selectedInterfaceName: string;
   readonly orderMode: StoreDockOrderMode;
@@ -318,8 +301,6 @@ export interface StoreDockingSessionDTO {
   readonly createdAt: string;
   readonly updatedAt: string;
 }
-
-// ---- 会话配对 / 上架锚核验 / 装修权限 / 加入闭环 ----
 
 export interface StoreAccountAddressView {
   readonly address: string;

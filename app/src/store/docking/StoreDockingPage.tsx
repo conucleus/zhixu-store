@@ -14,7 +14,6 @@ type DockingState =
   | { readonly status: "ready"; readonly session: StoreDockingSessionDTO }
   | { readonly status: "error"; readonly message: string };
 
-/** 会话外的待切换选择：变更后以显式参数重建会话（沙箱会话即草稿）。 */
 interface InterfaceSelection {
   readonly targetInterfaceName: string;
   readonly orderMode: StoreDockOrderMode;
@@ -35,9 +34,6 @@ export function StoreDockingPage({
     () => zhixus.find((item) => item.zhixuId === initialSourceZhixuId) ?? zhixus[0],
     [initialSourceZhixuId, zhixus]
   );
-  // 目标秩序必须由操作员显式选择：不静默取“第一个非来源秩序”，
-  // 也不允许回落到来源秩序自身——自试拼无业务意义，服务端也会以
-  // self_docking_forbidden 拒绝。
   const [selectedTargetZhixuId, setSelectedTargetZhixuId] = useState("");
   const targetZhixu = zhixus.find((item) => item.zhixuId === selectedTargetZhixuId);
   const sameAsSource = Boolean(targetZhixu && sourceZhixu && targetZhixu.zhixuId === sourceZhixu.zhixuId);
@@ -80,7 +76,6 @@ export function StoreDockingPage({
     }
   }
 
-  /** 接口/模式切换即换试拼对象：以显式参数重建会话，旧会话保持草稿不被复用。 */
   function switchInterface(interfaceName: string): void {
     if (state.status !== "ready") {
       return;

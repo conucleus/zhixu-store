@@ -1,17 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { STUB_API_BASE } from "./stub-api";
 
-/**
- * Store 会话与链接入口 e2e（fixture 模式，全桩）——operator 契约：
- * - 钱包登录 → 会话锚定 → 账号页地址表；登出清 token。
- * - 链接块为 Store 可见秩序生成邀请/分享链接；入口只有链接，没有目录/检索/公开上架。
- * - 分享链接（?share=）与邀请链接（?join=）的目标页仍由本站承载，但不挂任何
- *   订单/待办动作：参与方履约面在 uvp-order-app。
- *
- * 收敛前的秩序检索 / 详情叠加层 / 锚核验面板 / participant 工作台已删除，
- * 相关断言随之移除；仍存在的 operator 能力（会话、账号、链接）保持覆盖。
- */
-
 const WALLET_ADDRESS = "0x19e7e376e7c213b7e7e7e46cc70a5dd086daff2a";
 const PLAN_ID = "0x0000000000000000000000000000000000000000000000000000000000000101";
 const ZHIXU_ID = "zx-3fa636e0229362fa4f6db3db37737a17";
@@ -47,8 +36,8 @@ const zhixuDetail = {
   metricsStatus: "reported",
   nextAction: "查看秩序资料",
   stages: [
-    { stageId: "stage-export", index: 0, title: "出口", description: "出口报关与放行", ownerRole: "supplier", evidence: [], status: "pending" },
-    { stageId: "stage-delivery", index: 1, title: "交付", description: "跨境运输", ownerRole: "supplier", evidence: [], status: "pending" }
+    { stageId: "stage-export", index: 0, title: "出口", description: "出口流程节点与放行", ownerRole: "supplier", evidence: [], status: "pending" },
+    { stageId: "stage-fulfillment", index: 1, title: "交付", description: "跨境履约", ownerRole: "supplier", evidence: [], status: "pending" }
   ],
   roleSlots: [{
     roleSlotId: "funds",
@@ -230,12 +219,10 @@ test("account page login persists the session token and logout clears it", async
   await expect(page.getByTestId("store-address-table")).toHaveCount(0);
 
   await page.getByTestId("store-login-button").click();
-  // 账号页登录持久化 token → 会话锚定 → 地址表出现。
   await expect(page.getByTestId("store-address-table")).toBeVisible({ timeout: 5_000 });
   await expect(page.getByTestId("store-anchored-chip")).toBeVisible();
   await expect(page.getByTestId("store-address-row")).toHaveCount(1);
 
-  // 账号页登出清除 token → 地址表消失、锚定徽标消失。
   await page.getByTestId("store-logout-button").click();
   await expect(page.getByTestId("store-address-table")).toHaveCount(0);
   await expect(page.getByTestId("store-anchored-chip")).toHaveCount(0);
@@ -255,7 +242,6 @@ test("link block generates invite and share links for Store-visible zhixus, with
   await expect(page.getByTestId("store-link-copy-invite")).toBeVisible();
   await expect(page.getByTestId("store-link-copy-share")).toBeVisible();
 
-  // 入场只有链接：链接块不提供目录、检索或公开上架动作。
   await expect(page.getByRole("button", { name: /公开上架/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /检索/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /目录/ })).toHaveCount(0);
@@ -270,7 +256,6 @@ test("share link entry renders a read-only reader page without order or task act
   await expect(page.getByRole("heading", { name: "这段协作按阶段推进" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "参与方与职责" })).toBeVisible();
 
-  // 读者页只读：没有订单/待办/提交动作，也没有 participant 工作台。
   await expect(page.getByTestId("participant-app-page")).toHaveCount(0);
   await expect(page.getByTestId("task-confirm-button")).toHaveCount(0);
   await expect(page.getByTestId("submit-confirm-button")).toHaveCount(0);
@@ -283,7 +268,6 @@ test("join link entry asks an unanchored viewer to log in before submitting a jo
 
   await expect(page.getByTestId("store-join-link-view")).toBeVisible();
   await expect(page.getByTestId("store-join-link-login")).toBeVisible();
-  // 未登录时不放开加入动作：申请入口只提示先登录，不出现提交按钮。
   await expect(page.getByTestId("store-join-entry")).toContainText("请先完成钱包登录后再提交");
   await expect(page.getByTestId("store-join-submit")).toHaveCount(0);
 });
