@@ -1,6 +1,8 @@
 # zhixu-store
 
-Store operator product boundary.
+Store operator product boundary; being narrowed to the `zhixu-registry` data
+layer (ARCHITECTURE.md Phase C). The registry is the target non-user-facing
+component; the Store console app remains temporarily while consumers migrate.
 
 This domain is for the nucleus/operator side of UVP: designing, organizing,
 maintaining, and running Zhixu orders through chain-backed Product DTOs.
@@ -10,7 +12,14 @@ in [STORE-CHARTER.md](./STORE-CHARTER.md). Agent orientation and debugging
 boundaries are in [AGENTS.md](./AGENTS.md). New features must be classified
 against the charter before implementation.
 
-- `app/`: current Store operator console frontend. Source layout is organized
+- `registry/`: `@uvp-eth/zhixu-registry` — permissionless data layer for
+  `ZhixuRecord` descriptor registration and wallet `IdentityClaim` records.
+  Library only (no UI/HTTP): EIP-712 `UVPZhixuRegistry/1`, signature check on
+  write, append-only Postgres store + migrations, opaque attestation refs. No
+  approval, status, curation, recommendation, or KYC fields. See
+  [registry/README.md](./registry/README.md).
+- `app/`: current Store operator console frontend (temporary; slated for
+  removal as Phase C completes). Source layout is organized
   by user task (`src/app`, `src/lib`, `src/store`, `src/styles`); `src/shared` is
   the frontend-shared submodule mount (single source for the chain track,
   consumed via `chain/`, `contracts/`, `domain/`). The participant workbench

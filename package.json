@@ -6,9 +6,10 @@
   "packageManager": "pnpm@9.15.0",
   "scripts": {
     "dev": "pnpm --filter @uvp-eth/zhixu-store-web dev",
-    "check": "pnpm --filter @uvp-eth/zhixu-store-web run typecheck",
-    "typecheck": "pnpm --filter @uvp-eth/zhixu-store-web run typecheck",
+    "check": "pnpm --filter @uvp-eth/zhixu-registry run typecheck && pnpm --filter @uvp-eth/zhixu-store-web run typecheck",
+    "typecheck": "pnpm --filter @uvp-eth/zhixu-registry run typecheck && pnpm --filter @uvp-eth/zhixu-store-web run typecheck",
     "test": "pnpm --filter @uvp-eth/zhixu-store-web run test:e2e",
+    "test:registry": "pnpm --filter @uvp-eth/zhixu-registry run test",
     "build": "pnpm --filter @uvp-eth/zhixu-store-web run build"
   }
 }
