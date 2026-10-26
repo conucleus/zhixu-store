@@ -6,8 +6,7 @@
   "license": "AGPL-3.0-only",
   "description": "Permissionless zhixu descriptor record and wallet identity claim registry data layer.",
   "exports": {
-    ".": "./src/index.ts",
-    "./eip712": "./src/eip712.ts"
+    ".": "./src/index.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -15,6 +14,7 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
+    "@uvp-eth/protocol-bindings": "workspace:*",
     "pg": "^8.20.0",
     "viem": "^2.21.58"
   },

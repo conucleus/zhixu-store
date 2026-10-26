@@ -19,30 +19,30 @@ permissionless、登记 ≠ 背书（no endorsement）；不做商店、审核�
 
 ## 包入口
 
-- `@uvp-eth/zhixu-registry`：根入口（Node/backend）。类型、EIP-712 单源、验签、
+- `@uvp-eth/zhixu-registry`：根入口（Node/backend）。类型、验签、
   `ZhixuRegistryStore` 接口、Postgres store 与 migrations。
-- `@uvp-eth/zhixu-registry/eip712`：EIP-712 domain/types 与
-  `zhixuRecordTypedData` / `identityClaimTypedData`；不加载 `pg`、Postgres 存储层或
-  HTTP/文件系统，供 client/apps 构造待签名消息。
+- EIP-712 domain/types 单源在 `@uvp-eth/protocol-bindings`
+  （`UVPZhixuRegistry/1`、`ZhixuRecord`/`IdentityClaim` 字段表与 type hash、
+  typed-data 构造与字段规范化）；registry 不再提供 `/eip712` 子路径，
+  client/apps 直接从 protocol-bindings 构造待签名消息。
 
 ```ts
-import { zhixuRecordTypedData } from "@uvp-eth/zhixu-registry/eip712";
+import { buildZhixuRecordTypedData } from "@uvp-eth/protocol-bindings";
 
-const typedData = zhixuRecordTypedData(fields);
+const typedData = buildZhixuRecordTypedData(fields);
 const signature = await account.signTypedData(typedData);
 ```
 
 ## 包内容
 
 - `src/types.ts`：`ZhixuRecord` / `IdentityClaim` 及写入输入 DTO。
-- `src/eip712.ts`：domain/类型/签名消息单源，并导出 `zhixuRecordTypedData` /
-  `identityClaimTypedData`；`./eip712` 子路径直接指向此模块。
+- `src/canonical.ts`：registry 输入/键规范化包装（字段规则单源在
+  protocol-bindings）与签名格式校验。
 - `src/verify.ts`：写时验签（失败抛 `RegistrySignatureError`）。
 - `src/store.ts`：`ZhixuRegistryStore` 接口；`register*` 是签名写入 API。
 - `src/postgres/store.ts`：Postgres 实现（注入 `pg.Pool`），INSERT 前验签。
 - `src/postgres/migrate.ts` + `migrations/`：按连接当前 `search_path` 应用 schema。
 - `tests/registry.test.ts`：注册/读取、非法签名、重复/不可变、permissionless。
-- `tests/exports.test.ts`：`./eip712` 子路径不加载 Postgres 层。
 
 ## 签名写入
 
@@ -62,14 +62,14 @@ import {
   PostgresZhixuRegistryStore,
   runRegistryMigrations
 } from "@uvp-eth/zhixu-registry";
-import { zhixuRecordTypedData } from "@uvp-eth/zhixu-registry/eip712";
+import { buildZhixuRecordTypedData } from "@uvp-eth/protocol-bindings";
 
 const pool = new Pool({ connectionString });
 await runRegistryMigrations(pool);
 const registry = new PostgresZhixuRegistryStore({ pool });
 
 const fields = { chainId, planId, planHash, descriptorUri, registeredBy: wallet };
-const signature = await account.signTypedData(zhixuRecordTypedData(fields));
+const signature = await account.signTypedData(buildZhixuRecordTypedData(fields));
 const record = await registry.registerZhixuRecord({ ...fields, signature });
 console.log(record.registeredBy, record.signature);
 ```

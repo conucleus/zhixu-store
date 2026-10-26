@@ -24,7 +24,8 @@ Registry 只登记两类记录：
 
 ## 包结构
 
-- `registry/src/`：`types` / `eip712` / `verify` / `store` / `postgres`；
+- `registry/src/`：`types` / `canonical` / `verify` / `store` / `postgres`
+  （EIP-712 domain/字段表/typed-data 单源在 `@uvp-eth/protocol-bindings`）；
 - `registry/migrations/`：Postgres schema；
 - `registry/tests/`：注册/读取、非法签名、重复/不可变、permissionless。
 

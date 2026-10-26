@@ -14,7 +14,10 @@ import {
   type IdentityClaimDraft,
   type ZhixuRecordFields
 } from "@uvp-eth/zhixu-registry";
-import { identityClaimTypedData, zhixuRecordTypedData } from "@uvp-eth/zhixu-registry/eip712";
+import {
+  buildIdentityClaimTypedData,
+  buildZhixuRecordTypedData
+} from "@uvp-eth/protocol-bindings";
 
 const testDatabaseUrl = process.env.ZHIXU_REGISTRY_POSTGRES_TEST_URL;
 if (!testDatabaseUrl) {
@@ -226,9 +229,9 @@ function randomPlanId(): Hex {
 }
 
 async function signZhixu(fields: ZhixuRecordFields, account = alice): Promise<Hex> {
-  return await account.signTypedData(zhixuRecordTypedData(fields));
+  return await account.signTypedData(buildZhixuRecordTypedData(fields));
 }
 
 async function signClaim(claim: IdentityClaimDraft, account = alice): Promise<Hex> {
-  return await account.signTypedData(identityClaimTypedData(claim));
+  return await account.signTypedData(buildIdentityClaimTypedData(claim));
 }

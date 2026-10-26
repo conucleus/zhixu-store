@@ -1,13 +1,16 @@
 // Write-side signature verification: a registration is accepted only from the wallet it names.
 
 import { verifyTypedData, type Hex } from "viem";
+import {
+  buildIdentityClaimTypedData,
+  buildZhixuRecordTypedData
+} from "@uvp-eth/protocol-bindings";
 import { requireSignature } from "./canonical.js";
-import { identityClaimTypedData, zhixuRecordTypedData } from "./eip712.js";
 import { RegistrySignatureError } from "./errors.js";
 import type { IdentityClaimDraft, ZhixuRecordFields } from "./types.js";
 
 export async function assertZhixuRecordSignature(fields: ZhixuRecordFields, signature: string): Promise<void> {
-  const typed = zhixuRecordTypedData(fields);
+  const typed = buildZhixuRecordTypedData(fields);
   const valid = await verifySignature({
     address: typed.message.registeredBy,
     domain: typed.domain,
@@ -22,7 +25,7 @@ export async function assertZhixuRecordSignature(fields: ZhixuRecordFields, sign
 }
 
 export async function assertIdentityClaimSignature(fields: IdentityClaimDraft, signature: string): Promise<void> {
-  const typed = identityClaimTypedData(fields);
+  const typed = buildIdentityClaimTypedData(fields);
   const valid = await verifySignature({
     address: typed.message.wallet,
     domain: typed.domain,

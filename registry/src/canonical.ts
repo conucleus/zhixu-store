@@ -1,6 +1,14 @@
-// Canonicalization for registry inputs: keys, self-described text, opaque refs, and signatures.
+// Registry input canonicalization: EIP-712 field/key normalization is single-sourced
+// in @uvp-eth/protocol-bindings; this module only translates registry error types
+// and keeps the registry-specific signature-format rule.
 
-import { isAddress, type Hex } from "viem";
+import type { Hex } from "viem";
+import {
+  normalizeIdentityClaimTypedDataInput,
+  normalizeIdentityClaimTypedDataKey,
+  normalizeZhixuRecordTypedDataInput,
+  normalizeZhixuRecordTypedDataKey
+} from "@uvp-eth/protocol-bindings";
 import { RegistrySignatureError, RegistryValidationError } from "./errors.js";
 import type {
   IdentityClaimDraft,
@@ -10,49 +18,22 @@ import type {
   ZhixuRecordKey
 } from "./types.js";
 
-const BYTES32_PATTERN = /^0x[0-9a-fA-F]{64}$/;
 const SIGNATURE_PATTERN = /^0x[0-9a-fA-F]{130}$/;
 
 export function normalizeZhixuRecordFields(fields: ZhixuRecordFields): ZhixuRecordFields {
-  const descriptorUri = optionalText(fields.descriptorUri, "descriptorUri");
-  const descriptorHash = optionalText(fields.descriptorHash, "descriptorHash");
-  const schemaHash = optionalText(fields.schemaHash, "schemaHash");
-  const version = optionalText(fields.version, "version");
-  return {
-    ...normalizeZhixuRecordKey(fields),
-    registeredBy: requireAddress(fields.registeredBy, "registeredBy"),
-    ...(descriptorUri !== undefined ? { descriptorUri } : {}),
-    ...(descriptorHash !== undefined ? { descriptorHash } : {}),
-    ...(schemaHash !== undefined ? { schemaHash } : {}),
-    ...(version !== undefined ? { version } : {})
-  };
+  return asRegistryValidation(() => normalizeZhixuRecordTypedDataInput(fields));
 }
 
 export function normalizeZhixuRecordKey(key: ZhixuRecordKey): ZhixuRecordKey {
-  return {
-    chainId: requireChainId(key.chainId),
-    planId: requireBytes32(key.planId, "planId"),
-    planHash: requireBytes32(key.planHash, "planHash")
-  };
+  return asRegistryValidation(() => normalizeZhixuRecordTypedDataKey(key));
 }
 
 export function normalizeIdentityClaimFields(fields: IdentityClaimDraft): IdentityClaimFields {
-  const descriptorUri = optionalText(fields.descriptorUri, "descriptorUri");
-  const descriptorHash = optionalText(fields.descriptorHash, "descriptorHash");
-  return {
-    ...normalizeIdentityClaimKey(fields),
-    ...(descriptorUri !== undefined ? { descriptorUri } : {}),
-    ...(descriptorHash !== undefined ? { descriptorHash } : {}),
-    attestationRefs: normalizeAttestationRefs(fields.attestationRefs)
-  };
+  return asRegistryValidation(() => normalizeIdentityClaimTypedDataInput(fields));
 }
 
 export function normalizeIdentityClaimKey(key: IdentityClaimKey): IdentityClaimKey {
-  return {
-    chainId: requireChainId(key.chainId),
-    wallet: requireAddress(key.wallet, "wallet"),
-    subject: requireSubject(key.subject)
-  };
+  return asRegistryValidation(() => normalizeIdentityClaimTypedDataKey(key));
 }
 
 export function requireSignature(value: string): Hex {
@@ -62,60 +43,13 @@ export function requireSignature(value: string): Hex {
   return value.toLowerCase() as Hex;
 }
 
-function requireChainId(value: number): number {
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new RegistryValidationError("chainId must be a positive safe integer");
-  }
-  return value;
-}
-
-function requireBytes32(value: string, field: string): Hex {
-  if (typeof value !== "string" || !BYTES32_PATTERN.test(value)) {
-    throw new RegistryValidationError(`${field} must be a 32-byte hex value`);
-  }
-  return value.toLowerCase() as Hex;
-}
-
-function requireAddress(value: string, field: string): string {
-  if (typeof value !== "string" || !isAddress(value, { strict: false })) {
-    throw new RegistryValidationError(`${field} must be an EVM address`);
-  }
-  return value.toLowerCase();
-}
-
-function requireSubject(value: string): string {
-  if (typeof value !== "string") {
-    throw new RegistryValidationError("subject must be a self-described string");
-  }
-  const subject = value.trim();
-  if (subject.length === 0) {
-    throw new RegistryValidationError("subject must be a non-empty self-described string");
-  }
-  return subject;
-}
-
-function optionalText(value: string | undefined, field: string): string | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== "string") {
-    throw new RegistryValidationError(`${field} must be a string when present`);
-  }
-  const text = value.trim();
-  return text.length > 0 ? text : undefined;
-}
-
-function normalizeAttestationRefs(value: readonly string[] | undefined): readonly string[] {
-  if (value === undefined) {
-    return [];
-  }
-  if (!Array.isArray(value)) {
-    throw new RegistryValidationError("attestationRefs must be an array of opaque refs");
-  }
-  return value.map((ref, index) => {
-    if (typeof ref !== "string" || ref.trim().length === 0) {
-      throw new RegistryValidationError(`attestationRefs[${index}] must be a non-empty opaque ref`);
+function asRegistryValidation<T>(run: () => T): T {
+  try {
+    return run();
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new RegistryValidationError(error.message);
     }
-    return ref.trim();
-  });
+    throw error;
+  }
 }

@@ -31,7 +31,8 @@
 
 写：
 
-- EIP-712 domain `UVPZhixuRegistry/1` + `chainId`，签名覆盖全部登记字段；
+- EIP-712 domain `UVPZhixuRegistry/1` + `chainId`，签名覆盖全部登记字段；domain/
+  字段表/typed-data 构造单源在 `@uvp-eth/protocol-bindings`，registry 不自持副本；
 - `ZhixuRecord` 必须由 `registeredBy` 签名，`IdentityClaim` 必须由 `wallet` 签名；
 - 唯一键 `(chainId, planId, planHash)` 与 `(chainId, wallet, subject)`；重复登记
   抛 `RegistryEntryConflictError`，先写入的记录不可变。
