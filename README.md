@@ -1,45 +1,51 @@
-# zhixu-store
+# zhixu-registry
 
-Store operator product boundary; being narrowed to the `zhixu-registry` data
-layer (ARCHITECTURE.md Phase C). The registry is the target non-user-facing
-component; the Store console app remains temporarily while consumers migrate.
+非用户面数据登记层（ARCHITECTURE.md §2.3/§4）。原 `zhixu-store` 商店/运营台 UI 已删除，
+本仓只保留 `registry/` 包 `@uvp-eth/zhixu-registry`。
 
-This domain is for the nucleus/operator side of UVP: designing, organizing,
-maintaining, and running Zhixu orders through chain-backed Product DTOs.
+Registry 只登记两类记录：
 
-Scope, staged goals, and anti-drift boundaries for this repository are defined
-in [STORE-CHARTER.md](./STORE-CHARTER.md). Agent orientation and debugging
-boundaries are in [AGENTS.md](./AGENTS.md). New features must be classified
-against the charter before implementation.
+- `ZhixuRecord`：zhixu 自述（`chainId`/`planId`/`planHash`/`descriptorUri|Hash`/
+  `schemaHash`/`version`）+ `registeredBy` 钱包签名；
+- `IdentityClaim`：钱包自述身份（`wallet`/`subject`/`descriptorUri|Hash`）+
+  `wallet` 签名 + 可选 opaque `attestationRefs[]`。
 
-- `registry/`: `@uvp-eth/zhixu-registry` — permissionless data layer for
-  `ZhixuRecord` descriptor registration and wallet `IdentityClaim` records.
-  Library only (no UI/HTTP): EIP-712 `UVPZhixuRegistry/1`, signature check on
-  write, append-only Postgres store + migrations, opaque attestation refs. No
-  approval, status, curation, recommendation, or KYC fields. See
-  [registry/README.md](./registry/README.md).
-- `app/`: current Store operator console frontend (temporary; slated for
-  removal as Phase C completes). Source layout is organized
-  by user task (`src/app`, `src/lib`, `src/store`, `src/styles`); `src/shared` is
-  the frontend-shared submodule mount (single source for the chain track,
-  consumed via `chain/`, `contracts/`, `domain/`). The participant workbench
-  source that used to live in `src/product` has been removed; participant
-  flows (orders, tasks, evidence, submission) are owned by `uvp-order-app`.
-  See [app/README.md](./app/README.md) for the directory map and migration gaps.
+## 边界
 
-## Development Topology
+- **permissionless**：任何钱包都可登记自己的记录；无 allowlist；登记 ≠ 背书。
+- **不审核、不挑选、不排名、不推荐**：不做市场/商店、supplier 审批、join workflow、
+  治理投票、KYC/KYB；schema/API 不含 approval/status/curation/verified 字段。
+- **不成为事实来源**：只存自述 + 签名 + opaque refs；链上 plan/order/signal 事实以
+  合约与链事件为准；身份声明不参与订单授权（授权仍由链上 plan/slot/signal 决定）。
+- **不存原件**：attestation 只存 hash/URI/opaque ref；正文、密钥、凭据在 registry 外。
+- **只追加**：唯一键 `(chainId, planId, planHash)`、`(chainId, wallet, subject)`；
+  重复登记显式报错，无 update/approve 路径。
+- **库形态**：无 UI、无 HTTP server；应用/backend 直接 import。
 
-This repository is mounted by `uvp-eth` as a Git submodule. The app depends on
-`@uvp-eth/product-dto`, which is owned by `uvp-protocol`.
+## 包结构
 
-Use the `uvp-eth` umbrella checkout for local integration development so pnpm can
-resolve that cross-repository `workspace:*` dependency. A standalone checkout
-requires `@uvp-eth/product-dto` to be published or linked into an equivalent
-local workspace.
+- `registry/src/`：`types` / `eip712` / `verify` / `store` / `postgres`；
+- `registry/migrations/`：Postgres schema；
+- `registry/tests/`：注册/读取、非法签名、重复/不可变、permissionless。
 
-The Store consumes Product API projections. It must not treat local metadata,
-frontend fallback data, or cached API responses as chain authority.
+详见 [registry/README.md](./registry/README.md) 与 [STORE-CHARTER.md](./STORE-CHARTER.md)。
 
-Store keeps Product Schema v1 authoring, selector bindings, resource
-requirements, docking drafts, versioning, and review state aligned with the
-frozen `@uvp-eth/product-dto` convergence surfaces.
+## 开发与验证
+
+本仓库由 `uvp-eth` 以 git submodule 挂载；本地集成开发在伞仓检出内进行
+（`pnpm install` 在伞仓根解析 workspace）。
+
+```bash
+pnpm run typecheck
+pnpm run test    # 需要 Postgres；默认本机 tmpfs
+pnpm run build
+```
+
+测试默认使用 `postgres://postgres:test@127.0.0.1:55432/postgres`，可用
+`ZHIXU_REGISTRY_POSTGRES_TEST_URL` 覆盖；每次测试建独立 schema 并在结束时删除。
+
+## 与 UVP 本体的关系
+
+协议本体指 `uvp-core`（Rust 语义核）、`uvp-protocol`（合约、编译器、DTO 定义）、
+`uvp-chain-services`（链基础设施服务）。Registry 不解释合约行为、不拥有链上事实；
+`chain-services` 也不拥有 registry 数据，若需要只做只读投影/事件。

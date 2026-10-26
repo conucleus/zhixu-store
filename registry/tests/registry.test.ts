@@ -15,7 +15,7 @@ import {
   zhixuRecordTypedData,
   type IdentityClaimDraft,
   type ZhixuRecordFields
-} from "../src/index";
+} from "../src/index.js";
 
 const testDatabaseUrl = process.env.ZHIXU_REGISTRY_POSTGRES_TEST_URL;
 if (!testDatabaseUrl) {

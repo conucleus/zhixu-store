@@ -1,14 +1,14 @@
 // Canonicalization for registry inputs: keys, self-described text, opaque refs, and signatures.
 
 import { isAddress, type Hex } from "viem";
-import { RegistrySignatureError, RegistryValidationError } from "./errors";
+import { RegistrySignatureError, RegistryValidationError } from "./errors.js";
 import type {
   IdentityClaimDraft,
   IdentityClaimFields,
   IdentityClaimKey,
   ZhixuRecordFields,
   ZhixuRecordKey
-} from "./types";
+} from "./types.js";
 
 const BYTES32_PATTERN = /^0x[0-9a-fA-F]{64}$/;
 const SIGNATURE_PATTERN = /^0x[0-9a-fA-F]{130}$/;

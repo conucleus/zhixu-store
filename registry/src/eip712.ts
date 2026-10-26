@@ -1,8 +1,8 @@
 // EIP-712 single source for registry signatures: domain UVPZhixuRegistry/1 and typed-data helpers.
 
 import type { Address, Hex, TypedData, TypedDataDomain } from "viem";
-import { normalizeIdentityClaimFields, normalizeZhixuRecordFields } from "./canonical";
-import type { IdentityClaimDraft, ZhixuRecordFields } from "./types";
+import { normalizeIdentityClaimFields, normalizeZhixuRecordFields } from "./canonical.js";
+import type { IdentityClaimDraft, ZhixuRecordFields } from "./types.js";
 
 export const ZHIXU_REGISTRY_DOMAIN_NAME = "UVPZhixuRegistry";
 export const ZHIXU_REGISTRY_DOMAIN_VERSION = "1";

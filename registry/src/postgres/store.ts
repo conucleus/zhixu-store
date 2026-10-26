@@ -7,9 +7,9 @@ import {
   normalizeZhixuRecordFields,
   normalizeZhixuRecordKey,
   requireSignature
-} from "../canonical";
-import { RegistryEntryConflictError } from "../errors";
-import type { ZhixuRegistryStore } from "../store";
+} from "../canonical.js";
+import { RegistryEntryConflictError } from "../errors.js";
+import type { ZhixuRegistryStore } from "../store.js";
 import type {
   IdentityClaim,
   IdentityClaimKey,
@@ -17,8 +17,8 @@ import type {
   SignedZhixuRecordInput,
   ZhixuRecord,
   ZhixuRecordKey
-} from "../types";
-import { assertIdentityClaimSignature, assertZhixuRecordSignature } from "../verify";
+} from "../types.js";
+import { assertIdentityClaimSignature, assertZhixuRecordSignature } from "../verify.js";
 
 const ZHIXU_RECORD_COLUMNS = [
   "chain_id",

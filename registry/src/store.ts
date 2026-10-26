@@ -7,7 +7,7 @@ import type {
   SignedZhixuRecordInput,
   ZhixuRecord,
   ZhixuRecordKey
-} from "./types";
+} from "./types.js";
 
 export interface ZhixuRegistryStore {
   registerZhixuRecord(input: SignedZhixuRecordInput): Promise<ZhixuRecord>;
