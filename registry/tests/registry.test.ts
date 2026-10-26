@@ -10,12 +10,11 @@ import {
   PostgresZhixuRegistryStore,
   RegistryEntryConflictError,
   RegistrySignatureError,
-  identityClaimTypedData,
   runRegistryMigrations,
-  zhixuRecordTypedData,
   type IdentityClaimDraft,
   type ZhixuRecordFields
-} from "../src/index.js";
+} from "@uvp-eth/zhixu-registry";
+import { identityClaimTypedData, zhixuRecordTypedData } from "@uvp-eth/zhixu-registry/eip712";
 
 const testDatabaseUrl = process.env.ZHIXU_REGISTRY_POSTGRES_TEST_URL;
 if (!testDatabaseUrl) {
