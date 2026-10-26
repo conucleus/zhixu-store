@@ -27,32 +27,11 @@ export type StoreAuthMode =
 
 export type StoreRole = StoreAccessLevel | "store_reader" | "governance_admin";
 
-export type StoreCapability =
-  | "store.read"
-  | "store.audit.read"
-  | "store.draft.import"
-  | "store.draft.compile"
-  | "store.draft.schema.save"
-  | "store.draft.review"
-  | "store.version.activate"
-  | "store.version.deprecate"
-  | "store.listing.manage"
-  | "store.supplier.create"
-  | "store.supplier.review"
-  | "store.supplier.tags.update"
-  | "store.supplier.identity.register"
-  | "store.supplier.identity.revoke"
-  | "store.docking.create"
-  | "store.docking.validate"
-  | "store.docking.save";
-
 export interface StoreAccessState {
   readonly level: StoreAccessLevel;
   readonly label: string;
   readonly roles: readonly StoreRole[];
-  readonly capabilities: readonly StoreCapability[];
   readonly authMode: StoreAuthMode;
-  readonly canRead: boolean;
   readonly canWrite: boolean;
   readonly canAdmin: boolean;
   readonly headers: Readonly<Record<string, string>>;
@@ -65,8 +44,9 @@ export interface StoreSessionDTO {
   readonly principalId?: string | undefined;
   readonly accessLevel: StoreAccessLevel;
   readonly roles: readonly StoreRole[];
-  readonly capabilities: readonly StoreCapability[];
   readonly authMode: StoreAuthMode;
+  readonly canWrite: boolean;
+  readonly canAdmin: boolean;
   readonly anchoredAddress?: string | undefined;
   readonly anchorSource?: string | undefined;
   readonly accountId?: string | undefined;
@@ -169,7 +149,6 @@ export interface StoreSupplierDTO {
   readonly notificationUpdatedAt?: string | undefined;
   readonly identityStatus: "active" | "revoked" | "not_found";
   readonly identityLabel: string;
-  readonly capabilityTags: readonly string[];
   readonly supportedRoleSlotIds: readonly string[];
   readonly supportedStageIds: readonly string[];
   readonly registryAddresses: readonly string[];
@@ -183,7 +162,6 @@ export interface StoreSupplierDTO {
 }
 
 export interface StoreSupplierCapabilityUpdateInput {
-  readonly capabilityTags: readonly string[];
   readonly supportedRoleSlotIds: readonly string[];
   readonly supportedStageIds: readonly string[];
   readonly reviewStatus: StoreSupplierReviewStatus;

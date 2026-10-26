@@ -46,11 +46,8 @@ const zhixuDetail = {
     required: true,
     expectedEvidence: [],
     statusLabel: "开放",
-    capabilityReviewStatus: "explicit",
-    capabilityReviewLabel: "已显式确认",
     performanceSlotLabel: "资金执行者",
-    businessPersonaLabels: [],
-    capabilityPlugins: []
+    businessPersonaLabels: []
   }],
   supplierRequirements: [],
   riskTags: [],
@@ -112,7 +109,8 @@ async function installStoreRoutes(
           authenticated: loggedIn,
           accessLevel: loggedIn ? "store_read" : "anonymous_read",
           roles: loggedIn ? ["store_read"] : ["anonymous_read"],
-          capabilities: ["store.read"],
+          canWrite: false,
+          canAdmin: false,
           authMode: loggedIn ? "wallet_session" : "anonymous",
           ...(loggedIn
             ? {

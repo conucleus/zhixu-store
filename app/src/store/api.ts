@@ -10,7 +10,6 @@ import type {
   StoreApiResult,
   StoreAccountAddressView,
   StoreAuthMode,
-  StoreCapability,
   StoreDecorationDataView,
   StoreDecorationView,
   StoreDockingSessionCreateDTO,
@@ -239,10 +238,8 @@ export function resolveStoreAccess(): StoreAccessState {
     level,
     label: accessLabel(level),
     roles: rolesForAccessLevel(level),
-    capabilities: capabilitiesForAccessLevel(level),
     authMode: level === "anonymous_read" ? "anonymous" : "dev_store_headers",
-    canRead: true,
-    canWrite: hasWriteCapability(capabilitiesForAccessLevel(level)),
+    canWrite: canWriteForLevel(level),
     canAdmin: level === "store_admin",
     headers: accessHeaders(level, userId),
   };
@@ -252,16 +249,13 @@ export function accessFromStoreSession(
   session: StoreSessionDTO,
   fallback: StoreAccessState,
 ): StoreAccessState {
-  const capabilities = session.capabilities;
   return {
     level: session.accessLevel,
     label: accessLabel(session.accessLevel),
     roles: session.roles,
-    capabilities,
     authMode: session.authMode,
-    canRead: true,
-    canWrite: hasWriteCapability(capabilities),
-    canAdmin: session.roles.includes("governance_admin") || session.accessLevel === "store_admin",
+    canWrite: session.canWrite,
+    canAdmin: session.canAdmin,
     headers: fallback.headers,
     ...(session.anchoredAddress ? { anchoredAddress: session.anchoredAddress } : {}),
     ...(session.anchorSource === "wallet_session" || session.anchorSource === "dev_header"
@@ -487,12 +481,11 @@ export class BrowserStoreApiClient implements StoreApiClient {
     input: StoreSupplierCapabilityUpdateInput,
   ): Promise<StoreApiResult<StoreSupplierMutationResultDTO>> {
     const pathname = `/store/suppliers/${encodeURIComponent(supplierId)}/review`;
-    this.requireCapability(pathname, "store.supplier.tags.update");
-    this.requireCapability(pathname, "store.supplier.review");
+    this.requireWriteAccess(pathname);
     return await this.realWrite<unknown>("POST", pathname, {
       ...input,
       publicSummary:
-        "Store operator updated non-authoritative supplier capability metadata.",
+        "Store operator updated non-authoritative supplier metadata.",
       confirmation: {
         supplierId,
       },
@@ -633,7 +626,7 @@ export class BrowserStoreApiClient implements StoreApiClient {
 
   async reviewListing(listingId: string, decision: "approve" | "reject", note?: string): Promise<StoreApiResult<{ readonly listing: StoreListingView }>> {
     const pathname = `/store/listings/${encodeURIComponent(listingId)}/review`;
-    this.requireCapability(pathname, "store.listing.manage");
+    this.requireWriteAccess(pathname);
     this.requireAnchoredSession(pathname);
     return await this.realWrite<{ readonly listing: StoreListingView }>("POST", pathname, {
       decision,
@@ -643,7 +636,7 @@ export class BrowserStoreApiClient implements StoreApiClient {
 
   async delistListing(listingId: string, reason?: string): Promise<StoreApiResult<{ readonly listing: StoreListingView }>> {
     const pathname = `/store/listings/${encodeURIComponent(listingId)}/delist`;
-    this.requireCapability(pathname, "store.listing.manage");
+    this.requireWriteAccess(pathname);
     this.requireAnchoredSession(pathname);
     return await this.realWrite<{ readonly listing: StoreListingView }>("POST", pathname, {
       ...(reason ? { reason } : {}),
@@ -652,7 +645,7 @@ export class BrowserStoreApiClient implements StoreApiClient {
 
   async relistListing(listingId: string): Promise<StoreApiResult<{ readonly listing: StoreListingView }>> {
     const pathname = `/store/listings/${encodeURIComponent(listingId)}/relist`;
-    this.requireCapability(pathname, "store.listing.manage");
+    this.requireWriteAccess(pathname);
     this.requireAnchoredSession(pathname);
     return await this.realWrite<{ readonly listing: StoreListingView }>("POST", pathname, {});
   }
@@ -785,18 +778,6 @@ export class BrowserStoreApiClient implements StoreApiClient {
       throw new StoreApiError(pathname, 403, "forbidden", {
         code: "forbidden",
         details: { required: "anchored_wallet_session" },
-      });
-    }
-  }
-
-  private requireCapability(
-    pathname: string,
-    capability: StoreCapability,
-  ): void {
-    if (!this.access.capabilities.includes(capability)) {
-      throw new StoreApiError(pathname, 403, "forbidden", {
-        code: "forbidden",
-        details: { requiredCapability: capability },
       });
     }
   }
@@ -999,11 +980,6 @@ function storeSupplierFromResponse(value: unknown, pathname: string): StoreSuppl
     record.identityStatus,
     pathname,
   );
-  const capabilityTags = Array.isArray(record.capabilityTags)
-    ? record.capabilityTags.filter(
-        (item): item is string => typeof item === "string",
-      )
-    : [];
   const supportedRoleSlotIds = arrayOfStrings(record.supportedRoleSlotIds);
   const supportedStageIds = arrayOfStrings(record.supportedStageIds);
   const registryAddresses = arrayOfStrings(record.registryAddresses);
@@ -1036,7 +1012,6 @@ function storeSupplierFromResponse(value: unknown, pathname: string): StoreSuppl
         : identityStatus === "not_found"
           ? "未发现身份映射"
           : "身份映射有效"),
-    capabilityTags,
     supportedRoleSlotIds,
     supportedStageIds,
     registryAddresses,
@@ -1224,54 +1199,8 @@ function rolesForAccessLevel(level: StoreAccessLevel): readonly StoreRole[] {
   }
 }
 
-function capabilitiesForAccessLevel(
-  level: StoreAccessLevel,
-): readonly StoreCapability[] {
-  const publicRead = [
-    "store.read",
-  ] as const satisfies readonly StoreCapability[];
-  const read = [
-    ...publicRead,
-    "store.audit.read",
-  ] as const satisfies readonly StoreCapability[];
-  const operator = [
-    ...read,
-    "store.draft.import",
-    "store.draft.compile",
-    "store.draft.schema.save",
-    "store.draft.review",
-    "store.listing.manage",
-    "store.supplier.create",
-    "store.supplier.review",
-    "store.supplier.tags.update",
-    "store.docking.create",
-    "store.docking.validate",
-    "store.docking.save",
-  ] as const satisfies readonly StoreCapability[];
-  const admin = [
-    ...operator,
-    "store.version.activate",
-    "store.version.deprecate",
-    "store.supplier.identity.register",
-    "store.supplier.identity.revoke",
-  ] as const satisfies readonly StoreCapability[];
-  switch (level) {
-    case "store_admin":
-      return admin;
-    case "store_operator":
-      return operator;
-    case "store_read":
-      return read;
-    case "anonymous_read":
-      return publicRead;
-  }
-}
-
-function hasWriteCapability(capabilities: readonly StoreCapability[]): boolean {
-  return capabilities.some(
-    (capability) =>
-      capability !== "store.read" && capability !== "store.audit.read",
-  );
+function canWriteForLevel(level: StoreAccessLevel): boolean {
+  return level === "store_operator" || level === "store_admin";
 }
 
 function sessionFromResponse(
@@ -1287,9 +1216,6 @@ function sessionFromResponse(
     fallback.level;
   const principalId = stringValue(session.principalId);
   const roles = arrayOfStrings(session.roles).filter(isStoreRole);
-  const capabilities = arrayOfStrings(session.capabilities).filter(
-    isStoreCapability,
-  );
   const authMode =
     authModeValue(stringValue(session.authMode)) ?? fallback.authMode;
   const anchoredAddress = stringValue(session.anchoredAddress);
@@ -1303,8 +1229,9 @@ function sessionFromResponse(
     ...(principalId ? { principalId } : {}),
     accessLevel,
     roles,
-    capabilities,
     authMode,
+    canWrite: session.canWrite === true,
+    canAdmin: session.canAdmin === true,
     ...(anchoredAddress ? { anchoredAddress } : {}),
     ...(anchorSource ? { anchorSource: anchorSource as StoreSessionDTO["anchorSource"] } : {}),
     ...(accountId ? { accountId } : {}),
@@ -1340,12 +1267,6 @@ function isStoreRole(value: string): value is StoreRole {
     value === "store_operator" ||
     value === "store_admin" ||
     value === "governance_admin"
-  );
-}
-
-function isStoreCapability(value: string): value is StoreCapability {
-  return capabilitiesForAccessLevel("store_admin").includes(
-    value as StoreCapability,
   );
 }
 

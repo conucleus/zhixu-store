@@ -6,7 +6,6 @@ import {
   RefreshCw,
   Save,
   ShieldCheck,
-  Tag,
   Users,
   X,
 } from "lucide-react";
@@ -30,7 +29,6 @@ type SupplierActionState =
   | { readonly phase: "error"; readonly message: string };
 
 interface SupplierEditForm {
-  readonly capabilityTagsText: string;
   readonly roleSlotIdsText: string;
   readonly stageIdsText: string;
 }
@@ -48,13 +46,7 @@ export function StoreSupplierPage({
     string | undefined
   >();
   const [editForm, setEditForm] = useState<SupplierEditForm | undefined>();
-  const canUpdateSupplierTags = hasStoreCapability(
-    access,
-    "store.supplier.tags.update",
-  );
-  const canReviewSupplier = hasStoreCapability(access, "store.supplier.review");
-  const canEditSupplierCapabilities =
-    canUpdateSupplierTags && canReviewSupplier;
+  const canEditSupplierMetadata = access.canWrite;
 
   const loadSuppliers = useCallback(
     async (showLoading = true, isCancelled: () => boolean = () => false) => {
@@ -89,7 +81,6 @@ export function StoreSupplierPage({
   const openEdit = (supplier: StoreSupplierDTO) => {
     setEditingSupplierId(supplier.supplierId);
     setEditForm({
-      capabilityTagsText: supplier.capabilityTags.join("\n"),
       roleSlotIdsText: supplier.supportedRoleSlotIds.join("\n"),
       stageIdsText: supplier.supportedStageIds.join("\n"),
     });
@@ -108,11 +99,10 @@ export function StoreSupplierPage({
     }
     setAction({
       phase: "pending",
-      message: "正在写入 Store 供应商能力 metadata",
+      message: "正在写入 Store 供应商在册元数据",
     });
     try {
       const result = await api.updateSupplierCapabilities(supplier.supplierId, {
-        capabilityTags: normalizeTextList(editForm.capabilityTagsText),
         supportedRoleSlotIds: normalizeTextList(editForm.roleSlotIdsText),
         supportedStageIds: normalizeTextList(editForm.stageIdsText),
         reviewStatus: supplier.reviewStatus,
@@ -139,7 +129,7 @@ export function StoreSupplierPage({
     } catch (error) {
       setAction({
         phase: "error",
-        message: readableStoreError(error, "供应商能力 metadata 保存失败"),
+        message: readableStoreError(error, "供应商在册元数据保存失败"),
       });
     }
   };
@@ -150,7 +140,7 @@ export function StoreSupplierPage({
         <div>
           <h2>在册主体</h2>
           <p>
-            查看主体与钱包的链上身份映射，并维护 Store 侧在册资料与能力标签。
+            查看主体与钱包的链上身份映射，并维护 Store 侧在册资料的角色槽与阶段绑定。
           </p>
         </div>
         <button
@@ -162,22 +152,18 @@ export function StoreSupplierPage({
         </button>
       </div>
 
-      {!canEditSupplierCapabilities ? (
+      {!canEditSupplierMetadata ? (
         <div className="store-access-note">
           <ShieldCheck />
           <span>
-            {supplierCapabilityBlockedCopy(
-              access,
-              canUpdateSupplierTags,
-              canReviewSupplier,
-            )}
+            {supplierEditBlockedCopy(access)}
           </span>
         </div>
       ) : (
         <div className="store-access-note">
           <ShieldCheck />
           <span>
-            当前会话可以维护 Store 侧的在册能力 metadata；这些资料只用于本 Store 的组织与在册展示。
+            当前会话可以维护 Store 侧的在册元数据；这些资料只用于本 Store 的组织与在册展示。
           </span>
         </div>
       )}
@@ -231,12 +217,6 @@ export function StoreSupplierPage({
                 </div>
 
                 <SupplierTagRow
-                  icon={<Tag />}
-                  label="能力"
-                  values={supplier.capabilityTags}
-                  empty="未配置能力标签"
-                />
-                <SupplierTagRow
                   label="角色槽"
                   values={supplier.supportedRoleSlotIds}
                   empty="未绑定角色槽"
@@ -251,14 +231,14 @@ export function StoreSupplierPage({
                   <small>更新：{supplier.updatedAt}</small>
                 ) : null}
 
-                {canEditSupplierCapabilities ? (
+                {canEditSupplierMetadata ? (
                   <button
                     className="secondary-button compact"
-                    data-testid="store-edit-supplier-tags-button"
+                    data-testid="store-edit-supplier-button"
                     onClick={() => openEdit(supplier)}
                     type="button"
                   >
-                    <Pencil /> 编辑能力 metadata
+                    <Pencil /> 编辑在册元数据
                   </button>
                 ) : null}
               </article>
@@ -288,7 +268,7 @@ export function StoreSupplierPage({
                     <div className="store-access-note compact">
                       <ShieldCheck />
                       <span>
-                        能力标签用于 Store 内部组织与在册展示；链上只登记主体与钱包映射。
+                        角色槽与阶段用于 Store 内部组织与在册展示；链上只登记主体与钱包映射。
                       </span>
                     </div>
                     <SupplierEditPanel
@@ -307,14 +287,14 @@ export function StoreSupplierPage({
                     <div>
                       <h2>编辑抽屉</h2>
                       <p>
-                        选择一张供应商卡片后，在这里维护 Store 侧能力 metadata。
+                        选择一张供应商卡片后，在这里维护 Store 侧在册元数据。
                       </p>
                     </div>
                   </div>
                   <div className="store-access-note compact">
                     <ShieldCheck />
                     <span>
-                      {canEditSupplierCapabilities
+                      {canEditSupplierMetadata
                         ? "metadata 编辑只改变本 Store 的供应商资料。"
                         : "当前会话不能打开 metadata 编辑抽屉；写入仍会被权限边界阻断。"}
                     </span>
@@ -354,24 +334,6 @@ function SupplierEditPanel({
       data-testid="store-supplier-edit-panel"
     >
       <div className="form-grid store-supplier-edit-form">
-        <label className="field">
-          <span>capabilityTags</span>
-          <textarea
-            onBlur={(event) =>
-              setForm({
-                ...form,
-                capabilityTagsText: normalizeTextList(
-                  event.target.value,
-                ).join("\n"),
-              })
-            }
-            onChange={(event) =>
-              setForm({ ...form, capabilityTagsText: event.target.value })
-            }
-            placeholder="每行一个 Store 内部标签"
-            value={form.capabilityTagsText}
-          />
-        </label>
         <label className="field">
           <span>supportedRoleSlotIds</span>
           <textarea
@@ -490,21 +452,10 @@ function StatePanel({
   );
 }
 
-function supplierCapabilityBlockedCopy(
-  access: StoreAccessState,
-  canUpdateSupplierTags: boolean,
-  canReviewSupplier: boolean,
-): string {
-  if (!access.canWrite) {
-    return "当前只读访问，不显示供应商标签编辑按钮。";
-  }
-  if (!canUpdateSupplierTags) {
-    return "当前会话缺少 store.supplier.tags.update；供应商能力编辑已关闭，后端写入会返回 403。";
-  }
-  if (!canReviewSupplier) {
-    return "当前会话缺少 store.supplier.review；供应商能力编辑已关闭，后端写入会返回 403。";
-  }
-  return "当前会话不能编辑供应商能力 metadata。";
+function supplierEditBlockedCopy(access: StoreAccessState): string {
+  return access.canWrite
+    ? "当前会话不能编辑供应商元数据。"
+    : "当前只读访问，不显示供应商元数据编辑入口。";
 }
 
 function supplierReviewLabel(status: StoreSupplierDTO["reviewStatus"]): string {
@@ -520,15 +471,6 @@ function supplierReviewLabel(status: StoreSupplierDTO["reviewStatus"]): string {
     case "revoked":
       return "已撤销";
   }
-}
-
-function hasStoreCapability(
-  access: StoreAccessState,
-  capability: string,
-): boolean {
-  return access.capabilities.includes(
-    capability as StoreAccessState["capabilities"][number],
-  );
 }
 
 function normalizeTextList(value: string): readonly string[] {

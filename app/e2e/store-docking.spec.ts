@@ -80,7 +80,8 @@ test.describe("Store docking sandbox target selection", () => {
               principalId: "store-operator",
               accessLevel: "store_operator",
               roles: ["store_operator"],
-              capabilities: ["store.read", "store.docking.create", "store.docking.validate", "store.docking.save"],
+              canWrite: true,
+              canAdmin: false,
               authMode: "dev_store_headers"
             }
           })
@@ -207,7 +208,8 @@ test.describe("Store docking sandbox target selection", () => {
               principalId: "store-operator",
               accessLevel: "store_operator",
               roles: ["store_operator"],
-              capabilities: ["store.read", "store.docking.create"],
+              canWrite: true,
+              canAdmin: false,
               authMode: "dev_store_headers"
             }
           })

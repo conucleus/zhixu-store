@@ -89,7 +89,8 @@ async function stubStoreRoutes(page: Page): Promise<void> {
             authenticated: false,
             accessLevel: "anonymous_read",
             roles: ["anonymous_read"],
-            capabilities: ["store.read"],
+            canWrite: false,
+            canAdmin: false,
             authMode: "anonymous"
           }
         })

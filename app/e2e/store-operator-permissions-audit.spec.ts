@@ -12,7 +12,8 @@ test("operator console exposes no participant workbench, audit route, or governa
           authenticated: true,
           accessLevel: "store_operator",
           roles: ["store_operator"],
-          capabilities: ["store.read", "store.draft.import"],
+          canWrite: true,
+          canAdmin: false,
           authMode: "dev_store_headers"
         }
       });

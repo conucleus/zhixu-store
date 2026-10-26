@@ -43,7 +43,7 @@ export function StoreOrganizationPage({
       <div className="page-title-row">
         <div>
           <h2><Users /> 组织</h2>
-          <p>邀请实体加入秩序、审核加入申请、维护在册名单与能力标签。订单由当事人自己开，组织不指派订单执行者。</p>
+          <p>邀请实体加入秩序、审核加入申请、维护在册名单与档案。订单由当事人自己开，组织不指派订单执行者。</p>
         </div>
         <div className="button-row">
           <button className="primary-button" onClick={onOpenLinks} type="button">
@@ -111,8 +111,8 @@ export function StoreOrganizationPage({
         <div className="panel-heading compact">
           <div>
             <span className="store-section-kicker">在册</span>
-            <h2 id="store-roster-title">在册主体与能力</h2>
-            <p>查看主体与钱包的链上身份映射，维护 Store 侧能力标签；这些资料不构成对任何主体的背书。</p>
+            <h2 id="store-roster-title">在册主体与档案</h2>
+            <p>查看主体与钱包的链上身份映射，维护 Store 侧在册档案；这些资料不构成对任何主体的背书。</p>
           </div>
         </div>
         <StoreSupplierPage access={access} api={api} />

@@ -410,7 +410,7 @@ export function StoreDesignPage({
               ) : null}
             </div>
 
-            {!access.canWrite ? <StoreCapabilityPlaceholder access={access} /> : null}
+            {!access.canWrite ? <StoreReadOnlyPlaceholder access={access} /> : null}
 
             {access.canWrite && !reviewDraft ? (
               <div className="inline-empty">还没有在审草稿：用右侧「导入秩序草稿」创建 Store 草稿。</div>
@@ -703,7 +703,7 @@ function StoreBoundaryCard({
   );
 }
 
-function StoreCapabilityPlaceholder({ access }: { readonly access: StoreAccessState }) {
+function StoreReadOnlyPlaceholder({ access }: { readonly access: StoreAccessState }) {
   return (
     <section className="panel-card store-schema-empty">
       <div className="schema-empty-grid">

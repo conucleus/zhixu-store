@@ -206,7 +206,7 @@ export function StoreApp() {
           <span
             className={`store-access-pill ${access.canWrite ? "can-write" : ""}`}
             data-testid="store-session-pill"
-            title={`${access.authMode} · ${access.capabilities.join(", ")}`}
+            title={`${access.authMode} · ${access.level}`}
           >
             <ShieldCheck /> {access.label}
             {access.anchoredAddress ? <span className="store-anchored-chip" data-testid="store-anchored-chip">锚定 {shortValue(access.anchoredAddress)}</span> : null}
