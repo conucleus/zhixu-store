@@ -1,8 +1,8 @@
 # zhixu-registry
 
 非用户面数据登记层（ARCHITECTURE.md §2.3/§4）：只登记 zhixu 描述与钱包身份声明。
-permissionless、登记 ≠ 背书（no endorsement）；不做商店、审核、curation、推荐、KYC、
-订单授权或用户面。
+当前阶段 permissionless、登记 ≠ 背书（no endorsement）；supplier KYC/KYB 资料与审批
+记录属于后续阶段能力（当前未实现），不做商店、curation、推荐、订单授权或用户面。
 
 ## 边界
 
@@ -10,10 +10,10 @@ permissionless、登记 ≠ 背书（no endorsement）；不做商店、审核�
 - 写时验签：`ZhixuRecord` 由 `registeredBy` 签名，`IdentityClaim` 由 `wallet` 签名；
   签名覆盖全部登记字段（EIP-712 domain `UVPZhixuRegistry/1` + `chainId`）。
 - 只存自述与 opaque refs：`descriptorUri/hash`、`schemaHash`、`version`、
-  `attestationRefs[]` 原样登记，不解析、不验证真伪、不存 KYC/KYB 原件。
+  `attestationRefs[]` 原样登记，不解析、不验证真伪；当前阶段不存 KYC/KYB 原件。
 - 只追加：唯一键 `(chainId, planId, planHash)` 与 `(chainId, wallet, subject)`；
-  重复登记报 `RegistryEntryConflictError`，无 update/approve/status 路径。
-- 读取只返回登记内容与 `registeredBy`/`signature`/`attestationRefs`，不返回
+  重复登记报 `RegistryEntryConflictError`；当前阶段无 update/approve/status 路径。
+- 读取只返回登记内容与 `registeredBy`/`signature`/`attestationRefs`；当前阶段不返回
   verified/approved/trust score，不做排序或推荐。
 - 库形态：无 UI、无 HTTP server；应用或 backend 直接 import。
 

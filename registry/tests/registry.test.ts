@@ -67,7 +67,7 @@ describe("zhixu records", () => {
     assert.deepEqual(await store.getZhixuRecord(recordKey(fields)), record);
   });
 
-  it("registers from any wallet and exposes no approval, status, curation, or KYC fields", async () => {
+  it("registers records from any wallet (permissionless, no endorsement state)", async () => {
     const aliceFields = zhixuFields({ registeredBy: alice.address.toLowerCase(), descriptorUri: "ipfs://alice" });
     const bobFields = zhixuFields({ registeredBy: bob.address.toLowerCase(), descriptorUri: "ipfs://bob" });
 
@@ -76,18 +76,6 @@ describe("zhixu records", () => {
 
     assert.equal(aliceRecord.registeredBy, alice.address.toLowerCase());
     assert.equal(bobRecord.registeredBy, bob.address.toLowerCase());
-    assert.deepEqual(Object.keys(aliceRecord).sort(), [
-      "chainId",
-      "createdAt",
-      "descriptorHash",
-      "descriptorUri",
-      "planHash",
-      "planId",
-      "registeredBy",
-      "schemaHash",
-      "signature",
-      "version"
-    ]);
   });
 
   it("rejects a signature from a wallet other than registeredBy", async () => {

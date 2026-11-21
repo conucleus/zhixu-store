@@ -1,4 +1,4 @@
-// Storage contract for the zhixu registry: append-only records, no approval or curation state.
+// Storage contract for the zhixu registry: append-only records; approval/KYC records belong to a later phase.
 
 import type {
   IdentityClaim,

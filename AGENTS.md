@@ -16,9 +16,10 @@
 
 ## 硬规则
 
-1. **不加用户面。** 无 UI、无 HTTP server、无 marketplace/推荐/排序/审核/审批流程。
-2. **不审核、不背书、不治理。** schema/API 禁止 approval/status/curation/verified/
-   KYC/KYB 字段；登记 permissionless，登记 ≠ 背书。
+1. **不加用户面。** 无 UI、无 HTTP server、无 marketplace/推荐/排序。
+2. **当前阶段不审核、不背书、不治理。** 本阶段 schema/API 不含 approval/status/
+   curation/verified/KYC/KYB 字段；登记 permissionless，登记 ≠ 背书。后续阶段的
+   supplier KYC/KYB 资料与审批记录由本组件承载（追加式记录，不改历史）。
 3. **写必须验签。** 任何写路径先验 EIP-712 签名；签名不符显式失败；只追加、
    唯一键、重复报错，不提供 update/approve。
 4. **不当事实来源。** 不解释合约、不裁决真伪、不参与订单授权；attestation 只存
