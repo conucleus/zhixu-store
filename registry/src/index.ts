@@ -1,4 +1,4 @@
-// Library entrypoint: permissionless zhixu descriptor records and wallet identity claims, no HTTP/UI.
+// Library entrypoint: permissionless zhixu descriptor records, no HTTP/UI and no identity registry.
 
 export * from "./types.js";
 export * from "./errors.js";

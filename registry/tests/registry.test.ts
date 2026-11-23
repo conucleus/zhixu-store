@@ -1,4 +1,4 @@
-// Registry behavior: signed permissionless registration, immutable duplicates, opaque attestations.
+// Registry behavior: signed permissionless registration, immutable duplicates, bounded payloads.
 
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -11,16 +11,11 @@ import {
   RegistryEntryConflictError,
   RegistrySignatureError,
   RegistryValidationError,
-  REGISTRY_MAX_ATTESTATION_REFS,
   REGISTRY_MAX_TEXT_BYTES,
   runRegistryMigrations,
-  type IdentityClaimDraft,
   type ZhixuRecordFields
 } from "@uvp-eth/zhixu-registry";
-import {
-  buildIdentityClaimTypedData,
-  buildZhixuRecordTypedData
-} from "@uvp-eth/protocol-bindings";
+import { buildZhixuRecordTypedData } from "@uvp-eth/protocol-bindings";
 
 const testDatabaseUrl = process.env.ZHIXU_REGISTRY_POSTGRES_TEST_URL;
 if (!testDatabaseUrl) {
@@ -68,6 +63,18 @@ describe("zhixu records", () => {
     assert.equal(record.createdAt, fixedNow.toISOString());
     assert.equal(record.signature, signature.toLowerCase());
     assert.deepEqual(await store.getZhixuRecord(recordKey(fields)), record);
+    assert.deepEqual(Object.keys(record).sort(), [
+      "chainId",
+      "createdAt",
+      "descriptorHash",
+      "descriptorUri",
+      "planHash",
+      "planId",
+      "registeredBy",
+      "schemaHash",
+      "signature",
+      "version"
+    ]);
   });
 
   it("registers records from any wallet (permissionless, no endorsement state)", async () => {
@@ -147,97 +154,6 @@ describe("zhixu records", () => {
   });
 });
 
-describe("identity claims", () => {
-  it("registers and reads a claim with opaque attestation refs", async () => {
-    const claim = identityClaim({
-      attestationRefs: ["ipfs://attestation-1", "https://attestations.example/vc/2"]
-    });
-    const signature = await signClaim(claim);
-
-    const record = await store.registerIdentityClaim({ ...claim, signature });
-
-    assert.equal(record.createdAt, fixedNow.toISOString());
-    assert.deepEqual(record.attestationRefs, claim.attestationRefs);
-    assert.deepEqual(await store.getIdentityClaim(claimKey(claim)), record);
-    assert.deepEqual(Object.keys(record).sort(), [
-      "attestationRefs",
-      "chainId",
-      "createdAt",
-      "descriptorHash",
-      "descriptorUri",
-      "signature",
-      "subject",
-      "wallet"
-    ]);
-  });
-
-  it("allows any wallet and different subjects for the same wallet", async () => {
-    const aliceClaim = identityClaim({ wallet: alice.address.toLowerCase(), subject: "did:example:alice" });
-    const bobClaim = identityClaim({ wallet: bob.address.toLowerCase(), subject: "did:example:bob" });
-    const aliceSecondSubject = identityClaim({ wallet: alice.address.toLowerCase(), subject: "org:example:alice" });
-
-    const [aliceRecord, bobRecord, aliceSecondRecord] = await Promise.all([
-      store.registerIdentityClaim({ ...aliceClaim, signature: await signClaim(aliceClaim) }),
-      store.registerIdentityClaim({ ...bobClaim, signature: await signClaim(bobClaim, bob) }),
-      store.registerIdentityClaim({ ...aliceSecondSubject, signature: await signClaim(aliceSecondSubject) })
-    ]);
-
-    assert.equal(aliceRecord.wallet, alice.address.toLowerCase());
-    assert.equal(bobRecord.wallet, bob.address.toLowerCase());
-    assert.equal(aliceSecondRecord.subject, "org:example:alice");
-  });
-
-  it("rejects an attestation payload above the bounded ref count before writing", async () => {
-    const claim = identityClaim({
-      attestationRefs: Array.from(
-        { length: REGISTRY_MAX_ATTESTATION_REFS + 1 },
-        (_unused, index) => `ipfs://attestation-${index}`
-      )
-    });
-
-    await assert.rejects(
-      store.registerIdentityClaim({ ...claim, signature: await signClaim(claim) }),
-      (error: unknown) => error instanceof RegistryValidationError && error.code === "registry_input_invalid"
-    );
-    assert.equal(await store.getIdentityClaim(claimKey(claim)), undefined);
-  });
-
-  it("rejects an attestation ref above the bounded text length before writing", async () => {
-    const claim = identityClaim({
-      attestationRefs: [`ipfs://${"a".repeat(REGISTRY_MAX_TEXT_BYTES)}`]
-    });
-
-    await assert.rejects(
-      store.registerIdentityClaim({ ...claim, signature: await signClaim(claim) }),
-      (error: unknown) => error instanceof RegistryValidationError && error.code === "registry_input_invalid"
-    );
-    assert.equal(await store.getIdentityClaim(claimKey(claim)), undefined);
-  });
-
-  it("rejects a claim signed by a different wallet", async () => {
-    const claim = identityClaim({ wallet: alice.address.toLowerCase() });
-    const signature = await signClaim(claim, bob);
-
-    await assert.rejects(
-      store.registerIdentityClaim({ ...claim, signature }),
-      (error: unknown) => error instanceof RegistrySignatureError && error.code === "registry_signature_invalid"
-    );
-    assert.equal(await store.getIdentityClaim(claimKey(claim)), undefined);
-  });
-
-  it("rejects a duplicate claim and keeps the first claim immutable", async () => {
-    const claim = identityClaim({ descriptorUri: "ipfs://claims-alice" });
-    const record = await store.registerIdentityClaim({ ...claim, signature: await signClaim(claim) });
-    const conflicting = { ...claim, descriptorUri: "ipfs://claims-alice-later" };
-
-    await assert.rejects(
-      store.registerIdentityClaim({ ...conflicting, signature: await signClaim(conflicting) }),
-      (error: unknown) => error instanceof RegistryEntryConflictError && error.code === "registry_entry_conflict"
-    );
-    assert.deepEqual(await store.getIdentityClaim(claimKey(claim)), record);
-  });
-});
-
 function zhixuFields(overrides: Partial<ZhixuRecordFields> = {}): ZhixuRecordFields {
   return {
     chainId,
@@ -252,18 +168,6 @@ function zhixuFields(overrides: Partial<ZhixuRecordFields> = {}): ZhixuRecordFie
   };
 }
 
-function identityClaim(overrides: Partial<IdentityClaimDraft> = {}): IdentityClaimDraft {
-  return {
-    chainId,
-    wallet: alice.address.toLowerCase(),
-    subject: `did:example:${randomBytes(8).toString("hex")}`,
-    descriptorUri: "ipfs://identity-claim",
-    descriptorHash: `0x${"cc".repeat(32)}`,
-    attestationRefs: [],
-    ...overrides
-  };
-}
-
 function recordKey(fields: ZhixuRecordFields): { readonly chainId: number; readonly planId: string; readonly planHash: string; readonly registeredBy: string } {
   return {
     chainId: fields.chainId,
@@ -273,18 +177,10 @@ function recordKey(fields: ZhixuRecordFields): { readonly chainId: number; reado
   };
 }
 
-function claimKey(claim: IdentityClaimDraft): { readonly chainId: number; readonly wallet: string; readonly subject: string } {
-  return { chainId: claim.chainId, wallet: claim.wallet, subject: claim.subject };
-}
-
 function randomPlanId(): Hex {
   return `0x${randomBytes(32).toString("hex")}`;
 }
 
 async function signZhixu(fields: ZhixuRecordFields, account = alice): Promise<Hex> {
   return await account.signTypedData(buildZhixuRecordTypedData(fields));
-}
-
-async function signClaim(claim: IdentityClaimDraft, account = alice): Promise<Hex> {
-  return await account.signTypedData(buildIdentityClaimTypedData(claim));
 }

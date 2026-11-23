@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "license": "AGPL-3.0-only",
-  "description": "Permissionless zhixu descriptor record and wallet identity claim registry data layer.",
+  "description": "Permissionless content-addressed ZhixuRecord data layer.",
   "exports": {
     ".": "./src/index.ts"
   },

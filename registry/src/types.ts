@@ -1,4 +1,4 @@
-// Zhixu registry DTOs: permissionless descriptor records and self-asserted wallet identity claims.
+// Zhixu registry DTOs: permissionless, content-addressed descriptor records.
 
 export interface ZhixuRecordKey {
   readonly chainId: number;
@@ -19,36 +19,6 @@ export interface SignedZhixuRecordInput extends ZhixuRecordFields {
 }
 
 export interface ZhixuRecord extends ZhixuRecordFields {
-  readonly signature: string;
-  readonly createdAt: string;
-}
-
-export interface IdentityClaimKey {
-  readonly chainId: number;
-  readonly wallet: string;
-  readonly subject: string;
-}
-
-export interface IdentityClaimFields extends IdentityClaimKey {
-  readonly descriptorUri?: string;
-  readonly descriptorHash?: string;
-  readonly attestationRefs: readonly string[];
-}
-
-export interface IdentityClaimDraft extends IdentityClaimKey {
-  readonly descriptorUri?: string;
-  readonly descriptorHash?: string;
-  readonly attestationRefs?: readonly string[];
-}
-
-export interface SignedIdentityClaimInput extends IdentityClaimDraft {
-  readonly signature: string;
-}
-
-export interface IdentityClaim extends IdentityClaimKey {
-  readonly descriptorUri?: string;
-  readonly descriptorHash?: string;
-  readonly attestationRefs: readonly string[];
   readonly signature: string;
   readonly createdAt: string;
 }

@@ -7,9 +7,9 @@
 `zhixu-registry` 是非用户面的数据登记层（原 `zhixu-store` 的商店/运营台 UI 已删除）。
 仓库只有一个包：
 
-- `registry/`：`@uvp-eth/zhixu-registry` —— `ZhixuRecord`（zhixu 自述登记）与
-  `IdentityClaim`（钱包身份自述）的库形态数据层。EIP-712 `UVPZhixuRegistry/1`、
-  写时验签、append-only Postgres store + migrations、opaque attestation refs。
+- `registry/`：`@uvp-eth/zhixu-registry` —— `ZhixuRecord`（zhixu 自述登记）的
+  库形态数据层。EIP-712 `UVPZhixuRegistry/1`、写时验签、append-only Postgres
+  store + migrations、opaque refs。
 
 边界与不做事项见 [STORE-CHARTER.md](./STORE-CHARTER.md)；包内说明见
 [registry/README.md](./registry/README.md)。
@@ -22,8 +22,8 @@
    supplier KYC/KYB 资料与审批记录由本组件承载（追加式记录，不改历史）。
 3. **写必须验签。** 任何写路径先验 EIP-712 签名；签名不符显式失败；只追加、
    唯一键、重复报错，不提供 update/approve。
-4. **不当事实来源。** 不解释合约、不裁决真伪、不参与订单授权；attestation 只存
-   opaque refs，不存正文/密钥/凭据。
+4. **不当事实来源。** 不解释合约、不裁决真伪、不参与订单授权、不做第二身份登记；
+   只存 opaque refs，不存正文/密钥/凭据。
 5. **无兼容层。** 删除即删除：不保留旧 app、旧 store 字段、旧接口 re-export。
 6. **公共接口变更要同步。** schema、EIP-712 类型、错误码变化需同时更新 README、
    迁移与测试。

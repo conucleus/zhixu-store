@@ -1,24 +1,23 @@
 # zhixu-registry
 
-非用户面数据登记层（ARCHITECTURE.md §2.3/§4）：只登记 zhixu 描述与钱包身份声明。
-当前阶段 permissionless、登记 ≠ 背书（no endorsement）；supplier KYC/KYB 资料与审批
-记录属于后续阶段能力（当前未实现），不做商店、curation、推荐、订单授权或用户面。
+非用户面数据登记层（ARCHITECTURE.md §2.3/§4）：只登记 permissionless 的
+`ZhixuRecord` 自述与 opaque refs。登记 ≠ 背书（no endorsement）；不做商店、
+curation、推荐、订单授权、用户面，也不做第二身份登记。
 
 ## 边界
 
 - 登记 permissionless：任何钱包都可写入自己的记录；无 allowlist，登记 ≠ 背书。
-- 写时验签：`ZhixuRecord` 由 `registeredBy` 签名，`IdentityClaim` 由 `wallet` 签名；
-  签名覆盖全部登记字段（EIP-712 domain `UVPZhixuRegistry/1` + `chainId`）。
-- 只存自述与 opaque refs：`descriptorUri/hash`、`schemaHash`、`version`、
-  `attestationRefs[]` 原样登记，不解析、不验证真伪；当前阶段不存 KYC/KYB 原件。
-- 只追加：唯一键 `(chainId, planId, planHash, registeredBy)` 与 `(chainId, wallet, subject)`；
-  同一计划下每个 `registeredBy` 各自持有自己的记录，任意钱包不能抢占并挡住合法 publisher；
+- 写时验签：`ZhixuRecord` 由 `registeredBy` 签名；签名覆盖全部登记字段
+  （EIP-712 domain `UVPZhixuRegistry/1` + `chainId`）。
+- 只存自述与 opaque refs：`descriptorUri/hash`、`schemaHash`、`version`
+  原样登记，不解析、不验证真伪；不存身份声明、KYC/KYB 原件。
+- 只追加：唯一键 `(chainId, planId, planHash, registeredBy)`；同一计划下每个
+  `registeredBy` 各自持有自己的记录，任意钱包不能抢占并挡住合法 publisher；
   重复登记报 `RegistryEntryConflictError`；当前阶段无 update/approve/status 路径。
-- 有界 payload：`descriptorUri`/`descriptorHash`/`schemaHash`/`version` 与每个
-  `attestationRefs[]` 最多 2048 UTF-8 bytes，`attestationRefs` 最多 64 条；
-  超界在写入前抛 `RegistryValidationError`（`registry_input_invalid`），
-  schema 同时用 `octet_length`/`cardinality` CHECK 兜底。
-- 读取只返回登记内容与 `registeredBy`/`signature`/`attestationRefs`；当前阶段不返回
+- 有界 payload：`descriptorUri`/`descriptorHash`/`schemaHash`/`version` 最多
+  2048 UTF-8 bytes；超界在写入前抛 `RegistryValidationError`
+  （`registry_input_invalid`），schema 同时用 `octet_length` CHECK 兜底。
+- 读取只返回登记内容与 `registeredBy`/`signature`；当前阶段不返回
   verified/approved/trust score，不做排序或推荐。
 - 库形态：无 UI、无 HTTP server；应用或 backend 直接 import。
 
@@ -27,9 +26,9 @@
 - `@uvp-eth/zhixu-registry`：根入口（Node/backend）。类型、验签、
   `ZhixuRegistryStore` 接口、Postgres store 与 migrations。
 - EIP-712 domain/types 单源在 `@uvp-eth/protocol-bindings`
-  （`UVPZhixuRegistry/1`、`ZhixuRecord`/`IdentityClaim` 字段表与 type hash、
-  typed-data 构造与字段规范化）；registry 不再提供 `/eip712` 子路径，
-  client/apps 直接从 protocol-bindings 构造待签名消息。
+  （`UVPZhixuRegistry/1`、`ZhixuRecord` 字段表与 type hash、typed-data 构造与
+  字段规范化）；registry 不提供 `/eip712` 子路径，client/apps 直接从
+  protocol-bindings 构造待签名消息。
 
 ```ts
 import { buildZhixuRecordTypedData } from "@uvp-eth/protocol-bindings";
@@ -40,11 +39,11 @@ const signature = await account.signTypedData(typedData);
 
 ## 包内容
 
-- `src/types.ts`：`ZhixuRecord` / `IdentityClaim` 及写入输入 DTO。
+- `src/types.ts`：`ZhixuRecord` 及写入输入 DTO。
 - `src/canonical.ts`：registry 输入/键规范化包装（字段规则单源在
   protocol-bindings）与签名格式校验。
 - `src/verify.ts`：写时验签（失败抛 `RegistrySignatureError`）。
-- `src/store.ts`：`ZhixuRegistryStore` 接口；`register*` 是签名写入 API。
+- `src/store.ts`：`ZhixuRegistryStore` 接口；`registerZhixuRecord` 是签名写入 API。
 - `src/postgres/store.ts`：Postgres 实现（注入 `pg.Pool`），INSERT 前验签。
 - `src/postgres/migrate.ts` + `migrations/`：按连接当前 `search_path` 应用 schema。
 - `tests/registry.test.ts`：注册/读取、非法签名、重复/不可变、permissionless。
@@ -53,8 +52,7 @@ const signature = await account.signTypedData(typedData);
 
 写入通过 `ZhixuRegistryStore`，签名先于写入校验：
 
-- `registerZhixuRecord({ ...fields, signature })`：按 `registeredBy` 验 EIP-712 签名后 INSERT；
-- `registerIdentityClaim({ ...fields, signature })`：按 `wallet` 验签后 INSERT。
+- `registerZhixuRecord({ ...fields, signature })`：按 `registeredBy` 验 EIP-712 签名后 INSERT。
 
 签名不符或不可解析抛 `RegistrySignatureError`（`registry_signature_invalid`），不落库；
 重复键抛 `RegistryEntryConflictError`。没有 approve/reject/status 路径，也没有额外审批。

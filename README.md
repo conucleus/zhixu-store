@@ -1,26 +1,23 @@
 # zhixu-registry
 
 非用户面数据登记层（ARCHITECTURE.md §2.3/§4）。原 `zhixu-store` 商店/运营台 UI 已删除，
-本仓只保留 `registry/` 包 `@uvp-eth/zhixu-registry`；supplier KYC/KYB 资料与审批记录是
-后续阶段能力（当前未实现）。
+本仓只保留 `registry/` 包 `@uvp-eth/zhixu-registry`。身份绑定归链上
+`UVPIdentityRegistry`，本仓不登记身份声明。
 
-Registry 只登记两类记录：
+Registry 只登记一类记录：
 
 - `ZhixuRecord`：zhixu 自述（`chainId`/`planId`/`planHash`/`descriptorUri|Hash`/
-  `schemaHash`/`version`）+ `registeredBy` 钱包签名；
-- `IdentityClaim`：钱包自述身份（`wallet`/`subject`/`descriptorUri|Hash`）+
-  `wallet` 签名 + 可选 opaque `attestationRefs[]`。
+  `schemaHash`/`version`）+ `registeredBy` 钱包签名。
 
 ## 边界
 
 - **permissionless**：任何钱包都可登记自己的记录；无 allowlist；登记 ≠ 背书。
 - **当前阶段不审核、不挑选、不排名、不推荐**：不做市场/商店、join workflow、治理投票；
-  本阶段 schema/API 不含 approval/status/curation/verified 字段。后续阶段的 supplier
-  KYC/KYB 资料与审批记录由本组件承载（追加式记录）。
+  本阶段 schema/API 不含 approval/status/curation/verified 字段。
 - **不成为事实来源**：只存自述 + 签名 + opaque refs；链上 plan/order/signal 事实以
   合约与链事件为准；身份声明不参与订单授权（授权仍由链上 plan/slot/signal 决定）。
-- **不存原件**：attestation 只存 hash/URI/opaque ref；正文、密钥、凭据在 registry 外。
-- **只追加**：唯一键 `(chainId, planId, planHash)`、`(chainId, wallet, subject)`；
+- **不存原件**：只存 descriptor hash/URI；正文、密钥、凭据在 registry 外。
+- **只追加**：唯一键 `(chainId, planId, planHash, registeredBy)`；
   重复登记显式报错，无 update/approve 路径。
 - **库形态**：无 UI、无 HTTP server；应用/backend 直接 import。
 
