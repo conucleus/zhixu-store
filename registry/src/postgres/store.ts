@@ -90,7 +90,7 @@ export class PostgresZhixuRegistryStore implements ZhixuRegistryStore {
     const result = await this.#pool.query<ZhixuRecordRow>(
       `INSERT INTO zhixu_registry_zhixu_records (chain_id, plan_id, plan_hash, descriptor_uri, descriptor_hash, schema_hash, version, registered_by, signature, created_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       ON CONFLICT (chain_id, plan_id, plan_hash) DO NOTHING
+       ON CONFLICT (chain_id, plan_id, plan_hash, registered_by) DO NOTHING
        RETURNING ${ZHIXU_RECORD_COLUMNS}`,
       [
         fields.chainId,
@@ -107,10 +107,11 @@ export class PostgresZhixuRegistryStore implements ZhixuRegistryStore {
     );
     const row = result.rows[0];
     if (!row) {
-      throw new RegistryEntryConflictError("zhixu record already exists for this chainId/planId/planHash", {
+      throw new RegistryEntryConflictError("zhixu record already exists for this chainId/planId/planHash/registeredBy", {
         chainId: fields.chainId,
         planId: fields.planId,
-        planHash: fields.planHash
+        planHash: fields.planHash,
+        registeredBy: fields.registeredBy
       });
     }
     return zhixuRecordFromRow(row);
@@ -120,8 +121,8 @@ export class PostgresZhixuRegistryStore implements ZhixuRegistryStore {
     const normalized = normalizeZhixuRecordKey(key);
     const result = await this.#pool.query<ZhixuRecordRow>(
       `SELECT ${ZHIXU_RECORD_COLUMNS} FROM zhixu_registry_zhixu_records
-       WHERE chain_id = $1 AND plan_id = $2 AND plan_hash = $3`,
-      [normalized.chainId, normalized.planId, normalized.planHash]
+       WHERE chain_id = $1 AND plan_id = $2 AND plan_hash = $3 AND registered_by = $4`,
+      [normalized.chainId, normalized.planId, normalized.planHash, normalized.registeredBy]
     );
     const row = result.rows[0];
     return row ? zhixuRecordFromRow(row) : undefined;

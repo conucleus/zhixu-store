@@ -11,8 +11,13 @@
   签名覆盖全部登记字段（EIP-712 domain `UVPZhixuRegistry/1` + `chainId`）。
 - 只存自述与 opaque refs：`descriptorUri/hash`、`schemaHash`、`version`、
   `attestationRefs[]` 原样登记，不解析、不验证真伪；当前阶段不存 KYC/KYB 原件。
-- 只追加：唯一键 `(chainId, planId, planHash)` 与 `(chainId, wallet, subject)`；
+- 只追加：唯一键 `(chainId, planId, planHash, registeredBy)` 与 `(chainId, wallet, subject)`；
+  同一计划下每个 `registeredBy` 各自持有自己的记录，任意钱包不能抢占并挡住合法 publisher；
   重复登记报 `RegistryEntryConflictError`；当前阶段无 update/approve/status 路径。
+- 有界 payload：`descriptorUri`/`descriptorHash`/`schemaHash`/`version` 与每个
+  `attestationRefs[]` 最多 2048 UTF-8 bytes，`attestationRefs` 最多 64 条；
+  超界在写入前抛 `RegistryValidationError`（`registry_input_invalid`），
+  schema 同时用 `octet_length`/`cardinality` CHECK 兜底。
 - 读取只返回登记内容与 `registeredBy`/`signature`/`attestationRefs`；当前阶段不返回
   verified/approved/trust score，不做排序或推荐。
 - 库形态：无 UI、无 HTTP server；应用或 backend 直接 import。
@@ -71,7 +76,13 @@ const registry = new PostgresZhixuRegistryStore({ pool });
 const fields = { chainId, planId, planHash, descriptorUri, registeredBy: wallet };
 const signature = await account.signTypedData(buildZhixuRecordTypedData(fields));
 const record = await registry.registerZhixuRecord({ ...fields, signature });
-console.log(record.registeredBy, record.signature);
+const readBack = await registry.getZhixuRecord({
+  chainId,
+  planId,
+  planHash,
+  registeredBy: wallet
+});
+console.log(record.registeredBy, readBack?.signature);
 ```
 
 ## 验证

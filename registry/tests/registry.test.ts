@@ -10,6 +10,9 @@ import {
   PostgresZhixuRegistryStore,
   RegistryEntryConflictError,
   RegistrySignatureError,
+  RegistryValidationError,
+  REGISTRY_MAX_ATTESTATION_REFS,
+  REGISTRY_MAX_TEXT_BYTES,
   runRegistryMigrations,
   type IdentityClaimDraft,
   type ZhixuRecordFields
@@ -76,6 +79,36 @@ describe("zhixu records", () => {
 
     assert.equal(aliceRecord.registeredBy, alice.address.toLowerCase());
     assert.equal(bobRecord.registeredBy, bob.address.toLowerCase());
+  });
+
+  it("keeps the plan key open to every publisher instead of letting one wallet squat it", async () => {
+    const plan = zhixuFields();
+    const competing = zhixuFields({
+      planId: plan.planId,
+      planHash: plan.planHash,
+      registeredBy: bob.address.toLowerCase(),
+      descriptorUri: "ipfs://bob-description"
+    });
+
+    const first = await store.registerZhixuRecord({ ...plan, signature: await signZhixu(plan) });
+    const second = await store.registerZhixuRecord({ ...competing, signature: await signZhixu(competing, bob) });
+
+    assert.equal(first.registeredBy, alice.address.toLowerCase());
+    assert.equal(second.registeredBy, bob.address.toLowerCase());
+    assert.equal((await store.getZhixuRecord(recordKey(plan)))?.descriptorUri, plan.descriptorUri);
+    assert.equal((await store.getZhixuRecord(recordKey(competing)))?.descriptorUri, "ipfs://bob-description");
+  });
+
+  it("rejects a descriptor payload above the bounded text length before writing", async () => {
+    const fields = zhixuFields({
+      descriptorUri: `ipfs://${"a".repeat(REGISTRY_MAX_TEXT_BYTES)}`
+    });
+
+    await assert.rejects(
+      store.registerZhixuRecord({ ...fields, signature: await signZhixu(fields) }),
+      (error: unknown) => error instanceof RegistryValidationError && error.code === "registry_input_invalid"
+    );
+    assert.equal(await store.getZhixuRecord(recordKey(fields)), undefined);
   });
 
   it("rejects a signature from a wallet other than registeredBy", async () => {
@@ -154,6 +187,33 @@ describe("identity claims", () => {
     assert.equal(aliceSecondRecord.subject, "org:example:alice");
   });
 
+  it("rejects an attestation payload above the bounded ref count before writing", async () => {
+    const claim = identityClaim({
+      attestationRefs: Array.from(
+        { length: REGISTRY_MAX_ATTESTATION_REFS + 1 },
+        (_unused, index) => `ipfs://attestation-${index}`
+      )
+    });
+
+    await assert.rejects(
+      store.registerIdentityClaim({ ...claim, signature: await signClaim(claim) }),
+      (error: unknown) => error instanceof RegistryValidationError && error.code === "registry_input_invalid"
+    );
+    assert.equal(await store.getIdentityClaim(claimKey(claim)), undefined);
+  });
+
+  it("rejects an attestation ref above the bounded text length before writing", async () => {
+    const claim = identityClaim({
+      attestationRefs: [`ipfs://${"a".repeat(REGISTRY_MAX_TEXT_BYTES)}`]
+    });
+
+    await assert.rejects(
+      store.registerIdentityClaim({ ...claim, signature: await signClaim(claim) }),
+      (error: unknown) => error instanceof RegistryValidationError && error.code === "registry_input_invalid"
+    );
+    assert.equal(await store.getIdentityClaim(claimKey(claim)), undefined);
+  });
+
   it("rejects a claim signed by a different wallet", async () => {
     const claim = identityClaim({ wallet: alice.address.toLowerCase() });
     const signature = await signClaim(claim, bob);
@@ -204,8 +264,13 @@ function identityClaim(overrides: Partial<IdentityClaimDraft> = {}): IdentityCla
   };
 }
 
-function recordKey(fields: ZhixuRecordFields): { readonly chainId: number; readonly planId: string; readonly planHash: string } {
-  return { chainId: fields.chainId, planId: fields.planId, planHash: fields.planHash };
+function recordKey(fields: ZhixuRecordFields): { readonly chainId: number; readonly planId: string; readonly planHash: string; readonly registeredBy: string } {
+  return {
+    chainId: fields.chainId,
+    planId: fields.planId,
+    planHash: fields.planHash,
+    registeredBy: fields.registeredBy
+  };
 }
 
 function claimKey(claim: IdentityClaimDraft): { readonly chainId: number; readonly wallet: string; readonly subject: string } {

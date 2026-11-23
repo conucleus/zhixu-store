@@ -4,6 +4,7 @@ export interface ZhixuRecordKey {
   readonly chainId: number;
   readonly planId: string;
   readonly planHash: string;
+  readonly registeredBy: string;
 }
 
 export interface ZhixuRecordFields extends ZhixuRecordKey {
@@ -11,7 +12,6 @@ export interface ZhixuRecordFields extends ZhixuRecordKey {
   readonly descriptorHash?: string;
   readonly schemaHash?: string;
   readonly version?: string;
-  readonly registeredBy: string;
 }
 
 export interface SignedZhixuRecordInput extends ZhixuRecordFields {
